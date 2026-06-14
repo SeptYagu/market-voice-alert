@@ -1,0 +1,3461 @@
+import {
+  initTheme,
+  toggleTheme,
+  getCurrentTheme,
+  THEME_ICONS,
+  THEME_LABELS
+} from './theme.js';
+import {
+  getWatchList,
+  addToWatchList,
+  removeFromWatchList,
+  getSettings,
+  patchSettings,
+  getVoiceSettings,
+  patchVoiceSettings,
+  getAlertSettings,
+  patchAlertSettings,
+  getSubscribedCodes,
+  setSubscribedCodes,
+  getLimitUpSettings,
+  patchLimitUpSettings,
+  getMomentumPinnedCodes,
+  setMomentumPinnedCodes,
+  getLimitUpPinnedCodes,
+  setLimitUpPinnedCodes
+} from './storage.js';
+import { fetchQuotes, fetchKline, fetchIntraday, onKlineUpdated } from './api.js';
+import { fetchAktoolsSpotList } from './aktoolsApi.js';
+import { normalizeCode } from './parser.js';
+import {
+  PERIODS,
+  PERIOD_LABELS,
+  DEFAULT_PERIOD,
+  isValidPeriod,
+  calcMA,
+  formatVolumeBars,
+  formatCandleColors,
+  applyLiveTickToKline,
+  getLastKlineDate
+} from './kline.js';
+import { createKlineChart, createIntradayChart, MA_COLORS } from './chart.js';
+import {
+  speak as ttsSpeak,
+  cancel as ttsCancel,
+  formatQuoteSpeech,
+  isSpeechSupported
+} from './tts.js';
+import {
+  evaluateAlerts,
+  requestNotificationPermission,
+  showNotification,
+  isNotificationSupported
+} from './alert.js';
+import { createHashRouter, navigate } from './router.js';
+import { fetchLimitUpList, fetchLimitUpReasons, fetchLimitUpMetadataBatch, clearLimitUpMetadataCache } from './limitUpApi.js';
+import { buildLimitUpGroups, mergeLiveTicks, sortLimitUpGroupItems } from './limitUp.js';
+import { renderLimitUpPage } from './limitUpView.js';
+import {
+  fetchTradeCalendar,
+  getAdjacentTradingDates,
+  resolveLatestTradingDate
+} from './tradeCalendar.js';
+import { chartTimeToDate, formatDateForInput } from './time.js';
+import {
+  DEFAULT_SMART_SCHEDULE,
+  getMarketSession,
+  isVoiceAllowedInSession,
+  normalizeSmartSchedule
+} from './marketSession.js';
+
+export const REFRESH_OPTIONS = [
+  { value: 3000, label: '3 秒' },
+  { value: 10000, label: '10 秒' },
+  { value: 30000, label: '30 秒' },
+  { value: 60000, label: '60 秒' }
+];
+export const DEFAULT_REFRESH = 10000;
+
+export const LIMIT_UP_REFRESH_OPTIONS = [
+  { value: 10000, label: '10 秒' },
+  { value: 30000, label: '30 秒' },
+  { value: 60000, label: '60 秒' }
+];
+
+export const DEFAULT_VOICE_SETTINGS = Object.freeze({
+  enabled: false,
+  interval: 5000,
+  volume: 80,
+  fields: Object.freeze({ name: true, price: true, percent: true }),
+  fieldsOrder: Object.freeze(['name', 'price', 'percent']),
+  smartSchedule: DEFAULT_SMART_SCHEDULE
+});
+
+export const FIELD_LABELS = Object.freeze({
+  name: '名字',
+  price: '现价',
+  percent: '涨幅'
+});
+
+export const DEFAULT_ALERT_SETTINGS = Object.freeze({
+  enabled: false,
+  threshold: 5
+});
+
+export function clampVolume(v) {
+  if (v === null || v === undefined) return DEFAULT_VOICE_SETTINGS.volume;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return DEFAULT_VOICE_SETTINGS.volume;
+  if (n < 0) return 0;
+  if (n > 100) return 100;
+  return Math.round(n);
+}
+
+// Parses a user-entered interval in seconds.
+// Returns a positive integer (seconds) on success, or null for both
+// "empty" and "invalid" cases - callers distinguish (empty → use default;
+// invalid → reject + flash error).
+export function parseIntervalSeconds(raw) {
+  if (raw === null || raw === undefined) return null;
+  const s = String(raw).trim();
+  if (s === '') return null;
+  // Strictly positive integer in decimal notation (rejects "1e3", "1.5", "-1", "abc").
+  if (!/^[1-9]\d*$/.test(s)) return null;
+  const n = parseInt(s, 10);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return n;
+}
+
+// Parses a user-entered alert threshold (percent, 0.1 - 50, decimals allowed).
+// Returns the number on success, or null for both empty and invalid input.
+export function parseAlertThreshold(raw) {
+  if (raw === null || raw === undefined) return null;
+  const s = String(raw).trim();
+  if (s === '') return null;
+  // Decimal: digits + optional .digits (rejects scientific notation, signs).
+  if (!/^\d+(\.\d+)?$/.test(s)) return null;
+  const n = parseFloat(s);
+  if (!Number.isFinite(n)) return null;
+  if (n < 0.1 || n > 50) return null;
+  return n;
+}
+
+export function parseLimitUpIntervalSeconds(raw) {
+  if (raw === null || raw === undefined) return null;
+  const s = String(raw).trim();
+  if (s === '') return null;
+  if (!/^[1-9]\d*$/.test(s)) return null;
+  const n = parseInt(s, 10);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return LIMIT_UP_REFRESH_OPTIONS.some((o) => o.value === n * 1000) ? n : null;
+}
+
+export function normalizeVoiceSettings(input) {
+  const src = input && typeof input === 'object' ? input : {};
+  const intervalMs = Number(src.interval);
+  const interval = Number.isInteger(intervalMs) && intervalMs >= 1000
+    ? intervalMs
+    : DEFAULT_VOICE_SETTINGS.interval;
+  const volume =
+    src.volume === undefined || src.volume === null
+      ? DEFAULT_VOICE_SETTINGS.volume
+      : clampVolume(src.volume);
+  return {
+    enabled: !!src.enabled,
+    interval,
+    volume,
+    fields: normalizeVoiceFields(src.fields),
+    fieldsOrder: normalizeVoiceFieldsOrder(src.fieldsOrder),
+    smartSchedule: normalizeSmartSchedule(src.smartSchedule)
+  };
+}
+
+export function normalizeVoiceFields(input) {
+  const valid = input && typeof input === 'object' && !Array.isArray(input);
+  if (!valid) return { ...DEFAULT_VOICE_SETTINGS.fields };
+  return {
+    name: input.name === undefined ? true : !!input.name,
+    price: input.price === undefined ? true : !!input.price,
+    percent: input.percent === undefined ? true : !!input.percent
+  };
+}
+
+export function normalizeVoiceFieldsOrder(input) {
+  const KNOWN = ['name', 'price', 'percent'];
+  if (!Array.isArray(input)) return [...DEFAULT_VOICE_SETTINGS.fieldsOrder];
+  const seen = new Set();
+  const out = [];
+  for (const k of input) {
+    if (KNOWN.includes(k) && !seen.has(k)) {
+      seen.add(k);
+      out.push(k);
+    }
+  }
+  for (const k of KNOWN) {
+    if (!seen.has(k)) {
+      out.push(k);
+      seen.add(k);
+    }
+  }
+  return out;
+}
+
+export function normalizeAlertSettings(input) {
+  const src = input && typeof input === 'object' ? input : {};
+  let threshold;
+  if (src.threshold === undefined || src.threshold === null) {
+    threshold = DEFAULT_ALERT_SETTINGS.threshold;
+  } else {
+    const n = Number(src.threshold);
+    if (!Number.isFinite(n)) threshold = DEFAULT_ALERT_SETTINGS.threshold;
+    else if (n < 0.1) threshold = 0.1;
+    else if (n > 50) threshold = 50;
+    else threshold = n;
+  }
+  return {
+    enabled: !!src.enabled,
+    threshold
+  };
+}
+
+export function parseBatchInput(input) {
+  if (!input || typeof input !== 'string') return [];
+  const tokens = input.split(/[,， ]+/);
+  const seen = new Set();
+  const out = [];
+  for (const tok of tokens) {
+    const norm = normalizeFuture(tok) || normalizeCode(tok);
+    if (norm && !seen.has(norm)) {
+      seen.add(norm);
+      out.push(norm);
+    }
+  }
+  return out;
+}
+
+function normalizeFuture(input) {
+  if (!input || typeof input !== 'string') return null;
+  const raw = input.trim().toLowerCase();
+  if (/^nf[a-z0-9]+$/.test(raw)) return raw;
+  return null;
+}
+
+export function formatNumber(n, decimals = 2) {
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return '-';
+  return Number(n).toFixed(decimals);
+}
+
+export function priceDirection(change) {
+  if (!Number.isFinite(change)) return 'flat';
+  if (change > 0) return 'up';
+  if (change < 0) return 'down';
+  return 'flat';
+}
+
+export function formatChange(change) {
+  if (!Number.isFinite(change)) return '-';
+  const sign = change > 0 ? '+' : '';
+  return `${sign}${formatNumber(change)}`;
+}
+
+export function formatPercent(p) {
+  if (!Number.isFinite(p)) return '-';
+  const sign = p > 0 ? '+' : '';
+  return `${sign}${formatNumber(p)}%`;
+}
+
+export function formatAmount(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v <= 0) return '-';
+  if (v >= 100000000) return `${(v / 100000000).toFixed(2)}亿`;
+  if (v >= 10000) return `${(v / 10000).toFixed(2)}万`;
+  return v.toFixed(0);
+}
+
+function formatPriceWithPercent(price, pct) {
+  const priceText = formatNumber(price);
+  const pctNum = Number(pct);
+  if (!Number.isFinite(pctNum)) return priceText;
+  return `${priceText} (${formatPercent(pctNum)})`;
+}
+
+export function stripPrefix(code) {
+  if (!code) return '';
+  const m = /^(?:sh|sz|bj|nf)?(.+)$/i.exec(String(code).trim());
+  return m ? m[1] : '';
+}
+
+export function makeExportFilename(prefix = 'stocks', now = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp =
+    now.getFullYear().toString() +
+    pad(now.getMonth() + 1) +
+    pad(now.getDate()) +
+    '_' +
+    pad(now.getHours()) +
+    pad(now.getMinutes()) +
+    pad(now.getSeconds());
+  return `${prefix}_${stamp}.txt`;
+}
+
+export function buildExportText(codes) {
+  return codes.map(stripPrefix).filter(Boolean).join('\n');
+}
+
+function downloadText(text, filename) {
+  if (typeof document === 'undefined' || typeof URL === 'undefined') return;
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+const state = {
+  watchList: [],
+  quotes: new Map(),
+  selected: new Set(),
+  subscribed: new Set(),
+  refreshInterval: DEFAULT_REFRESH,
+  timer: null,
+  loading: false,
+  lastUpdate: null,
+  error: null,
+  expandedCodes: new Set(),
+  chartInstances: new Map(),
+  voice: { ...DEFAULT_VOICE_SETTINGS },
+  alert: { ...DEFAULT_ALERT_SETTINGS },
+  alertStates: {},
+  notifPermission: 'default',
+  tickWorker: null,
+  tickFallback: null,
+  voiceScheduleTimer: null,
+  voiceLastSession: null,
+  voicePausedBySchedule: false,
+  limitUp: {
+    items: [],
+    groups: [],
+    tradingDates: [],
+    latestTradingDate: null,
+    previousTradingDate: null,
+    nextTradingDate: null,
+    calendarLoading: false,
+    lastUpdate: null,
+    loading: false,
+    error: null,
+    refreshInterval: 30000,
+    timer: null,
+    abort: null,
+    lastNonEmptyItems: [],
+    lastNonEmptyAt: null,
+    consecutiveEmptyFetches: 0,
+    sortKey: 'amount',
+    groupSort: {},
+    selectedCodes: new Set(),
+    // Phase 8: 涨停页多 chart 架构 (与监控页对齐)
+    expandedCodes: new Set(),
+    chartInstances: new Map(),
+    selectedDate: null,
+    reasonMap: new Map(),
+    pinnedCodes: new Set()
+  },
+  momentum: {
+    items: [],
+    loading: false,
+    error: null,
+    abort: null,
+    lastUpdate: null,
+    scanned: 0,
+    total: 0,
+    pinnedCodes: new Set(),
+    selectedCodes: new Set(),
+    expandedCodes: new Set(),
+    chartInstances: new Map()
+  }
+};
+
+let limitUpRootEl = null;
+let abortController = null;
+const chartInstanceMap = new Map();
+const limitUpChartCtlMap = new Map();  // code → chart ctl (Phase 8: 多 chart)
+const intradayChartCtlMap = new Map();
+const limitUpIntradayChartCtlMap = new Map();
+const momentumChartCtlMap = new Map();
+const MA_PERIODS = [5, 10, 20, 60];
+const MOMENTUM_THRESHOLD_PCT = 45;
+const MOMENTUM_LOOKBACK_TRADING_DAYS = 10;
+const MOMENTUM_SCAN_CONCURRENCY = 8;
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === 'class') node.className = v;
+    else if (k === 'html') node.innerHTML = v;
+    else if (k === 'on' && typeof v === 'object') {
+      for (const [ev, fn] of Object.entries(v)) node.addEventListener(ev, fn);
+    } else if (k.startsWith('data-') || k === 'type' || k === 'value' || k === 'placeholder' || k === 'title' || k === 'id') {
+      node.setAttribute(k, v);
+    } else if (k === 'checked' && v) {
+      node.checked = true;
+    } else if (k === 'disabled' && v) {
+      node.disabled = true;
+    } else {
+      node.setAttribute(k, v);
+    }
+  }
+  for (const c of children) {
+    if (c === null || c === undefined || c === false) continue;
+    node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  }
+  return node;
+}
+
+function createChartState(period = DEFAULT_PERIOD) {
+  return {
+    ctl: null,
+    period,
+    klineData: null,
+    loading: true,
+    error: null,
+    abort: null,
+    selectedTradeDate: '',
+    intradayData: null,
+    intradayLoading: false,
+    intradayError: null,
+    intradayAbort: null
+  };
+}
+
+function rememberRange(inst, ctl, field = '_visibleRange') {
+  if (!inst || !ctl || typeof ctl.getVisibleRange !== 'function') return;
+  const range = ctl.getVisibleRange();
+  if (range) inst[field] = range;
+}
+
+function restoreRangeOrFit(ctl, range) {
+  if (!ctl) return;
+  if (range && typeof ctl.setVisibleRange === 'function' && ctl.setVisibleRange(range)) return;
+  if (typeof ctl.fitContent === 'function') ctl.fitContent();
+}
+
+export function renderMonitorPage(root) {
+  if (!root) return;
+  root.innerHTML = '';
+  root.appendChild(renderHeader());
+  root.appendChild(renderToolbar());
+  root.appendChild(el('section', { class: 'ctl-bar', id: 'voice-bar' }));
+  root.appendChild(el('section', { class: 'ctl-bar', id: 'alert-bar' }));
+  root.appendChild(el('section', { class: 'table-wrap', id: 'table-wrap' }));
+  root.appendChild(el('section', { class: 'momentum-section', id: 'momentum-section' }));
+  root.appendChild(el('footer', { class: 'status-bar', id: 'status-bar' }));
+  renderVoiceBar();
+  renderAlertBar();
+  renderTable();
+  renderMomentumSection();
+  renderStatus();
+}
+
+function renderHeader() {
+  const theme = getCurrentTheme();
+  return el(
+    'header',
+    { class: 'app-header' },
+    el('h1', {}, '股票期货监控助手 v2'),
+    el(
+      'nav',
+      { class: 'app-nav', id: 'app-nav' },
+      el('a', { href: '#/', class: 'nav-link', 'data-route': '#/' }, '监控'),
+      el('a', { href: '#/limit-up', class: 'nav-link', 'data-route': '#/limit-up' }, '涨停看板')
+    ),
+    el(
+      'div',
+      { class: 'header-actions' },
+      renderRefreshSelect(),
+      el(
+        'button',
+        {
+          id: 'theme-toggle',
+          title: `当前: ${THEME_LABELS[theme]} (点击切换)`,
+          on: { click: handleToggleTheme }
+        },
+        THEME_ICONS[theme] + ' ' + THEME_LABELS[theme]
+      )
+    )
+  );
+}
+
+function renderRefreshSelect() {
+  const select = el('select', { id: 'refresh-select', on: { change: handleRefreshChange } });
+  for (const opt of REFRESH_OPTIONS) {
+    const option = el('option', { value: opt.value }, opt.label);
+    if (Number(opt.value) === state.refreshInterval) option.selected = true;
+    select.appendChild(option);
+  }
+  return el('label', { class: 'refresh-label' }, '刷新: ', select);
+}
+
+function renderToolbar() {
+  return el(
+    'section',
+    { class: 'toolbar' },
+    el(
+      'div',
+      { class: 'add-row' },
+      el('input', {
+        type: 'text',
+        id: 'code-input',
+        placeholder: '输入代码（用逗号或空格分隔，回车添加）：600519, 000001 nf2105',
+        on: {
+          keydown: (e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              handleAdd();
+            }
+          }
+        }
+      }),
+      el(
+        'div',
+        { class: 'add-actions' },
+        el('button', { class: 'btn-primary', on: { click: handleAdd } }, '+ 添加'),
+        el('button', { on: { click: handleRefreshNow } }, '⟳ 立即刷新'),
+        el(
+          'button',
+          {
+            id: 'auto-refresh-toggle',
+            class: state.timer ? 'btn-ctl-active' : '',
+            title: state.timer ? '停止自动刷新' : '开始自动刷新',
+            on: { click: () => handleMonitorAutoRefreshToggle(!state.timer) }
+          },
+          state.timer ? '停止自动刷新' : '开始自动刷新'
+        )
+      )
+    ),
+    el(
+      'div',
+      { class: 'list-actions' },
+      el('button', { on: { click: handleSelectAll } }, '全选'),
+      el('button', { on: { click: handleSelectNone } }, '清空选择'),
+      el('button', { class: 'btn-danger', on: { click: handleDeleteSelected } }, '删除选中'),
+      el('button', { on: { click: () => handleExport('selected') } }, '导出选中'),
+      el('button', { on: { click: () => handleExport('all') } }, '导出全部')
+    )
+  );
+}
+
+function renderVoiceBar() {
+  const bar = document.getElementById('voice-bar');
+  if (!bar) return;
+  bar.innerHTML = '';
+  const speechOK = isSpeechSupported();
+
+  // Main toggle as a big primary button (the core control).
+  const enabled = state.voice.enabled;
+  const toggleBtn = el(
+    'button',
+    {
+      class: enabled ? 'btn-ctl-active' : 'btn-ctl-toggle',
+      disabled: !speechOK,
+      title: speechOK ? '点击切换定时语音播报' : '当前浏览器不支持语音合成',
+      on: { click: () => handleVoiceEnabledChange(!state.voice.enabled) }
+    },
+    enabled ? '⏸ 停用定时语音播报' : '▶ 启用定时语音播报'
+  );
+
+  const intervalInput = el('input', {
+    type: 'text',
+    inputmode: 'numeric',
+    id: 'voice-interval',
+    value: String(state.voice.interval / 1000),
+    disabled: !speechOK,
+    placeholder: '5',
+    title: '正整数秒；留空启用时默认 5 秒',
+    on: {
+      input: (e) => {
+        // Strip non-digit characters as user types (allow empty).
+        const cleaned = e.target.value.replace(/\D+/g, '');
+        if (cleaned !== e.target.value) {
+          const cursor = e.target.selectionStart;
+          e.target.value = cleaned;
+          // Best-effort cursor preservation.
+          try { e.target.setSelectionRange(cursor - 1, cursor - 1); } catch { /* ignore */ }
+        }
+      },
+      blur: (e) => handleVoiceIntervalBlur(e.target.value),
+      keydown: (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleVoiceIntervalBlur(e.target.value);
+          e.target.blur();
+        }
+      }
+    }
+  });
+
+  const volSlider = el('input', {
+    type: 'range',
+    id: 'voice-volume',
+    value: String(state.voice.volume),
+    disabled: !speechOK,
+    on: { input: (e) => handleVoiceVolumeChange(Number(e.target.value)) }
+  });
+  volSlider.min = '0';
+  volSlider.max = '100';
+  volSlider.step = '5';
+
+  const testBtn = el(
+    'button',
+    { on: { click: handleTestSpeech }, disabled: !speechOK },
+    '🎤 测试声音'
+  );
+
+  // Row 1: main toggle + interval + volume + test
+  const row1 = el(
+    'div',
+    { class: 'ctl-row' },
+    toggleBtn,
+    el(
+      'label',
+      { class: 'ctl-inline' },
+      el('span', { class: 'ctl-inline-label' }, '间隔:'),
+      intervalInput,
+      el('span', { class: 'ctl-inline-label' }, '秒')
+    ),
+    el(
+      'label',
+      { class: 'ctl-inline ctl-volume-wrap' },
+      el('span', { class: 'ctl-inline-label' }, '音量:'),
+      volSlider,
+      el('span', { class: 'volume-label', id: 'voice-volume-label' }, `${state.voice.volume}%`)
+    ),
+    testBtn
+  );
+
+  // Row 2: custom broadcast content
+  const row2 = el(
+    'div',
+    { class: 'ctl-row' },
+    el('span', { class: 'ctl-inline-label' }, '播报内容:'),
+    ...state.voice.fieldsOrder.map((k, i) => renderFieldToggle(k, FIELD_LABELS[k], i)),
+    el(
+      'span',
+      { class: 'ctl-hint' },
+      `订阅 ${state.subscribed.size}（行尾 🔊 列勾选）`
+    )
+  );
+
+  const smart = state.voice.smartSchedule || DEFAULT_SMART_SCHEDULE;
+  const row3 = el(
+    'div',
+    { class: 'ctl-row voice-schedule-row' },
+    el('span', { class: 'ctl-inline-label' }, '交易时段:'),
+    renderVoiceScheduleToggle('enabled', '智能交易时段', smart.enabled),
+    renderVoiceScheduleToggle('pauseLunchBreak', '午休暂停/下午恢复', smart.pauseLunchBreak, !smart.enabled),
+    renderVoiceScheduleToggle('autoStopAfterClose', '收盘自动停止', smart.autoStopAfterClose, !smart.enabled),
+    renderVoiceScheduleToggle('autoStartAuction', '集合竞价自动开始', smart.autoStartAuction, !smart.enabled)
+  );
+
+  if (!speechOK) {
+    bar.appendChild(el('div', { class: 'ctl-warn' }, '⚠ 当前浏览器不支持语音合成 (Web Speech API)，相关功能不可用。'));
+  }
+  bar.appendChild(row1);
+  bar.appendChild(row2);
+  bar.appendChild(row3);
+}
+
+function renderVoiceScheduleToggle(key, label, checked, disabled = false) {
+  return el(
+    'label',
+    { class: 'schedule-toggle' + (checked ? ' active' : '') },
+    el('input', {
+      type: 'checkbox',
+      checked: !!checked,
+      disabled: !!disabled,
+      on: { change: (e) => handleVoiceScheduleChange(key, e.target.checked) }
+    }),
+    label
+  );
+}
+
+function renderFieldToggle(key, label, index) {
+  const checked = !!state.voice.fields[key];
+  const order = state.voice.fieldsOrder;
+  const isFirst = index === 0;
+  const isLast = index === order.length - 1;
+  return el(
+    'div',
+    { class: 'field-toggle' + (checked ? ' active' : '') },
+    el(
+      'label',
+      { class: 'field-toggle-inner', title: '点击切换启用/禁用' },
+      el('input', {
+        type: 'checkbox',
+        checked,
+        'data-field': key,
+        on: { change: (e) => handleVoiceFieldChange(key, e.target.checked) }
+      }),
+      label
+    ),
+    el(
+      'div',
+      { class: 'field-order' },
+      el(
+        'button',
+        {
+          class: 'field-move',
+          type: 'button',
+          disabled: isFirst,
+          title: '上移',
+          on: { click: () => handleMoveField(key, 'up') }
+        },
+        '▲'
+      ),
+      el(
+        'button',
+        {
+          class: 'field-move',
+          type: 'button',
+          disabled: isLast,
+          title: '下移',
+          on: { click: () => handleMoveField(key, 'down') }
+        },
+        '▼'
+      )
+    )
+  );
+}
+
+// Update only the subscription-count hint in the voice bar.
+// Used by data refreshes and per-row subscription toggles to avoid rebuilding
+// the input/button/sliders (which would clobber in-flight user edits + focus).
+function updateVoiceHint() {
+  const hint = document.querySelector('#voice-bar .ctl-hint');
+  if (hint) {
+    hint.textContent = `订阅 ${state.subscribed.size}（行尾 🔊 列勾选）`;
+  }
+}
+
+function renderAlertBar() {
+  const bar = document.getElementById('alert-bar');
+  if (!bar) return;
+  bar.innerHTML = '';
+  const notifOK = isNotificationSupported();
+
+  const enabled = state.alert.enabled;
+  const toggleBtn = el(
+    'button',
+    {
+      class: enabled ? 'btn-ctl-active' : 'btn-ctl-toggle',
+      title: '点击切换价格阈值提醒（达到阈值时语音+通知）',
+      on: { click: () => handleAlertEnabledChange(!state.alert.enabled) }
+    },
+    enabled ? '⏸ 停用价格提醒' : '🔔 启用价格提醒'
+  );
+
+  const thresholdInput = el('input', {
+    type: 'text',
+    inputmode: 'decimal',
+    id: 'alert-threshold',
+    value: String(state.alert.threshold),
+    placeholder: '5',
+    title: '0.1 - 50 之间的数字（允许小数）；留空启用时默认 5',
+    on: {
+      input: (e) => {
+        // Allow only digits and a single dot.
+        let cleaned = e.target.value.replace(/[^\d.]/g, '');
+        const firstDot = cleaned.indexOf('.');
+        if (firstDot >= 0) {
+          cleaned = cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
+        }
+        if (cleaned !== e.target.value) {
+          const cursor = e.target.selectionStart;
+          e.target.value = cleaned;
+          try { e.target.setSelectionRange(cursor - 1, cursor - 1); } catch { /* ignore */ }
+        }
+      },
+      blur: (e) => handleAlertThresholdBlur(e.target.value),
+      keydown: (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleAlertThresholdBlur(e.target.value);
+          e.target.blur();
+        }
+      }
+    }
+  });
+
+  const testBtn = el(
+    'button',
+    {
+      on: { click: handleTestAlert },
+      title: '用第一个订阅标的的当前涨跌幅模拟一次提醒'
+    },
+    '🔔 测试提醒'
+  );
+
+  // Row 1: main toggle + threshold input + test (left) + permission (right)
+  // Build permission bits to push-right within the same row.
+  const permBits = [];
+  if (notifOK) {
+    permBits.push(
+      el('span', { class: 'perm-label ctl-push-right' }, `桌面通知权限: ${state.notifPermission}`)
+    );
+    if (state.notifPermission !== 'granted') {
+      permBits.push(
+        el('button', { on: { click: handleRequestNotification } }, '请求通知权限')
+      );
+    }
+  } else {
+    permBits.push(
+      el('span', { class: 'perm-label ctl-push-right' }, '浏览器不支持桌面通知（仅使用语音）')
+    );
+  }
+
+  const row1 = el(
+    'div',
+    { class: 'ctl-row' },
+    toggleBtn,
+    el(
+      'label',
+      { class: 'ctl-inline' },
+      el('span', { class: 'ctl-inline-label' }, '阈值: ±'),
+      thresholdInput,
+      el('span', { class: 'ctl-inline-label' }, '%')
+    ),
+    testBtn,
+    ...permBits
+  );
+
+  // Row 2: subscription hint
+  const row2 = el(
+    'div',
+    { class: 'ctl-row' },
+    el(
+      'span',
+      { class: 'ctl-hint' },
+      `订阅 ${state.subscribed.size}（行尾 🔊 列勾选）`
+    )
+  );
+
+  bar.appendChild(row1);
+  bar.appendChild(row2);
+}
+
+function updateAlertHint() {
+  const hint = document.querySelector('#alert-bar .ctl-hint');
+  if (hint) {
+    hint.textContent = `订阅 ${state.subscribed.size}（行尾 🔊 列勾选）`;
+  }
+}
+
+export function computeTenDayMomentum(klineData, lookbackDays = MOMENTUM_LOOKBACK_TRADING_DAYS) {
+  const items = klineData && Array.isArray(klineData.items) ? klineData.items : [];
+  if (items.length < 2) return null;
+  const last = items[items.length - 1];
+  const startIndex = Math.max(0, items.length - 1 - Math.max(1, Number(lookbackDays) || MOMENTUM_LOOKBACK_TRADING_DAYS));
+  const start = items[startIndex];
+  const startClose = Number(start && start.close);
+  const lastClose = Number(last && last.close);
+  if (!Number.isFinite(startClose) || !Number.isFinite(lastClose) || startClose <= 0 || lastClose <= 0) return null;
+  return {
+    gainPercent: (lastClose / startClose - 1) * 100,
+    startClose,
+    lastClose,
+    startDate: chartTimeToDate(start.time),
+    endDate: chartTimeToDate(last.time)
+  };
+}
+
+function sortMomentumItems(items, pinnedCodes = state.momentum.pinnedCodes) {
+  const pins = pinnedCodes || new Set();
+  return [...(Array.isArray(items) ? items : [])].sort((a, b) => {
+    const ap = pins.has(a.code) ? 1 : 0;
+    const bp = pins.has(b.code) ? 1 : 0;
+    if (ap !== bp) return bp - ap;
+    const ag = Number(a.gainPercent) || 0;
+    const bg = Number(b.gainPercent) || 0;
+    if (ag !== bg) return bg - ag;
+    const aa = Number(a.amount) || 0;
+    const ba = Number(b.amount) || 0;
+    if (aa !== ba) return ba - aa;
+    return String(a.code || '').localeCompare(String(b.code || ''));
+  });
+}
+
+function renderMomentumSection() {
+  const wrap = document.getElementById('momentum-section');
+  if (!wrap) return;
+  const s = state.momentum;
+  for (const code of s.expandedCodes || []) {
+    const inst = s.chartInstances.get(code);
+    const ctl = momentumChartCtlMap.get(code);
+    rememberRange(inst, ctl, '_visibleRange');
+    if (ctl) {
+      try { ctl.destroy(); } catch { /* ignore */ }
+      momentumChartCtlMap.delete(code);
+    }
+  }
+  wrap.innerHTML = '';
+  const statusBits = [];
+  if (s.loading) statusBits.push(`扫描中 ${s.scanned}/${s.total || '?'}`);
+  else if (s.lastUpdate) statusBits.push(`更新于 ${s.lastUpdate.toLocaleTimeString()}`);
+  if (s.error) statusBits.push(`错误: ${s.error}`);
+  const head = el(
+    'header',
+    { class: 'momentum-header' },
+    el('div', { class: 'momentum-title' }, `10日涨幅超${MOMENTUM_THRESHOLD_PCT}%`),
+    el('div', { class: 'momentum-actions' },
+      el(
+        'button',
+        {
+          disabled: s.loading,
+          on: { click: handleMomentumScan }
+        },
+        '扫描'
+      ),
+      el(
+        'button',
+        {
+          disabled: !s.loading,
+          on: { click: stopMomentumScan }
+        },
+        '停止'
+      ),
+      s.selectedCodes && s.selectedCodes.size
+        ? el('span', { class: 'momentum-status' }, `${s.selectedCodes.size} 已选`)
+        : null,
+      el('span', { class: 'momentum-status' }, statusBits.join(' · '))
+    )
+  );
+  wrap.appendChild(head);
+
+  const items = sortMomentumItems(s.items, s.pinnedCodes);
+  if (!items.length) {
+    wrap.appendChild(el('div', { class: 'momentum-empty' }, s.loading ? '扫描中...' : '暂无结果'));
+    return;
+  }
+
+  const table = el('table', { class: 'momentum-table' });
+  const colCount = 11;
+  table.appendChild(el(
+    'thead',
+    {},
+    el('tr', {},
+      el('th', { class: 'col-check' }, buildMomentumHeaderCheckbox(items)),
+      el('th', { class: 'col-sub', title: '勾选订阅语音播报与价格提醒' }, '播报'),
+      el('th', {}, '固定'),
+      el('th', {}, '代码'),
+      el('th', {}, '名称'),
+      el('th', { class: 'num' }, '10日涨幅'),
+      el('th', { class: 'num' }, '现价'),
+      el('th', { class: 'num' }, '当日涨幅'),
+      el('th', { class: 'num' }, '成交额'),
+      el('th', {}, '行业'),
+      el('th', {}, '异动/原因')
+    )
+  ));
+  const tbody = el('tbody', {});
+  for (const item of items) {
+    const pinned = s.pinnedCodes.has(item.code);
+    const selected = s.selectedCodes && s.selectedCodes.has(item.code);
+    const subscribed = state.subscribed.has(item.code);
+    const active = s.expandedCodes && s.expandedCodes.has(item.code);
+    const dir = priceDirection(Number(item.changePercent));
+    tbody.appendChild(el(
+      'tr',
+      {
+        class: [
+          pinned ? 'momentum-pinned' : '',
+          active ? 'active' : ''
+        ].filter(Boolean).join(' '),
+        'data-momentum-code': item.code,
+        title: active ? '点击关闭 K 线' : '点击查看 K 线',
+        on: {
+          click: (e) => handleMomentumRowClick(item.code, e)
+        }
+      },
+      el('td', {},
+        el('input', {
+          type: 'checkbox',
+          'data-momentum-select': item.code,
+          checked: !!selected,
+          on: {
+            click: (e) => e.stopPropagation(),
+            change: (e) => handleMomentumToggleSelect(item.code, e.target.checked)
+          }
+        })
+      ),
+      el('td', {},
+        el('input', {
+          type: 'checkbox',
+          'data-momentum-sub': item.code,
+          title: '订阅播报/提醒',
+          checked: !!subscribed,
+          on: {
+            click: (e) => e.stopPropagation(),
+            change: (e) => handleToggleSubscribe(item.code, e.target.checked)
+          }
+        })
+      ),
+      el('td', {},
+        el('button', {
+          class: 'pin-btn' + (pinned ? ' active' : ''),
+          title: pinned ? '取消固定' : '固定',
+          on: {
+            click: (e) => {
+              e.stopPropagation();
+              handleMomentumPinToggle(item.code);
+            }
+          }
+        }, pinned ? '取消固定' : '固定')
+      ),
+      el('td', { class: 'code' }, item.code),
+      el('td', {}, item.name || '-'),
+      el('td', { class: 'num up' }, formatPercent(item.gainPercent)),
+      el('td', { class: 'num' }, formatNumber(item.price)),
+      el('td', { class: `num ${dir}` }, formatPercent(item.changePercent)),
+      el('td', { class: 'num' }, formatAmount(item.amount)),
+      el('td', { class: 'momentum-industry' }, item.industry || '-'),
+      el('td', { class: 'momentum-reason', title: item.interpretation || item.reason || '' }, getMomentumReasonText(item))
+    ));
+    if (active) {
+      tbody.appendChild(renderMomentumChartRow(item, colCount));
+    }
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  for (const code of s.expandedCodes || []) {
+    mountMomentumChart(code);
+  }
+}
+
+function buildMomentumHeaderCheckbox(items) {
+  const codes = (items || []).map((it) => it.code).filter(Boolean);
+  const selectedCount = codes.filter((code) => state.momentum.selectedCodes.has(code)).length;
+  const input = el('input', {
+    type: 'checkbox',
+    id: 'momentum-select-all',
+    title: '全选/取消全选强势股',
+    checked: codes.length > 0 && selectedCount === codes.length,
+    on: {
+      click: (e) => e.stopPropagation(),
+      change: (e) => {
+        if (e.target.checked) {
+          state.momentum.selectedCodes = new Set(codes);
+        } else {
+          for (const code of codes) state.momentum.selectedCodes.delete(code);
+        }
+        renderMomentumSection();
+      }
+    }
+  });
+  input.indeterminate = selectedCount > 0 && selectedCount < codes.length;
+  return input;
+}
+
+function handleMomentumToggleSelect(code, checked) {
+  if (!code) return;
+  if (checked) state.momentum.selectedCodes.add(code);
+  else state.momentum.selectedCodes.delete(code);
+  renderMomentumSection();
+}
+
+function getMomentumReasonText(item) {
+  if (!item) return '-';
+  return item.reason || item.limitStats || item.anomaly || `10日涨幅${formatPercent(item.gainPercent)}`;
+}
+
+function renderMomentumChartRow(item, colCount) {
+  const inst = state.momentum.chartInstances.get(item.code);
+  const period = (inst && inst.period) || DEFAULT_PERIOD;
+  const tabs = el('div', { class: 'period-tabs' });
+  for (const p of Object.keys(PERIODS)) {
+    tabs.appendChild(el('button', {
+      class: 'period-tab momentum-period-tab' + (p === period ? ' active' : ''),
+      'data-period': p,
+      on: {
+        click: (e) => {
+          e.stopPropagation();
+          handleMomentumKlinePeriodChange(item.code, p);
+        }
+      }
+    }, PERIOD_LABELS[p]));
+  }
+  const status = el('div', { class: 'chart-status', id: `momentum-chart-status-${item.code}` });
+  const statusParts = [];
+  if (inst && inst.loading) statusParts.push('图表加载中...');
+  if (inst && inst.error) statusParts.push(`错误: ${inst.error}`);
+  if (inst && inst.klineData && !inst.loading && !inst.error) {
+    statusParts.push(`${PERIOD_LABELS[period] || period} · ${inst.klineData.items.length} 根`);
+  }
+  status.textContent = statusParts.join(' · ');
+  if (inst && inst.error) status.className = 'chart-status has-error';
+  const host = el('div', { class: 'momentum-chart-host chart-host', id: `momentum-chart-host-${item.code}` });
+  return el(
+    'tr',
+    { class: 'momentum-chart-row', 'data-momentum-chart-for': item.code },
+    el('td', { colspan: String(colCount), class: 'chart-td' },
+      el('div', { class: 'chart-inline-header' },
+        el('strong', {}, item.name || item.code),
+        el('span', { class: 'chart-inline-code' }, item.code),
+        tabs,
+        el('button', {
+          class: 'chart-reload',
+          title: '跳过缓存，从网络强制重新拉取',
+          on: {
+            click: (e) => {
+              e.stopPropagation();
+              handleMomentumForceReloadChart(item.code);
+            }
+          }
+        }, '重新加载'),
+        el('button', {
+          class: 'chart-close',
+          title: '关闭',
+          on: {
+            click: (e) => {
+              e.stopPropagation();
+              closeMomentumChart(item.code);
+            }
+          }
+        }, '关闭')
+      ),
+      status,
+      host
+    )
+  );
+}
+
+function handleMomentumRowClick(code, e) {
+  const target = e && e.target;
+  if (target && target.tagName === 'INPUT') return;
+  if (target && target.tagName === 'BUTTON') return;
+  if (target && target.closest && target.closest('.momentum-chart-row')) return;
+  if (state.momentum.expandedCodes.has(code)) closeMomentumChart(code);
+  else openMomentumChart(code);
+}
+
+function stopMomentumScan() {
+  if (state.momentum.abort) {
+    try { state.momentum.abort.abort(); } catch { /* ignore */ }
+  }
+  state.momentum.abort = null;
+  state.momentum.loading = false;
+  renderMomentumSection();
+}
+
+function mergePinnedMomentumItems(nextItems) {
+  const byCode = new Map((Array.isArray(nextItems) ? nextItems : []).map((it) => [it.code, it]));
+  const oldByCode = new Map((state.momentum.items || []).map((it) => [it.code, it]));
+  for (const code of state.momentum.pinnedCodes) {
+    if (byCode.has(code)) continue;
+    const old = oldByCode.get(code);
+    if (old) byCode.set(code, { ...old, pinnedOnly: true });
+  }
+  return sortMomentumItems([...byCode.values()], state.momentum.pinnedCodes);
+}
+
+async function fetchMomentumUniverse(signal) {
+  try {
+    const spot = await fetchAktoolsSpotList({ signal });
+    if (Array.isArray(spot) && spot.length) return spot;
+  } catch (e) {
+    if (e && e.name === 'AbortError') throw e;
+  }
+  const fallbackCodes = [...new Set([
+    ...state.watchList,
+    ...state.limitUp.items.map((it) => it.code)
+  ])].filter((code) => /^(sh|sz|bj)\d{6}$/i.test(code));
+  if (!fallbackCodes.length) return [];
+  const quotes = await fetchQuotes(fallbackCodes, { signal });
+  return quotes;
+}
+
+async function scanMomentumCandidate(candidate, signal) {
+  if (!candidate || !/^(sh|sz|bj)\d{6}$/i.test(candidate.code)) return null;
+  const data = await fetchKline(candidate.code, { period: '1d', signal });
+  const stats = computeTenDayMomentum(data);
+  if (!stats || stats.gainPercent < MOMENTUM_THRESHOLD_PCT) return null;
+  const limitUpItem = (state.limitUp.items || []).find((it) => it && it.code === candidate.code);
+  const reason = candidate.reason || (limitUpItem && (limitUpItem.reason || limitUpItem.limitStats)) || '';
+  const interpretation = candidate.interpretation || (limitUpItem && limitUpItem.interpretation) || '';
+  return {
+    code: candidate.code,
+    name: candidate.name || (data && data.name) || candidate.code,
+    price: Number(candidate.price) || stats.lastClose,
+    changePercent: Number(candidate.changePercent) || 0,
+    amount: Number(candidate.amount) || 0,
+    volumeRatio: Number(candidate.volumeRatio) || 0,
+    industry: candidate.industry || (limitUpItem && limitUpItem.industry) || '',
+    reason,
+    interpretation,
+    limitStats: candidate.limitStats || (limitUpItem && limitUpItem.limitStats) || '',
+    anomaly: reason ? '' : `10日涨幅超${MOMENTUM_THRESHOLD_PCT}%`,
+    ...stats
+  };
+}
+
+async function handleMomentumScan() {
+  if (state.momentum.loading) return;
+  if (state.momentum.abort) {
+    try { state.momentum.abort.abort(); } catch { /* ignore */ }
+  }
+  const abort = new AbortController();
+  state.momentum.abort = abort;
+  state.momentum.loading = true;
+  state.momentum.error = null;
+  state.momentum.scanned = 0;
+  state.momentum.total = 0;
+  renderMomentumSection();
+  try {
+    const universe = await fetchMomentumUniverse(abort.signal);
+    if (!universe.length) throw new Error('没有可扫描的股票池');
+    state.momentum.total = universe.length;
+    renderMomentumSection();
+    const found = [];
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < universe.length) {
+        const idx = cursor;
+        cursor += 1;
+        if (abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+        const candidate = universe[idx];
+        try {
+          const item = await scanMomentumCandidate(candidate, abort.signal);
+          if (item) found.push(item);
+        } catch (e) {
+          if (e && e.name === 'AbortError') throw e;
+        } finally {
+          state.momentum.scanned += 1;
+          if (state.momentum.scanned % 25 === 0 || state.momentum.scanned === state.momentum.total) {
+            renderMomentumSection();
+          }
+        }
+      }
+    };
+    const workerCount = Math.min(MOMENTUM_SCAN_CONCURRENCY, universe.length);
+    await Promise.all(Array.from({ length: workerCount }, worker));
+    state.momentum.items = mergePinnedMomentumItems(found);
+    for (const item of state.momentum.items) {
+      if (item && item.code) state.quotes.set(item.code, { ...item, type: 'stock' });
+    }
+    state.momentum.lastUpdate = new Date();
+  } catch (e) {
+    if (e && e.name !== 'AbortError') state.momentum.error = e.message || String(e);
+  } finally {
+    if (state.momentum.abort === abort) state.momentum.abort = null;
+    state.momentum.loading = false;
+    renderMomentumSection();
+  }
+}
+
+function handleMomentumPinToggle(code) {
+  if (!code) return;
+  const pins = new Set(state.momentum.pinnedCodes);
+  if (pins.has(code)) pins.delete(code);
+  else pins.add(code);
+  state.momentum.pinnedCodes = pins;
+  setMomentumPinnedCodes([...pins]);
+  state.momentum.items = pins.has(code)
+    ? mergePinnedMomentumItems(state.momentum.items)
+    : state.momentum.items.filter((it) => it.code !== code || !it.pinnedOnly);
+  renderMomentumSection();
+}
+
+function openMomentumChart(code) {
+  if (!code || state.momentum.expandedCodes.has(code)) return;
+  state.momentum.expandedCodes.add(code);
+  state.momentum.chartInstances.set(code, createChartState(DEFAULT_PERIOD));
+  renderMomentumSection();
+  loadMomentumKline(code);
+}
+
+function closeMomentumChart(code) {
+  if (!code || !state.momentum.expandedCodes.has(code)) return;
+  state.momentum.expandedCodes.delete(code);
+  const ctl = momentumChartCtlMap.get(code);
+  if (ctl) {
+    try { ctl.destroy(); } catch { /* ignore */ }
+    momentumChartCtlMap.delete(code);
+  }
+  const inst = state.momentum.chartInstances.get(code);
+  if (inst && inst.abort) {
+    try { inst.abort.abort(); } catch { /* ignore */ }
+  }
+  state.momentum.chartInstances.delete(code);
+  renderMomentumSection();
+}
+
+function handleMomentumKlinePeriodChange(code, period) {
+  if (!code || !isValidPeriod(period)) return;
+  const inst = state.momentum.chartInstances.get(code);
+  if (!inst || inst.period === period) return;
+  inst.period = period;
+  inst.klineData = null;
+  inst.loading = true;
+  inst.error = null;
+  inst._visibleRange = null;
+  if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
+  renderMomentumSection();
+  loadMomentumKline(code);
+}
+
+function handleMomentumForceReloadChart(code) {
+  const inst = state.momentum.chartInstances.get(code);
+  if (!inst) return;
+  inst.klineData = null;
+  inst.loading = true;
+  inst.error = null;
+  inst._visibleRange = null;
+  if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
+  renderMomentumSection();
+  loadMomentumKline(code);
+}
+
+function updateMomentumChartStatusForCode(code) {
+  const inst = state.momentum.chartInstances.get(code);
+  const el2 = document.getElementById(`momentum-chart-status-${code}`);
+  if (!inst || !el2) return;
+  const parts = [];
+  if (inst.loading) parts.push('图表加载中...');
+  if (inst.error) parts.push('错误: ' + inst.error);
+  if (inst.klineData && !inst.loading && !inst.error) {
+    parts.push(`${PERIOD_LABELS[inst.period]} · ${inst.klineData.items.length} 根`);
+  }
+  el2.textContent = parts.join(' · ');
+  el2.className = 'chart-status' + (inst.error ? ' has-error' : '');
+}
+
+function mountMomentumChart(code) {
+  if (momentumChartCtlMap.has(code)) return;
+  const host = document.getElementById(`momentum-chart-host-${code}`);
+  if (!host) return;
+  const inst = state.momentum.chartInstances.get(code);
+  try {
+    const ctl = createKlineChart(host, { theme: getCurrentTheme(), height: 320, period: inst ? inst.period : DEFAULT_PERIOD });
+    momentumChartCtlMap.set(code, ctl);
+    if (inst && inst.klineData) applyMomentumKlineToChart(code);
+  } catch (e) {
+    if (inst) inst.error = e.message || String(e);
+  }
+}
+
+function applyMomentumKlineToChart(code) {
+  const ctl = momentumChartCtlMap.get(code);
+  const inst = state.momentum.chartInstances.get(code);
+  if (!ctl || !inst || !inst.klineData) return;
+  if (typeof ctl.setPeriod === 'function') ctl.setPeriod(inst.period);
+  const candles = formatCandleColors(inst.klineData.items, inst.klineData.code, inst.klineData.name);
+  ctl.setKline(candles);
+  ctl.setVolume(formatVolumeBars(inst.klineData.items));
+  ctl.clearMA();
+  for (let i = 0; i < MA_PERIODS.length; i++) {
+    const n = MA_PERIODS[i];
+    const series = calcMA(inst.klineData.items, n);
+    if (series.length) ctl.setMA(n, series, MA_COLORS[i] || '#888');
+  }
+  restoreRangeOrFit(ctl, inst._visibleRange);
+  updateMomentumChartStatusForCode(code);
+}
+
+async function loadMomentumKline(code) {
+  const inst = state.momentum.chartInstances.get(code);
+  if (!inst) return;
+  if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
+  inst.abort = new AbortController();
+  inst.loading = true;
+  inst.error = null;
+  updateMomentumChartStatusForCode(code);
+  try {
+    const data = await fetchKline(code, { period: inst.period, signal: inst.abort.signal });
+    if (!data) throw new Error('未能获取 K 线数据');
+    if (!data.items.length) throw new Error('K 线数据为空');
+    if (!state.momentum.expandedCodes.has(code)) return;
+    inst.klineData = data;
+    inst.loading = false;
+    applyMomentumKlineToChart(code);
+  } catch (e) {
+    if (e && e.name !== 'AbortError') inst.error = e.message || String(e);
+    inst.loading = false;
+    updateMomentumChartStatusForCode(code);
+  } finally {
+    state.momentum.chartInstances.set(code, inst);
+  }
+}
+
+function buildWatchHeaderCheckbox() {
+  const total = state.watchList.length;
+  const checkedCount = [...state.selected].filter((code) => state.watchList.includes(code)).length;
+  const input = el('input', {
+    type: 'checkbox',
+    id: 'watch-select-all',
+    title: '全选/取消全选',
+    checked: total > 0 && checkedCount === total,
+    on: {
+      click: (e) => e.stopPropagation(),
+      change: (e) => {
+        if (e.target.checked) handleSelectAll();
+        else handleSelectNone();
+      }
+    }
+  });
+  input.indeterminate = checkedCount > 0 && checkedCount < total;
+  return input;
+}
+
+function updateWatchHeaderCheckbox() {
+  const input = document.getElementById('watch-select-all');
+  if (!input) return;
+  const total = state.watchList.length;
+  const checkedCount = [...state.selected].filter((code) => state.watchList.includes(code)).length;
+  input.checked = total > 0 && checkedCount === total;
+  input.indeterminate = checkedCount > 0 && checkedCount < total;
+}
+
+function renderTable() {
+  // Destroy all live chart instances BEFORE we wipe #table-wrap. Each chart
+  // ctl is attached to a <div class="chart-host"> inside the current chart-row;
+  // clearing wrap.innerHTML detaches the host but leaves the ctl alive in
+  // chartInstanceMap. The next renderInlineChartRow creates a fresh host, but
+  // mountChartForCode sees chartInstanceMap.has(code) and skips re-creating
+  // the ctl — leaving the new host empty. Destroy up front so the loop after
+  // table-build can recreate cleanly.
+  for (const code of [...state.expandedCodes]) {
+    const inst = state.chartInstances.get(code);
+    const ctl = chartInstanceMap.get(code);
+    if (ctl) {
+      rememberRange(inst, ctl, '_visibleRange');
+      try { ctl.destroy(); } catch { /* ignore */ }
+      chartInstanceMap.delete(code);
+    }
+    const intradayCtl = intradayChartCtlMap.get(code);
+    if (intradayCtl) {
+      rememberRange(inst, intradayCtl, '_intradayVisibleRange');
+      try { intradayCtl.destroy(); } catch { /* ignore */ }
+      intradayChartCtlMap.delete(code);
+    }
+  }
+
+  const wrap = document.getElementById('table-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  if (!state.watchList.length) {
+    wrap.appendChild(el('div', { class: 'empty' }, '空空如也。先在上方输入代码添加吧～'));
+    return;
+  }
+
+  const table = el('table', { class: 'watch-table' });
+  const thead = el(
+    'thead',
+    {},
+    el(
+      'tr',
+      {},
+      el('th', { class: 'col-check', title: '勾选用于批量删除/导出' }, buildWatchHeaderCheckbox()),
+      el('th', { class: 'col-sub', title: '勾选订阅语音播报与价格提醒' }, '🔊 订阅'),
+      el('th', {}, '代码'),
+      el('th', {}, '名称'),
+      el('th', { class: 'num' }, '现价'),
+      el('th', { class: 'num' }, '涨跌幅'),
+      el('th', { class: 'num' }, '开盘(涨幅)'),
+      el('th', { class: 'num' }, '量比'),
+      el('th', { class: 'num' }, '成交额'),
+      el('th', { class: 'col-op' }, '操作')
+    )
+  );
+  table.appendChild(thead);
+
+  const tbody = el('tbody', { id: 'watch-tbody' });
+  for (const code of state.watchList) {
+    const isActive = state.expandedCodes.has(code);
+    tbody.appendChild(renderRow(code, isActive));
+    if (isActive) {
+      tbody.appendChild(renderInlineChartRow(code));
+    }
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+
+  for (const code of state.expandedCodes) {
+    mountChartForCode(code);
+  }
+}
+
+function renderRow(code, isActive) {
+  const q = state.quotes.get(code) || { code };
+  const dir = priceDirection(Number(q.changePercent));
+  const checkbox = el('input', {
+    type: 'checkbox',
+    'data-code': code,
+    checked: state.selected.has(code),
+    on: {
+      change: (e) => handleToggleSelect(code, e.target.checked),
+      click: (e) => e.stopPropagation()
+    }
+  });
+  const subCheckbox = el('input', {
+    type: 'checkbox',
+    'data-code-sub': code,
+    title: '订阅播报/提醒',
+    checked: state.subscribed.has(code),
+    on: {
+      change: (e) => handleToggleSubscribe(code, e.target.checked),
+      click: (e) => e.stopPropagation()
+    }
+  });
+  return el(
+    'tr',
+    {
+      'data-code': code,
+      class: isActive ? 'active' : null,
+      title: isActive ? '点击关闭 K 线' : '点击查看 K 线',
+      on: { click: (e) => handleRowClick(code, e) }
+    },
+    el('td', { class: 'col-check' }, checkbox),
+    el('td', { class: 'col-sub' }, subCheckbox),
+    el('td', { class: 'code' }, code),
+    el('td', { class: 'name' }, q.name || '...'),
+    el('td', { class: `num ${dir}` }, formatNumber(q.price)),
+    el('td', { class: `num ${dir}` }, formatPercent(q.changePercent)),
+    el('td', { class: 'num' }, formatPriceWithPercent(q.open, q.openChangePercent)),
+    el('td', { class: 'num' }, formatNumber(q.volumeRatio)),
+    el('td', { class: 'num' }, formatAmount(q.amount)),
+    el(
+      'td',
+      { class: 'col-op' },
+      el(
+        'button',
+        {
+          class: 'btn-link',
+          on: {
+            click: (e) => {
+              e.stopPropagation();
+              handleRemove(code);
+            }
+          }
+        },
+        '删除'
+      )
+    )
+  );
+}
+
+function renderInlineChartRow(code) {
+  const inst = state.chartInstances.get(code);
+  if (!inst) {
+    return el('tr', { 'data-empty-for': code, class: 'chart-row' });
+  }
+  const q = state.quotes.get(code) || {};
+  const tr = el('tr', { class: 'chart-row', 'data-chart-for': code });
+  const td = el('td', { colspan: '10', class: 'chart-td' });
+
+  const title = el(
+    'div',
+    { class: 'chart-inline-header' },
+    el('strong', {}, q.name || code),
+    el('span', { class: 'chart-inline-code' }, code),
+    el('button', {
+      class: 'chart-reload',
+      id: `chart-reload-${code}`,
+      title: '跳过缓存，从网络强制重新拉取',
+      on: { click: (e) => { e.stopPropagation(); handleForceReloadChart(code); } }
+    }, '🔄 重新加载'),
+    el('button', {
+      class: 'chart-close',
+      title: '关闭',
+      on: { click: (e) => { e.stopPropagation(); closeChart(code); } }
+    }, '× 关闭')
+  );
+
+  const tabs = el('div', { class: 'period-tabs' });
+  for (const p of Object.keys(PERIODS)) {
+    tabs.appendChild(el('button', {
+      class: 'period-tab' + (p === inst.period ? ' active' : ''),
+      'data-period': p,
+      on: { click: (e) => { e.stopPropagation(); handlePeriodChange(p, code); } }
+    }, PERIOD_LABELS[p]));
+  }
+
+  const status = el('div', { class: 'chart-status', id: `chart-status-${code}` });
+  updateChartStatusForCode(code, status);
+
+  const intradayStatus = el('div', { class: 'chart-status', id: `intraday-status-${code}` });
+  updateIntradayStatusForCode(code, intradayStatus);
+
+  const intradayHost = el('div', {
+    class: 'intraday-chart-host',
+    id: `intraday-chart-host-${code}`
+  });
+
+  const host = el('div', {
+    class: 'chart-host',
+    id: `chart-host-${code}`
+  });
+
+  const split = el(
+    'div',
+    { class: 'chart-split' },
+    el(
+      'section',
+      { class: 'chart-pane chart-pane-intraday' },
+      el('div', { class: 'chart-pane-title' }, '分时图'),
+      intradayStatus,
+      intradayHost
+    ),
+    el(
+      'section',
+      { class: 'chart-pane chart-pane-kline' },
+      el('div', { class: 'chart-pane-title' }, 'K线图'),
+      status,
+      host
+    )
+  );
+
+  td.appendChild(title);
+  td.appendChild(tabs);
+  td.appendChild(split);
+  tr.appendChild(td);
+  return tr;
+}
+
+function renderStatus() {
+  const bar = document.getElementById('status-bar');
+  if (!bar) return;
+  const parts = [];
+  parts.push(`共 ${state.watchList.length} 项`);
+  if (state.selected.size) parts.push(`已选 ${state.selected.size}`);
+  if (state.subscribed.size) parts.push(`订阅 ${state.subscribed.size}`);
+  if (state.voice.enabled) parts.push(state.voicePausedBySchedule ? '🔇 智能暂停' : '🔊');
+  if (state.alert.enabled) parts.push(`🔔 ±${state.alert.threshold}%`);
+  if (state.loading) parts.push('加载中...');
+  if (state.lastUpdate) {
+    parts.push(`更新于 ${state.lastUpdate.toLocaleTimeString()}`);
+  }
+  if (state.error) parts.push(`错误: ${state.error}`);
+  bar.textContent = parts.join(' · ');
+}
+
+// Per-code chart status text update. Pass the statusEl to update a fresh node
+// (used during inline-row construction), or look it up by id.
+function updateChartStatusForCode(code, statusEl) {
+  const inst = state.chartInstances.get(code);
+  if (!inst) return;
+  const el2 = statusEl || document.getElementById(`chart-status-${code}`);
+  if (!el2) return;
+  const parts = [];
+  if (inst.loading) parts.push('图表加载中...');
+  if (inst.error) parts.push('错误: ' + inst.error);
+  if (inst.klineData && !inst.loading && !inst.error) {
+    parts.push(`${PERIOD_LABELS[inst.period]} · ${inst.klineData.items.length} 根`);
+  }
+  el2.textContent = parts.join(' · ');
+  el2.className = 'chart-status' + (inst.error ? ' has-error' : '');
+}
+
+function getPrevCloseForDate(items, date) {
+  if (!Array.isArray(items) || !date) return null;
+  for (let i = 0; i < items.length; i++) {
+    if (chartTimeToDate(items[i] && items[i].time) !== date) continue;
+    const prev = i > 0 ? Number(items[i - 1].close) : NaN;
+    return Number.isFinite(prev) && prev > 0 ? prev : null;
+  }
+  return null;
+}
+
+function isLatestKlineDate(inst, date) {
+  if (!inst || !inst.klineData || !Array.isArray(inst.klineData.items)) return false;
+  return !!date && getLastKlineDate(inst.klineData.items) === date;
+}
+
+function intradaySourceLabel(source) {
+  if (source === 'aktools-stock_intraday_em') return 'AKTools成交';
+  if (source === 'aktools-stock_zh_a_hist_min_em') return 'AKTools分钟';
+  if (source === 'eastmoney-trends2') return '东财备用';
+  if (source === 'eastmoney-kline-1m') return '东财K线备用';
+  return source ? String(source) : '';
+}
+
+function intradayStatusParts(inst) {
+  const parts = [];
+  if (inst.intradayLoading) parts.push('分时加载中...');
+  if (inst.intradayError) parts.push('错误: ' + inst.intradayError);
+  if (
+    inst.intradayData &&
+    Array.isArray(inst.intradayData.items) &&
+    inst.intradayData.items.length &&
+    !inst.intradayLoading &&
+    !inst.intradayError
+  ) {
+    const items = inst.intradayData.items || [];
+    const last = items[items.length - 1] || {};
+    const source = intradaySourceLabel(inst.intradayData.source);
+    const summary = [`${inst.selectedTradeDate || ''} · ${items.length} 点`];
+    if (Number.isFinite(Number(last.close))) summary.push(formatNumber(last.close));
+    if (Number.isFinite(Number(last.percent))) summary.push(formatPercent(last.percent));
+    if (source) summary.push(source);
+    parts.push(summary.join(' · '));
+  } else if (!inst.intradayLoading && !inst.intradayError) {
+    parts.push(inst.selectedTradeDate ? `${inst.selectedTradeDate} · 暂无分时` : '点击右侧日K查看分时');
+  }
+  return parts;
+}
+
+function updateIntradayStatusForCode(code, statusEl) {
+  const inst = state.chartInstances.get(code);
+  if (!inst) return;
+  const el2 = statusEl || document.getElementById(`intraday-status-${code}`);
+  if (!el2) return;
+  el2.textContent = intradayStatusParts(inst).join(' · ');
+  el2.className = 'chart-status' + (inst.intradayError ? ' has-error' : '');
+}
+
+function updateThemeButton() {
+  const btn = document.getElementById('theme-toggle');
+  if (!btn) return;
+  const theme = getCurrentTheme();
+  btn.textContent = THEME_ICONS[theme] + ' ' + THEME_LABELS[theme];
+  btn.title = `当前: ${THEME_LABELS[theme]} (点击切换)`;
+}
+
+function renderData() {
+  renderTable();
+  renderMomentumSection();
+  updateVoiceHint();
+  updateAlertHint();
+  renderStatus();
+}
+
+function handleToggleTheme() {
+  toggleTheme();
+  updateThemeButton();
+  for (const ctl of chartInstanceMap.values()) {
+    if (!ctl) continue;
+    try {
+      ctl.applyTheme(getCurrentTheme());
+    } catch {
+      /* ignore */
+    }
+  }
+  for (const ctl of intradayChartCtlMap.values()) {
+    if (!ctl) continue;
+    try { ctl.applyTheme(getCurrentTheme()); } catch { /* ignore */ }
+  }
+  for (const ctl of limitUpChartCtlMap.values()) {
+    if (!ctl) continue;
+    try { ctl.applyTheme(getCurrentTheme()); } catch { /* ignore */ }
+  }
+  for (const ctl of limitUpIntradayChartCtlMap.values()) {
+    if (!ctl) continue;
+    try { ctl.applyTheme(getCurrentTheme()); } catch { /* ignore */ }
+  }
+  for (const ctl of momentumChartCtlMap.values()) {
+    if (!ctl) continue;
+    try { ctl.applyTheme(getCurrentTheme()); } catch { /* ignore */ }
+  }
+}
+
+function handleRefreshChange(e) {
+  const v = Number(e.target.value);
+  if (!REFRESH_OPTIONS.some((o) => o.value === v)) return;
+  state.refreshInterval = v;
+  patchSettings({ refreshInterval: v });
+  restartTimer();
+}
+
+function handleAdd() {
+  const input = document.getElementById('code-input');
+  if (!input) return;
+  const codes = parseBatchInput(input.value);
+  if (!codes.length) {
+    flashError('未识别到有效代码');
+    return;
+  }
+  const newCodes = [];
+  for (const code of codes) {
+    if (!state.watchList.includes(code)) {
+      addToWatchList(code);
+      newCodes.push(code);
+    }
+  }
+  state.watchList = getWatchList();
+  input.value = '';
+  input.focus();
+  renderData();
+  refreshNow();
+  // Phase 8: 添加即预热 K 线缓存
+  if (newCodes.length) {
+    preloadKlineForCodes(newCodes);
+  }
+}
+
+// Phase 8: 后台预拉 N 只股票的 1d K 线 (限流: 每批 3 + 间隔 200ms)
+function preloadKlineForCodes(codes) {
+  if (!Array.isArray(codes) || !codes.length) return;
+  const period = DEFAULT_PERIOD;  // '1d'
+  const batches = [];
+  for (let i = 0; i < codes.length; i += 3) {
+    batches.push(codes.slice(i, i + 3));
+  }
+  let idx = 0;
+  function runNextBatch() {
+    if (idx >= batches.length) return;
+    const batch = batches[idx++];
+    Promise.allSettled(batch.map(code => fetchKline(code, { period }).catch(() => null)))
+      .then(() => {
+        if (idx < batches.length) setTimeout(runNextBatch, 200);
+      });
+  }
+  setTimeout(runNextBatch, 0);
+}
+
+// Phase 8: 预拉涨停看板前 N 个涨停股的 1d K 线
+function preloadLimitUpTopCharts(n = 10) {
+  if (!Array.isArray(state.limitUp.items) || !state.limitUp.items.length) return;
+  const top = state.limitUp.items.slice(0, n);
+  preloadKlineForCodes(top.map(it => it.code));
+}
+
+function handleRemove(code) {
+  removeFromWatchList(code);
+  state.watchList = getWatchList();
+  state.selected.delete(code);
+  state.quotes.delete(code);
+  if (state.subscribed.delete(code)) persistSubscribed();
+  delete state.alertStates[code];
+  if (state.expandedCodes.has(code)) closeChart(code);
+  renderData();
+}
+
+function handleToggleSelect(code, checked) {
+  if (checked) state.selected.add(code);
+  else state.selected.delete(code);
+  updateWatchHeaderCheckbox();
+  renderStatus();
+}
+
+function handleSelectAll() {
+  state.selected = new Set(state.watchList);
+  renderData();
+}
+
+function handleSelectNone() {
+  state.selected.clear();
+  renderData();
+}
+
+function handleDeleteSelected() {
+  if (!state.selected.size) return;
+  if (!confirm(`确定删除选中的 ${state.selected.size} 个标的？`)) return;
+  const codes = [...state.selected];
+  removeFromWatchList(codes);
+  let subChanged = false;
+  for (const c of codes) {
+    state.quotes.delete(c);
+    if (state.subscribed.delete(c)) subChanged = true;
+    delete state.alertStates[c];
+  }
+  if (subChanged) persistSubscribed();
+  for (const c of codes) {
+    if (state.expandedCodes.has(c)) closeChart(c);
+  }
+  state.selected.clear();
+  state.watchList = getWatchList();
+  renderData();
+}
+
+function handleExport(scope) {
+  const codes = scope === 'selected' ? [...state.selected] : state.watchList;
+  if (!codes.length) {
+    flashError(scope === 'selected' ? '请先选中标的' : '列表为空');
+    return;
+  }
+  const text = buildExportText(codes);
+  downloadText(text, makeExportFilename());
+}
+
+function handleRefreshNow() {
+  refreshNow();
+}
+
+function fetchLimitUpListNow() {
+  // User-initiated refresh should always hit the network, never the 30s
+  // aktools cache. Periodic timer-driven fetches still use the cache.
+  clearLimitUpMetadataCache();
+  return limitUpFetch();
+}
+
+async function ensureLimitUpTradingDate(rawDate = state.limitUp.selectedDate || formatDateForInput(new Date())) {
+  state.limitUp.calendarLoading = true;
+  try {
+    const dates = await fetchTradeCalendar();
+    state.limitUp.tradingDates = dates;
+    const target = rawDate || formatDateForInput(new Date());
+    const resolved = resolveLatestTradingDate(target, dates);
+    const adj = getAdjacentTradingDates(resolved, dates);
+    state.limitUp.selectedDate = resolved;
+    state.limitUp.latestTradingDate = adj.latest;
+    state.limitUp.previousTradingDate = adj.previous;
+    state.limitUp.nextTradingDate = adj.next;
+    return resolved;
+  } finally {
+    state.limitUp.calendarLoading = false;
+  }
+}
+
+function refreshLimitUpDateMeta() {
+  const dates = state.limitUp.tradingDates;
+  const adj = getAdjacentTradingDates(
+    state.limitUp.selectedDate || formatDateForInput(new Date()),
+    dates,
+    formatDateForInput(new Date())
+  );
+  state.limitUp.selectedDate = adj.current;
+  state.limitUp.latestTradingDate = adj.latest;
+  state.limitUp.previousTradingDate = adj.previous;
+  state.limitUp.nextTradingDate = adj.next;
+}
+
+function rerenderLimitUpPage() {
+  if (!limitUpRootEl) return;
+  // Phase 8 fix: renderLimitUpPage 会 root.innerHTML='' 清空所有 DOM 节点,
+  // 但 limitUpChartCtlMap 中的 ctl 仍引用旧 host 节点 — 在脱离 DOM 的元素上画图看不见。
+  // 必须在 rerender 之前 destroy 所有 ctl, 然后 mount 到新 host。
+  const wasExpandedCodes = new Set(state.limitUp.expandedCodes);
+  for (const code of wasExpandedCodes) {
+    const inst = state.limitUp.chartInstances.get(code);
+    rememberRange(inst, limitUpChartCtlMap.get(code), '_visibleRange');
+    rememberRange(inst, limitUpIntradayChartCtlMap.get(code), '_intradayVisibleRange');
+    _destroyLimitUpChart(code);
+  }
+  renderLimitUpPage(limitUpRootEl, state.limitUp, {
+    navigateTo: (path) => navigate(path),
+    addToWatchListAndNavigate: handleLimitUpAddAndNavigate,
+    onRefreshChange: handleLimitUpRefreshChange,
+    fetchList: fetchLimitUpListNow,
+    onLiveTickUpdate: applyLiveTicksToLimitUp,
+    onSortChange: handleLimitUpSortChange,
+    sortGroup: handleLimitUpGroupSort,
+    toggleAutoRefresh: handleLimitUpAutoRefreshToggle,
+    togglePin: handleLimitUpPinToggle,
+    toggleSelect: handleLimitUpToggleSelect,
+    selectAll: handleLimitUpSelectAll,
+    selectNone: handleLimitUpSelectNone,
+    addSelectedAndNavigate: handleLimitUpAddSelectedAndNavigate,
+    openKline: handleLimitUpOpenKline,
+    closeKline: handleLimitUpCloseKline,
+    changeKlinePeriod: handleLimitUpKlinePeriodChange,
+    onDateChange: handleLimitUpDateChange,
+    reloadKline: _handleLimitUpForceReloadChart
+  });
+  // Re-mount chart instances for any newly-rendered (or re-rendered) chart rows.
+  // buildInlineChartRow creates a fresh host; mountLimitUpChart attaches
+  // the chart ctl to that host using the cached klineData.
+  for (const code of wasExpandedCodes) {
+    if (state.limitUp.expandedCodes.has(code)) {
+      mountLimitUpChart(code);
+    }
+  }
+}
+
+export function applyLimitUpFetchResult(luState, items) {
+  const prev = luState || {};
+  const now = new Date();
+  const sortKey = prev.sortKey || 'amount';
+  if (Array.isArray(items) && items.length > 0) {
+    const next = {
+      ...prev,
+      sortKey,
+      items,
+      lastNonEmptyItems: items,
+      lastNonEmptyAt: now,
+      consecutiveEmptyFetches: 0
+    };
+    return { ...next, groups: buildLimitUpGroupsForState(next) };
+  }
+  const cached = Array.isArray(prev.lastNonEmptyItems) ? prev.lastNonEmptyItems : [];
+  const displayItems = cached.length ? cached : [];
+  const next = {
+    ...prev,
+    sortKey,
+    items: displayItems,
+    consecutiveEmptyFetches: (Number(prev.consecutiveEmptyFetches) || 0) + 1
+  };
+  return { ...next, groups: buildLimitUpGroupsForState(next) };
+}
+
+function buildLimitUpGroupsForState(luState = state.limitUp) {
+  const s = luState || {};
+  const baseSort = s.sortKey || 'amount';
+  const groups = buildLimitUpGroups(s.items || [], baseSort);
+  const groupSort = s.groupSort || {};
+  return groups.map((g) => {
+    const sort = groupSort[g.key] || { key: baseSort, direction: 'desc' };
+    return {
+      ...g,
+      items: sortLimitUpGroupItems(g.items, sort.key || baseSort, sort.direction || 'desc')
+    };
+  });
+}
+
+async function limitUpFetch() {
+  if (state.limitUp.loading) return;
+  if (state.limitUp.abort) {
+    try { state.limitUp.abort.abort(); } catch { /* ignore */ }
+  }
+  state.limitUp.abort = new AbortController();
+  state.limitUp.loading = true;
+  state.limitUp.error = null;
+  rerenderLimitUpPage();
+  try {
+    const date = await ensureLimitUpTradingDate(state.limitUp.selectedDate || formatDateForInput(new Date()));
+    const rawItems = await fetchLimitUpList({ signal: state.limitUp.abort.signal, date });
+    const items = await enrichLimitUpItemsWithQuotes(rawItems, state.limitUp.abort.signal);
+    state.limitUp.lastUpdate = new Date();
+    state.limitUp = applyLimitUpFetchResult(state.limitUp, items);
+    kickoffLimitUpMetadataFetch(items.map((it) => it.code), date);
+    kickoffLimitUpReasonsFetch(date);
+    // Phase 8: 涨停看板首次拉取后预拉前 10 个 K 线
+    if (items.length) {
+      preloadLimitUpTopCharts(10);
+    }
+  } catch (e) {
+    if (e && e.name !== 'AbortError') {
+      state.limitUp.error = e.message || String(e);
+    }
+  } finally {
+    state.limitUp.loading = false;
+    rerenderLimitUpPage();
+  }
+}
+
+async function enrichLimitUpItemsWithQuotes(items, signal) {
+  if (!Array.isArray(items) || !items.length) return [];
+  try {
+    const quotes = await fetchQuotes(items.map((it) => it.code), { signal });
+    const quoteMap = new Map(quotes.map((q) => [q.code, q]));
+    return items.map((it) => {
+      const q = quoteMap.get(it.code);
+      if (!q) return it;
+      return {
+        ...it,
+        price: Number.isFinite(Number(q.price)) && Number(q.price) > 0 ? Number(q.price) : it.price,
+        change: Number.isFinite(Number(q.change)) ? Number(q.change) : it.change,
+        changePercent: Number.isFinite(Number(q.changePercent)) ? Number(q.changePercent) : it.changePercent,
+        prevClose: Number.isFinite(Number(q.prevClose)) ? Number(q.prevClose) : it.prevClose,
+        open: Number.isFinite(Number(q.open)) ? Number(q.open) : it.open,
+        openChangePercent: Number.isFinite(Number(q.openChangePercent)) ? Number(q.openChangePercent) : it.openChangePercent,
+        volumeRatio: Number.isFinite(Number(q.volumeRatio)) ? Number(q.volumeRatio) : it.volumeRatio,
+        amount: Number.isFinite(Number(q.amount)) && Number(q.amount) > 0 ? Number(q.amount) : it.amount
+      };
+    });
+  } catch (e) {
+    if (e && e.name === 'AbortError') throw e;
+    return items;
+  }
+}
+
+function kickoffLimitUpMetadataFetch(codes, date) {
+  if (!Array.isArray(codes) || !codes.length) return;
+  fetchLimitUpMetadataBatch(codes, { date })
+    .then((metaMap) => {
+      if (!metaMap || !metaMap.size) return;
+      if (!state.limitUp.items.length) return;
+      let changed = false;
+      const merged = state.limitUp.items.map((it) => {
+        const m = metaMap.get(it.code);
+        if (!m) return it;
+        changed = true;
+        return { ...it, ...m };
+      });
+      if (!changed) return;
+      state.limitUp.items = merged;
+      state.limitUp.groups = buildLimitUpGroupsForState();
+      rerenderLimitUpPage();
+    })
+    .catch(() => { /* best-effort; ignore */ });
+}
+
+function kickoffLimitUpReasonsFetch(date) {
+  fetchLimitUpReasons({ date })
+    .then((reasonMap) => {
+      if (!reasonMap) return;
+      state.limitUp.reasonMap = reasonMap;
+      if (!state.limitUp.items.length) return;
+      let changed = false;
+      const merged = state.limitUp.items.map((it) => {
+        const r = reasonMap.get(it.code);
+        if (!r) return it;
+        if (it.reason === r.reason && it.interpretation === r.interpretation) return it;
+        changed = true;
+        return { ...it, reason: r.reason, interpretation: r.interpretation };
+      });
+      if (!changed) return;
+      state.limitUp.items = merged;
+      state.limitUp.groups = buildLimitUpGroupsForState();
+      rerenderLimitUpPage();
+    })
+    .catch(() => { /* best-effort; ignore */ });
+}
+
+function handleLimitUpDateChange(newDate) {
+  // YYYY-MM-DD string (HTML5 <input type="date">) or null = today
+  clearLimitUpMetadataCache();
+  state.limitUp.selectedDate = newDate || formatDateForInput(new Date());
+  state.limitUp.reasonMap = new Map();
+  ensureLimitUpTradingDate(state.limitUp.selectedDate)
+    .then(() => limitUpFetch())
+    .catch(() => limitUpFetch());
+}
+
+function applyLiveTicksToLimitUp() {
+  if (!state.limitUp.items.length) return;
+  const merged = mergeLiveTicks(state.limitUp.items, state.quotes);
+  if (merged === state.limitUp.items) return;
+  state.limitUp.items = merged;
+  state.limitUp.groups = buildLimitUpGroupsForState();
+  rerenderLimitUpPage();
+}
+
+function startLimitUpTimer() {
+  stopLimitUpTimer();
+  const interval = state.limitUp.refreshInterval;
+  if (!interval || interval < 1000) return;
+  limitUpFetch();
+  state.limitUp.timer = setInterval(() => {
+    limitUpFetch();
+  }, interval);
+}
+
+function stopLimitUpTimer() {
+  if (state.limitUp.timer) {
+    clearInterval(state.limitUp.timer);
+    state.limitUp.timer = null;
+  }
+  if (state.limitUp.abort) {
+    try { state.limitUp.abort.abort(); } catch { /* ignore */ }
+    state.limitUp.abort = null;
+  }
+}
+
+function handleLimitUpRefreshChange(newIntervalMs) {
+  state.limitUp.refreshInterval = newIntervalMs;
+  patchLimitUpSettings({ refreshInterval: newIntervalMs });
+  if (state.limitUp.timer) startLimitUpTimer();
+}
+
+function handleLimitUpAutoRefreshToggle(enabled) {
+  if (enabled) startLimitUpTimer();
+  else stopLimitUpTimer();
+  rerenderLimitUpPage();
+}
+
+function handleLimitUpAddAndNavigate(code) {
+  if (!code) return;
+  const wasInList = state.watchList.includes(code);
+  addToWatchList(code);
+  state.watchList = getWatchList();
+  flashError(wasInList ? `已在监控列表：` : `已加入监控：${code}`);
+  navigate('#/');
+  refreshNow();
+  renderData();
+}
+
+function handleLimitUpSortChange(key) {
+  const allowed = ['count', 'pct', 'time', 'amount', 'price', 'open', 'volumeRatio', 'break'];
+  if (!allowed.includes(key)) return;
+  state.limitUp.sortKey = key;
+  state.limitUp.groups = buildLimitUpGroupsForState();
+  rerenderLimitUpPage();
+}
+
+function handleLimitUpGroupSort(groupKey, key) {
+  const allowed = ['count', 'pct', 'time', 'amount', 'price', 'open', 'volumeRatio', 'break'];
+  if (!groupKey || !allowed.includes(key)) return;
+  const current = (state.limitUp.groupSort && state.limitUp.groupSort[groupKey]) || null;
+  const direction = current && current.key === key && current.direction === 'desc' ? 'asc' : 'desc';
+  state.limitUp.groupSort = {
+    ...(state.limitUp.groupSort || {}),
+    [groupKey]: { key, direction }
+  };
+  state.limitUp.groups = buildLimitUpGroupsForState();
+  rerenderLimitUpPage();
+}
+
+function handleLimitUpPinToggle(code) {
+  if (!code) return;
+  const pins = new Set(state.limitUp.pinnedCodes || []);
+  if (pins.has(code)) pins.delete(code);
+  else pins.add(code);
+  state.limitUp.pinnedCodes = pins;
+  setLimitUpPinnedCodes([...pins]);
+  rerenderLimitUpPage();
+}
+
+function handleLimitUpToggleSelect(code, checked) {
+  if (!code) return;
+  if (checked) state.limitUp.selectedCodes.add(code);
+  else state.limitUp.selectedCodes.delete(code);
+  rerenderLimitUpPage();
+}
+
+function handleLimitUpSelectAll() {
+  state.limitUp.selectedCodes = new Set(state.limitUp.items.map((it) => it.code));
+  rerenderLimitUpPage();
+}
+
+function handleLimitUpSelectNone() {
+  state.limitUp.selectedCodes = new Set();
+  rerenderLimitUpPage();
+}
+
+function handleLimitUpAddSelectedAndNavigate(codes) {
+  if (!Array.isArray(codes) || !codes.length) return;
+  const unique = [...new Set(codes.filter(Boolean))];
+  if (!unique.length) return;
+  let added = 0;
+  for (const code of unique) {
+    if (!state.watchList.includes(code)) {
+      addToWatchList(code);
+      added++;
+    }
+  }
+  state.watchList = getWatchList();
+  state.limitUp.selectedCodes = new Set();
+  flashError(added > 0 ? `已加入监控 ${added} 只` : `已选标的已在监控列表`);
+  navigate('#/');
+  refreshNow();
+  renderData();
+}
+
+function handleLimitUpOpenKline(code) {
+  if (!code) return;
+  if (state.limitUp.expandedCodes.has(code)) {
+    // 关闭该 chart
+    closeLimitUpChart(code);
+    return;
+  }
+  state.limitUp.expandedCodes.add(code);
+  state.limitUp.chartInstances.set(code, createChartState(DEFAULT_PERIOD));
+  rerenderLimitUpPage();
+  loadLimitUpKline(code);
+}
+
+function closeLimitUpChart(code) {
+  if (!code || !state.limitUp.expandedCodes.has(code)) return;
+  state.limitUp.expandedCodes.delete(code);
+  const inst = state.limitUp.chartInstances.get(code);
+  if (inst) {
+    if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
+    if (inst.intradayAbort) try { inst.intradayAbort.abort(); } catch { /* ignore */ }
+    const ctl = limitUpChartCtlMap.get(code);
+    if (ctl) {
+      try { ctl.destroy(); } catch { /* ignore */ }
+    }
+    limitUpChartCtlMap.delete(code);
+    const intradayCtl = limitUpIntradayChartCtlMap.get(code);
+    if (intradayCtl) {
+      try { intradayCtl.destroy(); } catch { /* ignore */ }
+    }
+    limitUpIntradayChartCtlMap.delete(code);
+  }
+  state.limitUp.chartInstances.delete(code);
+  rerenderLimitUpPage();
+}
+
+function closeAllLimitUpCharts() {
+  for (const code of [...state.limitUp.expandedCodes]) {
+    closeLimitUpChart(code);
+  }
+}
+
+// cb 兼容入口: 接受 (code) 或 () 关闭所有
+function handleLimitUpCloseKline(code) {
+  if (code) {
+    closeLimitUpChart(code);
+  } else {
+    closeAllLimitUpCharts();
+  }
+}
+
+function handleLimitUpKlinePeriodChange(p, code) {
+  if (!isValidPeriod(p)) return;
+  const inst = state.limitUp.chartInstances.get(code);
+  if (!inst || inst.period === p) return;
+  inst.period = p;
+  inst.klineData = null;
+  inst.loading = true;
+  inst.error = null;
+  inst.intradayData = null;
+  inst.intradayError = null;
+  inst._visibleRange = null;
+  inst._intradayVisibleRange = null;
+  if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
+  rerenderLimitUpPage();
+  loadLimitUpKline(code);
+}
+
+// Phase 8: 强制重新加载（涨停页）— 跳过 cache 直接 fetch
+function _handleLimitUpForceReloadChart(code) {
+  if (!code) return;
+  const inst = state.limitUp.chartInstances.get(code);
+  if (!inst) return;
+  inst.klineData = null;
+  inst.loading = true;
+  inst.error = null;
+  inst._visibleRange = null;
+  inst._intradayVisibleRange = null;
+  if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
+  rerenderLimitUpPage();
+  loadLimitUpKline(code);
+}
+
+function _destroyLimitUpChart(code) {
+  const ctl = limitUpChartCtlMap.get(code);
+  if (ctl) {
+    try { ctl.destroy(); } catch { /* ignore */ }
+    limitUpChartCtlMap.delete(code);
+  }
+  const intradayCtl = limitUpIntradayChartCtlMap.get(code);
+  if (intradayCtl) {
+    try { intradayCtl.destroy(); } catch { /* ignore */ }
+    limitUpIntradayChartCtlMap.delete(code);
+  }
+}
+
+function mountLimitUpChart(code) {
+  mountLimitUpIntradayChart(code);
+  if (limitUpChartCtlMap.has(code)) return;
+  const host = document.getElementById(`lu-chart-host-${code}`);
+  if (!host) return;
+  try {
+    const instForPeriod = state.limitUp.chartInstances.get(code);
+    const ctl = createKlineChart(host, { theme: getCurrentTheme(), height: 360, period: instForPeriod ? instForPeriod.period : DEFAULT_PERIOD });
+    ctl.onClick((time) => handleLimitUpKlineBarClick(code, time));
+    limitUpChartCtlMap.set(code, ctl);
+    const inst = state.limitUp.chartInstances.get(code);
+    if (inst && inst.klineData) {
+      applyLimitUpKlineToChart(code, inst.klineData);
+    }
+  } catch (err) {
+    const inst = state.limitUp.chartInstances.get(code);
+    if (inst) inst.error = err.message || String(err);
+  }
+}
+
+function applyLimitUpKlineToChart(code, data) {
+  if (!code || !data) return;
+  let ctl = limitUpChartCtlMap.get(code);
+  if (!ctl) {
+    const host = document.getElementById(`lu-chart-host-${code}`);
+    if (!host) return;
+    const instForPeriod = state.limitUp.chartInstances.get(code);
+    ctl = createKlineChart(host, { theme: getCurrentTheme(), height: 360, period: instForPeriod ? instForPeriod.period : DEFAULT_PERIOD });
+    ctl.onClick((time) => handleLimitUpKlineBarClick(code, time));
+    limitUpChartCtlMap.set(code, ctl);
+  }
+  const inst = state.limitUp.chartInstances.get(code);
+  if (inst && typeof ctl.setPeriod === 'function') ctl.setPeriod(inst.period);
+  const candles = formatCandleColors(data.items, data.code, data.name);
+  ctl.setKline(candles);
+  ctl.setVolume(formatVolumeBars(data.items));
+  ctl.clearMA();
+  for (let i = 0; i < MA_PERIODS.length; i++) {
+    const n = MA_PERIODS[i];
+    const series = calcMA(data.items, n);
+    if (series.length) ctl.setMA(n, series, MA_COLORS[i] || '#888');
+  }
+  restoreRangeOrFit(ctl, inst && inst._visibleRange);
+}
+
+function mountLimitUpIntradayChart(code) {
+  if (limitUpIntradayChartCtlMap.has(code)) return;
+  const host = document.getElementById(`lu-intraday-chart-host-${code}`);
+  if (!host) return;
+  try {
+    const ctl = createIntradayChart(host, { theme: getCurrentTheme(), height: 360 });
+    limitUpIntradayChartCtlMap.set(code, ctl);
+    applyLimitUpIntradayToChart(code);
+  } catch (e) {
+    const inst = state.limitUp.chartInstances.get(code);
+    if (inst) inst.intradayError = e.message || String(e);
+  }
+}
+
+function updateLimitUpIntradayStatusForCode(code) {
+  const inst = state.limitUp.chartInstances.get(code);
+  if (!inst) return;
+  const el2 = document.getElementById(`lu-intraday-status-${code}`);
+  if (!el2) return;
+  el2.textContent = intradayStatusParts(inst).join(' · ');
+  el2.className = 'chart-status' + (inst.intradayError ? ' has-error' : '');
+}
+
+function applyLimitUpIntradayToChart(code) {
+  const ctl = limitUpIntradayChartCtlMap.get(code);
+  const inst = state.limitUp.chartInstances.get(code);
+  if (!ctl || !inst || !inst.intradayData) return;
+  ctl.setData(inst.intradayData.items);
+  restoreRangeOrFit(ctl, inst && inst._intradayVisibleRange);
+  updateLimitUpIntradayStatusForCode(code);
+}
+
+async function loadLimitUpIntraday(code, date) {
+  const inst = state.limitUp.chartInstances.get(code);
+  if (!inst || !date) return;
+  if (inst.intradayAbort) try { inst.intradayAbort.abort(); } catch { /* ignore */ }
+  inst.selectedTradeDate = date;
+  inst.intradayAbort = new AbortController();
+  inst.intradayLoading = true;
+  inst.intradayError = null;
+  updateLimitUpIntradayStatusForCode(code);
+  try {
+    const data = await fetchIntraday(code, {
+      date,
+      name: inst.klineData ? inst.klineData.name : code,
+      prevClose: getPrevCloseForDate(inst.klineData && inst.klineData.items, date),
+      allowLatestTickSource: isLatestKlineDate(inst, date),
+      signal: inst.intradayAbort.signal
+    });
+    if (!data) throw new Error('未能获取分时数据');
+    if (!state.limitUp.expandedCodes.has(code)) return;
+    inst.intradayData = data;
+    inst.intradayLoading = false;
+    applyLimitUpIntradayToChart(code);
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      if (!state.limitUp.expandedCodes.has(code)) return;
+      inst.intradayError = e.message || String(e);
+    }
+    if (!state.limitUp.expandedCodes.has(code)) return;
+    inst.intradayLoading = false;
+    updateLimitUpIntradayStatusForCode(code);
+  } finally {
+    if (state.limitUp.expandedCodes.has(code)) {
+      state.limitUp.chartInstances.set(code, inst);
+      updateLimitUpIntradayStatusForCode(code);
+    }
+  }
+}
+
+function handleLimitUpKlineBarClick(code, time) {
+  const inst = state.limitUp.chartInstances.get(code);
+  if (!inst) return;
+  const date = chartTimeToDate(time);
+  if (!date || inst.selectedTradeDate === date) return;
+  loadLimitUpIntraday(code, date);
+}
+
+function applyLimitUpLiveTickToChart(code, livePrice) {
+  const ctl = limitUpChartCtlMap.get(code);
+  const inst = state.limitUp.chartInstances.get(code);
+  if (!ctl || !inst || !inst.klineData) return;
+  if (!Number.isFinite(livePrice) || livePrice <= 0) return;
+  const updated = applyLiveTickToKline(inst.klineData.items, livePrice, inst.period);
+  if (updated === inst.klineData.items) return;
+  inst.klineData = { ...inst.klineData, items: updated };
+  const last = updated[updated.length - 1];
+  const formatted = formatCandleColors([last], inst.klineData.code, inst.klineData.name)[0];
+  if (formatted) ctl.updateKline(formatted);
+  const volBar = formatVolumeBars([last])[0];
+  if (volBar) ctl.updateVolume(volBar);
+  for (let i = 0; i < MA_PERIODS.length; i++) {
+    const n = MA_PERIODS[i];
+    const maSeries = calcMA(updated, n);
+    if (maSeries.length) ctl.updateMA(n, maSeries[maSeries.length - 1]);
+  }
+}
+
+async function loadLimitUpKline(code) {
+  const inst = state.limitUp.chartInstances.get(code);
+  if (!inst) return;
+  if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
+  inst.abort = new AbortController();
+  inst.loading = true;
+  inst.error = null;
+  rerenderLimitUpPage();
+  try {
+    const data = await fetchKline(code, {
+      period: inst.period,
+      signal: inst.abort.signal
+    });
+    if (!data) throw new Error('未能获取 K 线数据');
+    if (!data.items.length) throw new Error('K 线数据为空');
+    if (!state.limitUp.expandedCodes.has(code)) return;
+    inst.klineData = data;
+    if (!inst.selectedTradeDate) inst.selectedTradeDate = getLastKlineDate(data.items);
+    inst.loading = false;
+    applyLimitUpKlineToChart(code, data);
+    loadLimitUpIntraday(code, inst.selectedTradeDate);
+  } catch (e) {
+    if (e && e.name !== 'AbortError') {
+      if (!state.limitUp.expandedCodes.has(code)) return;
+      inst.error = e.message || String(e);
+    }
+    if (!state.limitUp.expandedCodes.has(code)) return;
+    inst.loading = false;
+  } finally {
+    if (state.limitUp.expandedCodes.has(code)) {
+      state.limitUp.chartInstances.set(code, inst);
+      rerenderLimitUpPage();
+    }
+  }
+}
+
+function handleToggleSubscribe(code, checked) {
+  if (checked) {
+    state.subscribed.add(code);
+    if (!state.quotes.has(code)) {
+      const item = (state.momentum.items || []).find((it) => it && it.code === code);
+      if (item) state.quotes.set(code, { ...item, type: 'stock' });
+    }
+  } else {
+    state.subscribed.delete(code);
+  }
+  persistSubscribed();
+  if (checked) refreshNow();
+  renderStatus();
+  updateVoiceHint();
+  updateAlertHint();
+}
+
+function handleTestSpeech() {
+  if (!isSpeechSupported()) {
+    flashError('当前浏览器不支持语音合成');
+    return;
+  }
+  const volume = clampVolume(state.voice.volume) / 100;
+  ttsSpeak('语音测试', { volume });
+}
+
+function handleVoiceEnabledChange(checked) {
+  // When the user enables broadcasting, snapshot the interval input.
+  // Empty input → fall back to DEFAULT (5s) so the toggle never silently fails.
+  // Invalid input → flash error and refuse to enable.
+  if (checked) {
+    const input = document.getElementById('voice-interval');
+    if (input) {
+      const raw = String(input.value).trim();
+      if (raw === '') {
+        const defaultMs = DEFAULT_VOICE_SETTINGS.interval;
+        state.voice = { ...state.voice, interval: defaultMs };
+        patchVoiceSettings({ interval: defaultMs });
+        input.value = String(defaultMs / 1000);
+      } else {
+        const sec = parseIntervalSeconds(raw);
+        if (sec === null) {
+          flashError('间隔必须是正整数（秒），最少 1 秒');
+          input.value = String(state.voice.interval / 1000);
+          // Do NOT enable - user must fix the value first.
+          renderVoiceBar();
+          return;
+        }
+        const ms = sec * 1000;
+        if (ms !== state.voice.interval) {
+          state.voice = { ...state.voice, interval: ms };
+          patchVoiceSettings({ interval: ms });
+        }
+      }
+    }
+  }
+
+  state.voice = { ...state.voice, enabled: !!checked };
+  patchVoiceSettings({ enabled: state.voice.enabled });
+  if (state.voice.enabled) {
+    startVoiceTimer();
+    // Immediate first broadcast so the user gets instant feedback (the worker's
+    // setInterval would otherwise delay first tick by `interval` ms). Also
+    // captures this click as a user gesture for browsers that gate speech on
+    // gesture activation.
+    speakSubscribed();
+  } else {
+    stopVoiceTimer();
+    ttsCancel();
+  }
+  renderVoiceBar();
+  renderStatus();
+}
+
+function handleVoiceIntervalBlur(rawSeconds) {
+  const raw = String(rawSeconds ?? '').trim();
+  // Empty: leave UI empty, keep current state. Toggle button will use default
+  // if the user enables while empty.
+  if (raw === '') return;
+  const sec = parseIntervalSeconds(raw);
+  if (sec === null) {
+    flashError('间隔必须是正整数（秒），最少 1 秒');
+    const input = document.getElementById('voice-interval');
+    if (input) input.value = String(state.voice.interval / 1000);
+    return;
+  }
+  const intervalMs = sec * 1000;
+  if (intervalMs === state.voice.interval) return;
+  state.voice = { ...state.voice, interval: intervalMs };
+  patchVoiceSettings({ interval: intervalMs });
+  if (state.voice.enabled) restartVoiceTimer();
+}
+
+function handleVoiceVolumeChange(value) {
+  const v = clampVolume(value);
+  state.voice = { ...state.voice, volume: v };
+  patchVoiceSettings({ volume: v });
+  // Update only the label (avoid re-rendering during slider drag).
+  const label = document.getElementById('voice-volume-label');
+  if (label) label.textContent = `${v}%`;
+}
+
+function handleVoiceFieldChange(key, checked) {
+  const nextFields = { ...state.voice.fields, [key]: !!checked };
+  // Always keep at least one field on - else nothing would be spoken.
+  if (!nextFields.name && !nextFields.price && !nextFields.percent) {
+    flashError('至少需要保留一个播报字段');
+    renderVoiceBar();
+    return;
+  }
+  state.voice = { ...state.voice, fields: nextFields };
+  patchVoiceSettings({ fields: nextFields });
+  renderVoiceBar();
+}
+
+function handleMoveField(key, direction) {
+  const order = [...state.voice.fieldsOrder];
+  const i = order.indexOf(key);
+  if (i < 0) return;
+  const swap = direction === 'up' ? i - 1 : i + 1;
+  if (swap < 0 || swap >= order.length) return;
+  const tmp = order[i];
+  order[i] = order[swap];
+  order[swap] = tmp;
+  state.voice = { ...state.voice, fieldsOrder: order };
+  patchVoiceSettings({ fieldsOrder: order });
+  renderVoiceBar();
+}
+
+function handleVoiceScheduleChange(key, checked) {
+  const next = normalizeSmartSchedule({
+    ...(state.voice.smartSchedule || DEFAULT_SMART_SCHEDULE),
+    [key]: !!checked
+  });
+  state.voice = { ...state.voice, smartSchedule: next };
+  patchVoiceSettings({ smartSchedule: next });
+  if (state.voice.enabled) restartVoiceTimer();
+  renderVoiceBar();
+  renderStatus();
+}
+
+function handleAlertEnabledChange(checked) {
+  // When enabling, snapshot the threshold input. Empty → DEFAULT. Invalid → reject.
+  if (checked) {
+    const input = document.getElementById('alert-threshold');
+    if (input) {
+      const raw = String(input.value).trim();
+      if (raw === '') {
+        const def = DEFAULT_ALERT_SETTINGS.threshold;
+        state.alert = { ...state.alert, threshold: def };
+        patchAlertSettings({ threshold: def });
+        input.value = String(def);
+      } else {
+        const v = parseAlertThreshold(raw);
+        if (v === null) {
+          flashError('阈值必须是 0.1 - 50 之间的数字');
+          input.value = String(state.alert.threshold);
+          renderAlertBar();
+          return;
+        }
+        if (v !== state.alert.threshold) {
+          state.alert = { ...state.alert, threshold: v };
+          patchAlertSettings({ threshold: v });
+          state.alertStates = {};
+        }
+      }
+    }
+  }
+
+  state.alert = { ...state.alert, enabled: !!checked };
+  patchAlertSettings({ enabled: state.alert.enabled });
+  if (!state.alert.enabled) state.alertStates = {};
+  // When just enabled, immediately evaluate against current quotes so any
+  // already-over-threshold subscribed code fires right away.
+  if (state.alert.enabled) processAlerts();
+  renderAlertBar();
+  renderStatus();
+}
+
+function handleAlertThresholdBlur(rawValue) {
+  const raw = String(rawValue ?? '').trim();
+  if (raw === '') return;
+  const v = parseAlertThreshold(raw);
+  if (v === null) {
+    flashError('阈值必须是 0.1 - 50 之间的数字');
+    const input = document.getElementById('alert-threshold');
+    if (input) input.value = String(state.alert.threshold);
+    return;
+  }
+  if (v === state.alert.threshold) return;
+  state.alert = { ...state.alert, threshold: v };
+  patchAlertSettings({ threshold: v });
+  // Reset trigger memory so the new threshold takes effect cleanly on next tick.
+  state.alertStates = {};
+}
+
+function handleTestAlert() {
+  if (!state.subscribed.size) {
+    flashError('请先在表格行尾 🔊 列勾选至少一个订阅标的');
+    return;
+  }
+  // Pick the first subscribed code that has a loaded quote.
+  let target = null;
+  for (const code of state.subscribed) {
+    const q = state.quotes.get(code);
+    if (q && Number.isFinite(Number(q.changePercent))) { target = q; break; }
+  }
+  if (!target) {
+    flashError('订阅的标的暂无报价，请稍后再试');
+    return;
+  }
+  const direction = Number(target.changePercent) >= 0 ? 'up' : 'down';
+  const message = formatQuoteSpeech(target, state.voice.fields) ||
+    `${target.name || target.code} ${direction === 'up' ? '涨' : '跌'} ${Math.abs(Number(target.changePercent)).toFixed(2)}%`;
+  if (isSpeechSupported()) {
+    const volume = clampVolume(state.voice.volume) / 100;
+    ttsSpeak(message, { volume });
+  }
+  if (isNotificationSupported() && state.notifPermission === 'granted') {
+    showNotification('价格提醒（测试）', message);
+  } else if (!isNotificationSupported() || state.notifPermission !== 'granted') {
+    flashError('已模拟语音提醒；如需桌面通知请先在下方授权');
+  }
+}
+
+async function handleRequestNotification() {
+  const result = await requestNotificationPermission();
+  state.notifPermission = result;
+  renderAlertBar();
+}
+
+function persistSubscribed() {
+  setSubscribedCodes([...state.subscribed]);
+}
+
+async function warmTradeCalendar() {
+  try {
+    const dates = await fetchTradeCalendar();
+    state.limitUp.tradingDates = dates;
+    refreshLimitUpDateMeta();
+    return dates;
+  } catch {
+    return state.limitUp.tradingDates || [];
+  }
+}
+
+function getVoiceSession() {
+  const dates = state.limitUp.tradingDates || [];
+  return getMarketSession(new Date(), dates);
+}
+
+function isVoiceAllowedNow() {
+  const smart = state.voice.smartSchedule || DEFAULT_SMART_SCHEDULE;
+  const session = getVoiceSession();
+  return isVoiceAllowedInSession(session, smart);
+}
+
+function speakSubscribed() {
+  if (!isSpeechSupported()) return;
+  if (!isVoiceAllowedNow()) {
+    state.voicePausedBySchedule = !!(state.voice.smartSchedule && state.voice.smartSchedule.enabled);
+    renderStatus();
+    return;
+  }
+  state.voicePausedBySchedule = false;
+  if (!state.subscribed.size) return;
+  const volume = clampVolume(state.voice.volume) / 100;
+  const fields = state.voice.fields;
+  const fieldsOrder = state.voice.fieldsOrder;
+  for (const code of state.subscribed) {
+    const q = state.quotes.get(code);
+    if (!q) continue;
+    const text = formatQuoteSpeech(q, fields, fieldsOrder);
+    if (text) ttsSpeak(text, { volume });
+  }
+}
+
+function processAlerts() {
+  if (!state.alert.enabled) return;
+  if (!state.subscribed.size) return;
+  const codes = [...state.subscribed];
+  const result = evaluateAlerts(state.quotes, codes, state.alert.threshold, state.alertStates);
+  state.alertStates = result.states;
+  if (!result.triggered.length) return;
+  const volume = clampVolume(state.voice.volume) / 100;
+  for (const item of result.triggered) {
+    if (isSpeechSupported()) ttsSpeak(item.message, { volume });
+    if (isNotificationSupported() && state.notifPermission === 'granted') {
+      showNotification('价格提醒', item.message);
+    }
+  }
+}
+
+function startVoiceTimer() {
+  stopVoiceTimer();
+  if (!state.voice.enabled || !state.voice.interval) return;
+  if (!isVoiceAllowedNow()) {
+    state.voicePausedBySchedule = !!(state.voice.smartSchedule && state.voice.smartSchedule.enabled);
+    renderStatus();
+    return;
+  }
+  state.voicePausedBySchedule = false;
+  const interval = state.voice.interval;
+  // Try Web Worker for accurate background ticking (main-thread setInterval is
+  // throttled to >=1s when the tab is backgrounded).
+  try {
+    const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+    worker.onmessage = (e) => {
+      if (e.data && e.data.type === 'tick') speakSubscribed();
+    };
+    worker.onerror = () => {
+      // Worker bootstrap failed at runtime; degrade silently to main-thread interval.
+      stopVoiceTimer();
+      state.tickFallback = setInterval(speakSubscribed, interval);
+    };
+    worker.postMessage({ type: 'start', interval });
+    state.tickWorker = worker;
+  } catch {
+    state.tickFallback = setInterval(speakSubscribed, interval);
+  }
+}
+
+function stopVoiceTimer() {
+  if (state.tickWorker) {
+    try {
+      state.tickWorker.postMessage({ type: 'stop' });
+      state.tickWorker.terminate();
+    } catch {
+      /* ignore */
+    }
+    state.tickWorker = null;
+  }
+  if (state.tickFallback) {
+    clearInterval(state.tickFallback);
+    state.tickFallback = null;
+  }
+}
+
+function restartVoiceTimer() {
+  stopVoiceTimer();
+  startVoiceTimer();
+}
+
+function applyVoiceSchedule() {
+  const smart = state.voice.smartSchedule || DEFAULT_SMART_SCHEDULE;
+  if (!smart.enabled) {
+    state.voicePausedBySchedule = false;
+    if (state.voice.enabled && !state.tickWorker && !state.tickFallback) startVoiceTimer();
+    renderStatus();
+    return;
+  }
+  const session = getVoiceSession();
+  state.voiceLastSession = session;
+  const allowed = isVoiceAllowedInSession(session, smart);
+
+  if (state.voice.enabled && !allowed) {
+    stopVoiceTimer();
+    ttsCancel();
+    state.voicePausedBySchedule = session === 'lunch' || session === 'pre-open' || session === 'closed';
+    if (session === 'after-close' && smart.autoStopAfterClose) {
+      state.voice = { ...state.voice, enabled: false };
+      patchVoiceSettings({ enabled: false });
+      state.voicePausedBySchedule = false;
+      renderVoiceBar();
+    }
+    renderStatus();
+    return;
+  }
+
+  if (!state.voice.enabled && smart.autoStartAuction && session === 'opening-auction') {
+    state.voice = { ...state.voice, enabled: true };
+    patchVoiceSettings({ enabled: true });
+    state.voicePausedBySchedule = false;
+    renderVoiceBar();
+    startVoiceTimer();
+    renderStatus();
+    return;
+  }
+
+  if (state.voice.enabled && allowed) {
+    state.voicePausedBySchedule = false;
+    if (!state.tickWorker && !state.tickFallback) startVoiceTimer();
+  }
+  renderStatus();
+}
+
+function startVoiceScheduleChecker() {
+  if (state.voiceScheduleTimer) clearInterval(state.voiceScheduleTimer);
+  warmTradeCalendar().finally(() => applyVoiceSchedule());
+  state.voiceScheduleTimer = setInterval(() => {
+    applyVoiceSchedule();
+  }, 30000);
+}
+
+function handleRowClick(code, e) {
+  const target = e && e.target;
+  if (target && target.tagName === 'INPUT') return;
+  if (target && target.tagName === 'BUTTON') return;
+  if (target && target.closest && (target.closest('.col-check') || target.closest('.col-sub') || target.closest('.col-op'))) {
+    return;
+  }
+  if (target && target.closest && target.closest('.chart-row')) return;
+  if (state.expandedCodes.has(code)) {
+    closeChart(code);
+  } else {
+    openChart(code);
+  }
+}
+
+// ===== Multi-chart (per-code) state and functions =====
+// Each expanded code owns its own chart instance, period, kline data, and
+// abort controller. Charts are rendered as inline <tr> directly below the
+// corresponding watch-list row, so multiple can be open at once.
+
+export function openChart(code) {
+  if (!code) return;
+  if (state.expandedCodes.has(code)) return;
+  state.expandedCodes.add(code);
+  state.chartInstances.set(code, createChartState(DEFAULT_PERIOD));
+  loadKlineForCode(code);
+  renderData();
+}
+
+export function closeChart(code) {
+  if (!code) return;
+  if (!state.expandedCodes.has(code)) return;
+  state.expandedCodes.delete(code);
+  const ctl = chartInstanceMap.get(code);
+  if (ctl) {
+    try { ctl.destroy(); } catch { /* ignore */ }
+    chartInstanceMap.delete(code);
+  }
+  const inst = state.chartInstances.get(code);
+  if (inst) {
+    if (inst.abort) {
+      try { inst.abort.abort(); } catch { /* ignore */ }
+    }
+    if (inst.intradayAbort) {
+      try { inst.intradayAbort.abort(); } catch { /* ignore */ }
+    }
+    state.chartInstances.delete(code);
+  }
+  const intradayCtl = intradayChartCtlMap.get(code);
+  if (intradayCtl) {
+    try { intradayCtl.destroy(); } catch { /* ignore */ }
+    intradayChartCtlMap.delete(code);
+  }
+  renderData();
+}
+
+export function closeAllCharts() {
+  for (const code of [...state.expandedCodes]) closeChart(code);
+}
+
+// Phase 8: 强制从网络重新拉取 (跳过 klineCache + 30s in-memory)
+export function handleForceReloadChart(code) {
+  if (!code) return;
+  const inst = state.chartInstances.get(code);
+  if (!inst) return;
+  inst.klineData = null;
+  inst.loading = true;
+  inst.error = null;
+  inst.intradayError = null;
+  inst._visibleRange = null;
+  inst._intradayVisibleRange = null;
+  if (inst.abort) {
+    try { inst.abort.abort(); } catch { /* ignore */ }
+  }
+  loadKlineForCode(code);
+  renderData();
+}
+
+export function handlePeriodChange(p, code) {
+  if (!isValidPeriod(p)) return;
+  const inst = state.chartInstances.get(code);
+  if (!inst) return;
+  if (inst.period === p) return;
+  inst.period = p;
+  inst.klineData = null;
+  inst.loading = true;
+  inst.error = null;
+  inst.intradayData = null;
+  inst.intradayError = null;
+  inst._visibleRange = null;
+  inst._intradayVisibleRange = null;
+  if (inst.abort) {
+    try { inst.abort.abort(); } catch { /* ignore */ }
+  }
+  loadKlineForCode(code);
+  renderData();
+}
+
+export async function loadKlineForCode(code) {
+  const inst = state.chartInstances.get(code);
+  if (!inst) return;
+  if (inst.abort) {
+    try { inst.abort.abort(); } catch { /* ignore */ }
+  }
+  inst.abort = new AbortController();
+  inst.loading = true;
+  inst.error = null;
+  updateChartStatusForCode(code);
+  try {
+    const data = await fetchKline(code, {
+      period: inst.period,
+      signal: inst.abort.signal
+    });
+    if (!data) throw new Error('未能获取 K 线数据');
+    if (!data.items.length) throw new Error('K 线数据为空');
+    if (!state.expandedCodes.has(code)) return;
+    inst.klineData = data;
+    if (!inst.selectedTradeDate) inst.selectedTradeDate = getLastKlineDate(data.items);
+    inst.loading = false;
+    applyKlineToChartForCode(code);
+    loadIntradayForCode(code, inst.selectedTradeDate);
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      if (!state.expandedCodes.has(code)) return;
+      inst.error = e.message || String(e);
+    }
+    if (!state.expandedCodes.has(code)) return;
+    inst.loading = false;
+    updateChartStatusForCode(code);
+  } finally {
+    if (state.expandedCodes.has(code)) {
+      state.chartInstances.set(code, inst);
+      updateIntradayStatusForCode(code);
+    }
+  }
+}
+
+function applyKlineToChartForCode(code) {
+  const ctl = chartInstanceMap.get(code);
+  const inst = state.chartInstances.get(code);
+  if (!ctl || !inst || !inst.klineData) return;
+  if (typeof ctl.setPeriod === 'function') ctl.setPeriod(inst.period);
+  const candles = formatCandleColors(inst.klineData.items, inst.klineData.code, inst.klineData.name);
+  ctl.setKline(candles);
+  ctl.setVolume(formatVolumeBars(inst.klineData.items));
+  ctl.clearMA();
+  for (let i = 0; i < MA_PERIODS.length; i++) {
+    const n = MA_PERIODS[i];
+    const series = calcMA(inst.klineData.items, n);
+    if (series.length) ctl.setMA(n, series, MA_COLORS[i] || '#888');
+  }
+  restoreRangeOrFit(ctl, inst._visibleRange);
+}
+
+function mountIntradayChartForCode(code) {
+  if (intradayChartCtlMap.has(code)) return;
+  const host = document.getElementById(`intraday-chart-host-${code}`);
+  if (!host) return;
+  try {
+    const ctl = createIntradayChart(host, { theme: getCurrentTheme(), height: 360 });
+    intradayChartCtlMap.set(code, ctl);
+    applyIntradayToChartForCode(code);
+  } catch (e) {
+    const inst = state.chartInstances.get(code);
+    if (inst) inst.intradayError = e.message || String(e);
+  }
+}
+
+function applyIntradayToChartForCode(code) {
+  const ctl = intradayChartCtlMap.get(code);
+  const inst = state.chartInstances.get(code);
+  if (!ctl || !inst || !inst.intradayData) return;
+  ctl.setData(inst.intradayData.items);
+  restoreRangeOrFit(ctl, inst._intradayVisibleRange);
+  updateIntradayStatusForCode(code);
+}
+
+async function loadIntradayForCode(code, date) {
+  const inst = state.chartInstances.get(code);
+  if (!inst || !date) return;
+  if (inst.intradayAbort) {
+    try { inst.intradayAbort.abort(); } catch { /* ignore */ }
+  }
+  inst.selectedTradeDate = date;
+  inst.intradayAbort = new AbortController();
+  inst.intradayLoading = true;
+  inst.intradayError = null;
+  updateIntradayStatusForCode(code);
+  try {
+    const data = await fetchIntraday(code, {
+      date,
+      name: inst.klineData ? inst.klineData.name : code,
+      prevClose: getPrevCloseForDate(inst.klineData && inst.klineData.items, date),
+      allowLatestTickSource: isLatestKlineDate(inst, date),
+      signal: inst.intradayAbort.signal
+    });
+    if (!data) throw new Error('未能获取分时数据');
+    if (!state.expandedCodes.has(code)) return;
+    inst.intradayData = data;
+    inst.intradayLoading = false;
+    applyIntradayToChartForCode(code);
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      if (!state.expandedCodes.has(code)) return;
+      inst.intradayError = e.message || String(e);
+    }
+    if (!state.expandedCodes.has(code)) return;
+    inst.intradayLoading = false;
+    updateIntradayStatusForCode(code);
+  } finally {
+    if (state.expandedCodes.has(code)) {
+      state.chartInstances.set(code, inst);
+      updateIntradayStatusForCode(code);
+    }
+  }
+}
+
+function handleKlineBarClick(code, time) {
+  const inst = state.chartInstances.get(code);
+  if (!inst) return;
+  const date = chartTimeToDate(time);
+  if (!date || inst.selectedTradeDate === date) return;
+  loadIntradayForCode(code, date);
+}
+
+// Live-tick update: only mutates the LAST bar via series.update(bar), which
+// preserves the user's zoom/pan on the time scale. No setData, no fitContent.
+export function applyLiveTickToChartForCode(code, livePrice) {
+  const ctl = chartInstanceMap.get(code);
+  const inst = state.chartInstances.get(code);
+  if (!ctl || !inst || !inst.klineData) return;
+  if (!Number.isFinite(livePrice) || livePrice <= 0) return;
+  const updated = applyLiveTickToKline(inst.klineData.items, livePrice, inst.period);
+  if (updated === inst.klineData.items) return;
+  inst.klineData = { ...inst.klineData, items: updated };
+  const last = updated[updated.length - 1];
+  const formatted = formatCandleColors([last], inst.klineData.code, inst.klineData.name)[0];
+  if (formatted) ctl.updateKline(formatted);
+  const volBar = formatVolumeBars([last])[0];
+  if (volBar) ctl.updateVolume(volBar);
+  for (let i = 0; i < MA_PERIODS.length; i++) {
+    const n = MA_PERIODS[i];
+    const maSeries = calcMA(updated, n);
+    if (maSeries.length) ctl.updateMA(n, maSeries[maSeries.length - 1]);
+  }
+  updateChartStatusForCode(code);
+}
+
+export function updateChartLastTickMulti() {
+  // 监控页
+  if (state.expandedCodes.size) {
+    for (const code of state.expandedCodes) {
+      const q = state.quotes.get(code);
+      if (!q) continue;
+      const livePrice = Number(q.price);
+      if (!Number.isFinite(livePrice) || livePrice <= 0) continue;
+      try {
+        applyLiveTickToChartForCode(code, livePrice);
+      } catch (e) {
+        if (console && console.warn) console.warn('live tick failed (monitor) for', code, e);
+      }
+    }
+  }
+  // 涨停页 (Phase 8: 多 chart)
+  if (state.limitUp.expandedCodes.size) {
+    for (const code of state.limitUp.expandedCodes) {
+      const q = state.quotes.get(code);
+      if (!q) continue;
+      const livePrice = Number(q.price);
+      if (!Number.isFinite(livePrice) || livePrice <= 0) continue;
+      try {
+        applyLimitUpLiveTickToChart(code, livePrice);
+      } catch (e) {
+        if (console && console.warn) console.warn('live tick failed (limitUp) for', code, e);
+      }
+    }
+  }
+}
+
+// Mount a chart instance for a code if its DOM host exists and no instance
+// has been mounted yet. Called from renderTable() after the table is appended.
+export function mountChartForCode(code) {
+  const host = document.getElementById(`chart-host-${code}`);
+  mountIntradayChartForCode(code);
+  if (!host) return;
+  if (chartInstanceMap.has(code)) return;
+  let ctl;
+  const instForPeriod = state.chartInstances.get(code);
+  try {
+    ctl = createKlineChart(host, { theme: getCurrentTheme(), height: 360, period: instForPeriod ? instForPeriod.period : DEFAULT_PERIOD });
+    ctl.onClick((time) => handleKlineBarClick(code, time));
+  } catch (e) {
+    const inst = state.chartInstances.get(code);
+    if (inst) inst.error = e.message || String(e);
+    return;
+  }
+  chartInstanceMap.set(code, ctl);
+  const inst = state.chartInstances.get(code);
+  if (inst && inst.klineData) {
+    applyKlineToChartForCode(code);
+  }
+}
+
+// Test helper: inject a fake chart ctl into the per-code map. Pass null to
+// clear (used by afterEach hooks to avoid leaking fake ctls across tests).
+export function _setChartInstance(code, ctl) {
+  if (!code) return;
+  if (ctl === null || ctl === undefined) chartInstanceMap.delete(code);
+  else chartInstanceMap.set(code, ctl);
+}
+
+// Test helper: get the live chart ctl for a code. Returns undefined if not
+// mounted. Used to assert zoom-preservation: if ctl is the same object before
+// and after a refresh, no destroy+recreate happened.
+export function _getChartInstance(code) {
+  return chartInstanceMap.get(code);
+}
+
+// Test helper: trigger an immediate refresh. Bypasses the 10s timer.
+export function _forceRefresh() {
+  return refreshNow();
+}
+
+function flashError(msg) {
+  state.error = msg;
+  renderStatus();
+  setTimeout(() => {
+    if (state.error === msg) {
+      state.error = null;
+      renderStatus();
+    }
+  }, 3000);
+}
+
+async function refreshNow() {
+  const refreshCodes = getRefreshCodes();
+  if (!refreshCodes.length || state.loading) return;
+  if (abortController) abortController.abort();
+  abortController = new AbortController();
+  state.loading = true;
+  state.error = null;
+  renderStatus();
+  try {
+    const quotes = await fetchQuotes(refreshCodes, { signal: abortController.signal });
+    for (const q of quotes) {
+      state.quotes.set(q.code, q);
+    }
+    mergeQuotesIntoMomentumItems();
+    state.lastUpdate = new Date();
+    // Fire alert pipeline AFTER quotes are updated so triggers see fresh data.
+    try {
+      processAlerts();
+    } catch (e) {
+      // Never let alert errors break the data refresh cycle.
+      console && console.warn && console.warn('processAlerts failed:', e);
+    }
+    // Advance all open K-line charts to the latest tick so the in-progress
+    // bar moves in real time. Wrapped in try/catch like processAlerts so it
+    // never breaks the data refresh cycle.
+    try {
+      updateChartLastTickMulti();
+    } catch (e) {
+      console && console.warn && console.warn('updateChartLastTickMulti failed:', e);
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      state.error = err.message || String(err);
+    }
+  } finally {
+    state.loading = false;
+    // Refresh path must NOT rebuild the table. renderTable() destroys all
+    // chart instances to handle structural changes (add/remove/expand), but
+    // on a periodic data refresh the row set is unchanged — we'd be throwing
+    // away the chart ctl and the user's zoom/pan state every 10s. Instead
+    // patch the price/change/percent cells in place and refresh the status
+    // bar. The chart's last bar is already updated by
+    // updateChartLastTickMulti above via series.update() (preserves zoom).
+    for (const code of state.watchList) {
+      if (state.quotes.has(code)) updateRowQuoteCells(code);
+    }
+    for (const item of state.momentum.items || []) {
+      if (item && state.quotes.has(item.code)) updateMomentumQuoteCells(item.code);
+    }
+    renderStatus();
+  }
+}
+
+function getRefreshCodes() {
+  const out = new Set(state.watchList);
+  for (const code of state.subscribed || []) {
+    if (code) out.add(code);
+  }
+  return [...out];
+}
+
+// Patch the data cells of an existing
+// <tr data-code="..."> in place. The row's <td> order is fixed by renderRow():
+// [check, sub, code, name, price, percent, openPct, volumeRatio, amount, op].
+// We update cells 3..8 (0-indexed). The checkbox/sub-checkbox/op cells and
+// the chart-row below are left untouched — those only need rebuilding on
+// structural changes (add/remove/expand/period-change).
+function updateRowQuoteCells(code) {
+  const row = document.querySelector(`tr[data-code="${code}"]`);
+  if (!row) return;
+  const q = state.quotes.get(code);
+  if (!q) return;
+  const allCells = row.querySelectorAll('td');
+  // [3]=name, [4..5]=price/percent (with direction), [6..8]=openPct/volumeRatio/amount
+  if (allCells.length < 9) return;
+  const dir = priceDirection(Number(q.changePercent));
+  allCells[3].textContent = q.name || '...';
+  allCells[4].textContent = formatNumber(q.price);
+  allCells[4].className = `num ${dir}`;
+  allCells[5].textContent = formatPercent(q.changePercent);
+  allCells[5].className = `num ${dir}`;
+  allCells[6].textContent = formatPriceWithPercent(q.open, q.openChangePercent);
+  allCells[7].textContent = formatNumber(q.volumeRatio);
+  allCells[8].textContent = formatAmount(q.amount);
+}
+
+function mergeQuotesIntoMomentumItems() {
+  if (!Array.isArray(state.momentum.items) || !state.momentum.items.length) return false;
+  let changed = false;
+  state.momentum.items = state.momentum.items.map((it) => {
+    if (!it || !it.code) return it;
+    const q = state.quotes.get(it.code);
+    if (!q) return it;
+    changed = true;
+    return {
+      ...it,
+      name: q.name || it.name,
+      price: Number.isFinite(Number(q.price)) ? Number(q.price) : it.price,
+      changePercent: Number.isFinite(Number(q.changePercent)) ? Number(q.changePercent) : it.changePercent,
+      amount: Number.isFinite(Number(q.amount)) ? Number(q.amount) : it.amount,
+      volumeRatio: Number.isFinite(Number(q.volumeRatio)) ? Number(q.volumeRatio) : it.volumeRatio,
+      industry: it.industry || q.industry || ''
+    };
+  });
+  return changed;
+}
+
+function updateMomentumQuoteCells(code) {
+  const row = document.querySelector(`tr[data-momentum-code="${code}"]`);
+  if (!row) return;
+  const item = (state.momentum.items || []).find((it) => it && it.code === code);
+  if (!item) return;
+  const allCells = row.querySelectorAll('td');
+  if (allCells.length < 11) return;
+  const dir = priceDirection(Number(item.changePercent));
+  allCells[4].textContent = item.name || '-';
+  allCells[6].textContent = formatNumber(item.price);
+  allCells[7].textContent = formatPercent(item.changePercent);
+  allCells[7].className = `num ${dir}`;
+  allCells[8].textContent = formatAmount(item.amount);
+  allCells[9].textContent = item.industry || '-';
+}
+
+function restartTimer() {
+  if (state.timer) clearInterval(state.timer);
+  state.timer = setInterval(refreshNow, state.refreshInterval);
+}
+
+function handleMonitorAutoRefreshToggle(enabled) {
+  if (enabled) {
+    restartTimer();
+  } else if (state.timer) {
+    clearInterval(state.timer);
+    state.timer = null;
+  }
+  renderData();
+}
+
+function _onKlineUpdated(code, period, data) {
+  // Phase 8: SWR revalidate 之后 同步更新展开的 chart
+  // 监控页
+  const monInst = state.chartInstances.get(code);
+  if (monInst && monInst.klineData && monInst.period === period) {
+    monInst.klineData = data;
+    applyKlineToChartForCode(code);
+  }
+  // 涨停页
+  const luInst = state.limitUp.chartInstances.get(code);
+  if (luInst && luInst.klineData && luInst.period === period) {
+    luInst.klineData = data;
+    applyLimitUpKlineToChart(code, data);
+  }
+}
+
+export function startApp(root) {
+  initTheme();
+  // Phase 8: subscribe to kline cache updates (SWR revalidate)
+  onKlineUpdated(_onKlineUpdated);
+  const settings = getSettings();
+  state.refreshInterval = settings.refreshInterval || DEFAULT_REFRESH;
+  state.watchList = getWatchList();
+  state.voice = normalizeVoiceSettings(getVoiceSettings());
+  state.alert = normalizeAlertSettings(getAlertSettings());
+  state.subscribed = new Set(getSubscribedCodes());
+  if (isNotificationSupported()) {
+    try {
+      state.notifPermission = (globalThis.Notification && globalThis.Notification.permission) || 'default';
+    } catch {
+      state.notifPermission = 'default';
+    }
+  }
+  const luSettings = getLimitUpSettings();
+  state.limitUp.refreshInterval = luSettings.refreshInterval;
+  state.limitUp.pinnedCodes = new Set(getLimitUpPinnedCodes());
+  state.momentum.pinnedCodes = new Set(getMomentumPinnedCodes());
+  renderMonitorPage(root);
+  refreshNow();
+  restartTimer();
+  startVoiceScheduleChecker();
+  if (state.voice.enabled) startVoiceTimer();
+  const router = createHashRouter(
+    {
+      '#/': (r) => {
+        stopLimitUpTimer();
+        closeAllLimitUpCharts();
+        // Race fix: an in-flight limitUpFetch() may resolve after this handler
+        // returns. Clear limitUpRootEl BEFORE renderMonitorPage so the
+        // fetch's finally-block rerender is a no-op.
+        limitUpRootEl = null;
+        renderMonitorPage(r);
+      },
+      '#/limit-up': (r) => {
+        limitUpRootEl = r;
+        renderLimitUpPage(r, state.limitUp, {
+          navigateTo: (path) => navigate(path),
+          addToWatchListAndNavigate: handleLimitUpAddAndNavigate,
+          onRefreshChange: handleLimitUpRefreshChange,
+          fetchList: fetchLimitUpListNow,
+          onLiveTickUpdate: applyLiveTicksToLimitUp,
+          onSortChange: handleLimitUpSortChange,
+          sortGroup: handleLimitUpGroupSort,
+          toggleAutoRefresh: handleLimitUpAutoRefreshToggle,
+          togglePin: handleLimitUpPinToggle,
+          toggleSelect: handleLimitUpToggleSelect,
+          selectAll: handleLimitUpSelectAll,
+          selectNone: handleLimitUpSelectNone,
+          addSelectedAndNavigate: handleLimitUpAddSelectedAndNavigate,
+          openKline: handleLimitUpOpenKline,
+          closeKline: handleLimitUpCloseKline,
+          changeKlinePeriod: handleLimitUpKlinePeriodChange,
+          onDateChange: handleLimitUpDateChange,
+          reloadKline: _handleLimitUpForceReloadChart
+        });
+        startLimitUpTimer();
+      }
+    },
+    '#/',
+    root
+  );
+  router.start();
+}
+
+export function _internal() {
+  return { state, chartInstanceMap, get limitUpRootEl() { return limitUpRootEl; } };
+}

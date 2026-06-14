@@ -1,0 +1,16 @@
+node_modules
+dist
+.DS_Store
+*.log
+*.log.*
+playwright-report
+test-results
+.vscode
+.idea
+.python312
+.tesseract-extracted
+.tmp-pdf-tools
+artifacts
+backups/*.zip
+backups/*.tar
+backups/*.tar.gz
