@@ -1,5 +1,37 @@
 import { defineConfig } from 'vite';
+import { execFileSync } from 'node:child_process';
 import { handleCacheRequest, startBackgroundJobs } from './server/index.js';
+
+function readGitValue(args, fallback) {
+  try {
+    return execFileSync('git', args, {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim() || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function getAppVersionMetadata(env = process.env) {
+  return {
+    version: env.APP_VERSION || readGitValue(['rev-parse', '--short', 'HEAD'], 'unknown'),
+    updated: env.APP_UPDATED_DATE || readGitValue(['show', '-s', '--format=%cs', 'HEAD'], 'unknown')
+  };
+}
+
+function appVersionPlugin() {
+  return {
+    name: 'stock-monitor-app-version',
+    transformIndexHtml(html) {
+      const metadata = getAppVersionMetadata();
+      return html
+        .replaceAll('__APP_GIT_VERSION__', metadata.version)
+        .replaceAll('__APP_UPDATED_DATE__', metadata.updated);
+    }
+  };
+}
 
 function cacheApiPlugin() {
   return {
@@ -18,7 +50,7 @@ function cacheApiPlugin() {
 }
 
 export default defineConfig({
-  plugins: [cacheApiPlugin()],
+  plugins: [appVersionPlugin(), cacheApiPlugin()],
   server: {
     port: 5173,
     open: false,

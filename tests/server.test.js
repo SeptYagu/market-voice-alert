@@ -5,6 +5,7 @@ import { createAppServer } from '../server/index.js';
 import { getKlineTtlMs } from '../server/klineService.js';
 import { resolveProxyTarget } from '../server/proxyRoutes.js';
 import { beijingDateKey, normalizeDateKey } from '../server/utils.js';
+import { getAppVersionMetadata } from '../vite.config.js';
 
 function requestJson(port, path) {
   return new Promise((resolve, reject) => {
@@ -66,6 +67,13 @@ QUnit.module('server cache and production routing', (hooks) => {
       { AKTOOLS_BASE: 'http://127.0.0.1:9999' }
     );
     t.equal(aktools.url, 'http://127.0.0.1:9999/api/public/stock_zt_pool_em?date=20260605');
+  });
+
+  QUnit.test('app version metadata supports deterministic build overrides', (t) => {
+    t.deepEqual(
+      getAppVersionMetadata({ APP_VERSION: 'abc1234', APP_UPDATED_DATE: '2026-09-01' }),
+      { version: 'abc1234', updated: '2026-09-01' }
+    );
   });
 
   QUnit.test('unknown production API returns JSON 404 instead of index.html', async (t) => {

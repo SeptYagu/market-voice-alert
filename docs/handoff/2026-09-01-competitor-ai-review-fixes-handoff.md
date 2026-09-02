@@ -40,13 +40,13 @@
 
 ### 1.5 页面版本显示
 
-页面底部新增：
+页面底部新增 Git 版本信息：
 
 ```text
-Version: 4b9de69 Updated: 2026-09-01
+Version: <git rev-parse --short HEAD> Updated: <git commit date>
 ```
 
-位置：`index.html` + `src/style.css`。页脚使用主题变量，三种主题下均保持低干扰显示。
+位置：`index.html` + `src/style.css` + `vite.config.js`。Vite 在开发服务器启动或生产构建时读取当前 Git HEAD 和提交日期并替换占位符；页脚使用主题变量，三种主题下均保持低干扰显示。无 `.git` 的源码包可用 `APP_VERSION` / `APP_UPDATED_DATE` 显式注入。
 
 ## 2. 测试与验证
 
@@ -112,5 +112,5 @@ tests/server.test.js        服务端回归
 ## 4. 保留的边界
 
 - `src/js/app.js` 仍然较大；控制器拆分属于后续结构优化，不应与本轮可靠性修复混在同一个风险面中。
-- 版本文字当前按用户要求显示修复基线 `4b9de69`；未来发布新版本时应同步更新 commit short hash 与日期，或另行改为构建时注入。
+- 版本文字由构建时 Git 元数据自动注入；部署必须从 Git checkout 构建，或设置 `APP_VERSION` / `APP_UPDATED_DATE`。
 - AKTools 仍需在服务器本机 `127.0.0.1:8888` 运行；可用 `AKTOOLS_BASE` 覆盖地址。

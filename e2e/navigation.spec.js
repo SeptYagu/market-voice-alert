@@ -1,6 +1,10 @@
 // 路由切换 e2e
 import { test, expect } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
 import { setupApiMocks, clearLocalStorage, stubWebSpeech, stubNotification, DEFAULT_TIMEOUT } from './helpers.js';
+
+const EXPECTED_VERSION = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+const EXPECTED_UPDATED = execFileSync('git', ['show', '-s', '--format=%cs', 'HEAD'], { encoding: 'utf8' }).trim();
 
 test.describe('路由切换', () => {
   test.beforeEach(async ({ page }) => {
@@ -22,7 +26,7 @@ test.describe('路由切换', () => {
     await page.goto('http://127.0.0.1:5173/');
     const footer = page.locator('footer.app-version');
     await expect(footer).toBeVisible({ timeout: DEFAULT_TIMEOUT });
-    await expect(footer).toHaveText('Version: 4b9de69 Updated: 2026-09-01');
+    await expect(footer).toHaveText(`Version: ${EXPECTED_VERSION} Updated: ${EXPECTED_UPDATED}`);
   });
 
   test('点 nav 切到涨停看板', async ({ page }) => {
