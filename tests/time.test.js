@@ -4,6 +4,8 @@ import {
   chartSecondsToDate,
   chartSecondsToTime,
   chartTimeToDate,
+  getBeijingClockParts,
+  getBeijingDate,
   shiftCalendarDate
 } from '../src/js/time.js';
 
@@ -29,5 +31,13 @@ QUnit.module('time Beijing chart seconds', () => {
   QUnit.test('shiftCalendarDate crosses weekends without timezone drift', (t) => {
     t.equal(shiftCalendarDate('2026-06-05', 1), '2026-06-06');
     t.equal(shiftCalendarDate('2026-06-01', -1), '2026-05-31');
+  });
+
+  QUnit.test('Beijing date stays correct when host timezone is on the previous day', (t) => {
+    const instant = new Date('2026-06-01T16:30:00.000Z');
+    t.equal(getBeijingDate(instant), '2026-06-02');
+    const parts = getBeijingClockParts(instant);
+    t.equal(parts.hour, 0);
+    t.equal(parts.minute, 30);
   });
 });

@@ -1,6 +1,7 @@
-import { formatDateForInput, shiftCalendarDate } from './time.js';
+import { formatDateForInput, getBeijingDate, shiftCalendarDate } from './time.js';
 
 const CALENDAR_URL = '/api/aktools/api/public/tool_trade_date_hist_sina';
+const CACHE_CALENDAR_URL = '/api/cache/calendar/trade-dates';
 let calendarPromise = null;
 let cachedDates = null;
 
@@ -38,7 +39,7 @@ function _isWeekend(date) {
   return day === 0 || day === 6;
 }
 
-function _fallbackTradingDatesAround(anchor = formatDateForInput(new Date())) {
+function _fallbackTradingDatesAround(anchor = getBeijingDate()) {
   const out = [];
   let cur = shiftCalendarDate(anchor, -370);
   for (let i = 0; i < 740; i++) {
@@ -51,10 +52,10 @@ function _fallbackTradingDatesAround(anchor = formatDateForInput(new Date())) {
 export async function fetchTradeCalendar(opts = {}) {
   if (cachedDates) return cachedDates;
   if (calendarPromise) return calendarPromise;
-  calendarPromise = fetch(CALENDAR_URL, { signal: opts.signal })
-    .then(async (res) => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return parseTradeCalendar(await res.json());
+  calendarPromise = fetchCachedTradeCalendar(opts.signal)
+    .catch((e) => {
+      if (e && e.name === 'AbortError') throw e;
+      return fetchAktoolsTradeCalendar(opts.signal);
     })
     .then((dates) => {
       cachedDates = dates.length ? dates : _fallbackTradingDatesAround();
@@ -70,6 +71,25 @@ export async function fetchTradeCalendar(opts = {}) {
   return calendarPromise;
 }
 
+async function fetchCachedTradeCalendar(signal) {
+  const res = await fetch(CACHE_CALENDAR_URL, { signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  const dates = json && json.ok === true && json.data && Array.isArray(json.data.dates)
+    ? json.data.dates
+    : [];
+  if (!dates.length) throw new Error('shared trade calendar cache failed');
+  return dates;
+}
+
+async function fetchAktoolsTradeCalendar(signal) {
+  return await fetch(CALENDAR_URL, { signal })
+    .then(async (res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return parseTradeCalendar(await res.json());
+    });
+}
+
 export function clearTradeCalendarCache() {
   cachedDates = null;
   calendarPromise = null;
@@ -83,7 +103,7 @@ export function isTradingDate(date, tradingDates) {
 }
 
 export function resolveLatestTradingDate(date, tradingDates) {
-  const anchor = _toDateString(date) || formatDateForInput(new Date());
+  const anchor = _toDateString(date) || getBeijingDate();
   const dates = Array.isArray(tradingDates) && tradingDates.length ? tradingDates : _fallbackTradingDatesAround(anchor);
   let best = '';
   for (const d of dates) {
@@ -102,7 +122,7 @@ export function shiftTradingDate(date, delta, tradingDates) {
   return dates[nextIdx] || current;
 }
 
-export function getAdjacentTradingDates(date, tradingDates, today = formatDateForInput(new Date())) {
+export function getAdjacentTradingDates(date, tradingDates, today = getBeijingDate()) {
   const dates = Array.isArray(tradingDates) && tradingDates.length ? tradingDates : _fallbackTradingDatesAround(date || today);
   const latest = resolveLatestTradingDate(today, dates);
   const current = resolveLatestTradingDate(date || latest, dates);

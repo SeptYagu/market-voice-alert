@@ -254,6 +254,15 @@ function _decorateKlineIntraday(data, opts = {}) {
 }
 
 export async function fetchIntraday(code, opts = {}) {
+  if (opts.sharedCache === true) {
+    try {
+      const cached = await _fetchIntradayFromSharedCache(code, opts);
+      if (cached) return cached;
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw e;
+    }
+  }
+
   const common = {
     code,
     name: opts.name || code,
@@ -317,6 +326,22 @@ export async function fetchIntraday(code, opts = {}) {
   return { code, name: opts.name || code, source: 'none', preClose: Number(opts.prevClose) || 0, items: [] };
 }
 
+async function _fetchIntradayFromSharedCache(code, opts = {}) {
+  const usp = new URLSearchParams();
+  usp.set('code', code);
+  if (opts.date) usp.set('date', opts.date);
+  if (opts.name) usp.set('name', opts.name);
+  if (opts.prevClose !== undefined && opts.prevClose !== null) usp.set('prevClose', String(opts.prevClose));
+  if (opts.allowLatestTickSource === false) usp.set('allowLatestTickSource', '0');
+  const res = await fetch(`/api/cache/intraday?${usp.toString()}`, { signal: opts.signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (!json || json.ok !== true || !json.data) {
+    throw new Error((json && json.error) || 'shared intraday cache failed');
+  }
+  return json.data;
+}
+
 export function fetchKline(code, opts = {}) {
   const period = opts.period || '1d';
   const key = `${code}|${period}`;
@@ -328,7 +353,7 @@ export function fetchKline(code, opts = {}) {
   if (!opts.noCache) {
     const cached = klineCacheGet(code, period);
     if (cached) {
-      _scheduleKlineRevalidate(code, period);
+      _scheduleKlineRevalidate(code, period, opts);
       return Promise.resolve(cached);
     }
   }
@@ -336,7 +361,12 @@ export function fetchKline(code, opts = {}) {
   // 3. Cache miss: create promise + register immediately to dedup concurrent calls
   const p = (async () => {
     try {
-      const data = await _fetchKlineFromNetwork(code, period, opts.signal);
+      const data = opts.sharedCache === true && !opts.noCache
+        ? await _fetchKlineFromSharedCache(code, period, opts.signal).catch((e) => {
+          if (e && e.name === 'AbortError') throw e;
+          return _fetchKlineFromNetwork(code, period, opts.signal);
+        })
+        : await _fetchKlineFromNetwork(code, period, opts.signal);
       if (data && !opts.noCache) {
         klineCacheSet(code, period, data);
         emitKlineUpdated(code, period, data);
@@ -348,6 +378,19 @@ export function fetchKline(code, opts = {}) {
   })();
   inflightKline.set(key, p);
   return p;
+}
+
+async function _fetchKlineFromSharedCache(code, period, signal) {
+  const usp = new URLSearchParams();
+  usp.set('code', code);
+  usp.set('period', period);
+  const res = await fetch(`/api/cache/kline?${usp.toString()}`, { signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (!json || json.ok !== true || !json.data) {
+    throw new Error((json && json.error) || 'shared kline cache failed');
+  }
+  return json.data;
 }
 
 async function _fetchKlineFromNetwork(code, period, signal) {
@@ -383,13 +426,16 @@ async function _fetchKlineFromNetwork(code, period, signal) {
 const inflightKline = new Map();
 const _revalidatingKline = new Set();  // dedup SWR revalidations
 
-function _scheduleKlineRevalidate(code, period) {
+function _scheduleKlineRevalidate(code, period, opts = {}) {
   const key = `${code}|${period}`;
   if (_revalidatingKline.has(key)) return;
   _revalidatingKline.add(key);
   setTimeout(() => {
     _revalidatingKline.delete(key);
-    _fetchKlineFromNetwork(code, period, null)
+    const refresh = opts.sharedCache === true
+      ? _fetchKlineFromSharedCache(code, period, null).catch(() => _fetchKlineFromNetwork(code, period, null))
+      : _fetchKlineFromNetwork(code, period, null);
+    refresh
       .then((data) => {
         if (data) {
           klineCacheSet(code, period, data);

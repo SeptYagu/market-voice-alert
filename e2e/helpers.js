@@ -1,7 +1,7 @@
 // e2e helper: 启动 dev server + 拦截 mock + 清理 localStorage
 import iconv from 'iconv-lite';
-import { TENCENT_QUOTES_BODY_3, TENCENT_QUOTES_BODY_1 } from './fixtures/tencent-quotes.js';
-import { EASTMONEY_KLINE_BODY_SH600519, EASTMONEY_KLINE_BODY_SZ000858 } from './fixtures/eastmoney-kline.js';
+import { TENCENT_QUOTES_BODY_3 } from './fixtures/tencent-quotes.js';
+import { EASTMONEY_KLINE_BODY_SH600519 } from './fixtures/eastmoney-kline.js';
 import {
   AKTOOLS_INTRADAY_TICKS_SH600519,
   AKTOOLS_HIST_MINUTE_SH600519,
@@ -9,12 +9,122 @@ import {
 } from './fixtures/intraday.js';
 import {
   LIMIT_UP_BODY,
-  LIMIT_UP_EMPTY_BODY,
   LIMIT_UP_BROKEN_BODY,
   LIMIT_UP_REASONS_BODY
 } from './fixtures/limits-up.js';
+import {
+  parseAktoolsIntradayTicks,
+  parseAktoolsHistMinuteList,
+  parseAktoolsLimitUpList,
+  parseAktoolsLimitUpReasonList
+} from '../src/js/aktoolsApi.js';
+
+const TRADE_DATES = [
+  '2026-06-03',
+  '2026-06-04',
+  '2026-06-05',
+  '2026-06-08'
+];
 
 export async function setupApiMocks(page) {
+  // 服务端共享缓存接口：前端现在优先访问这些路径。
+  // e2e 里直接返回解析后的前端数据结构，避免测试受本机真实缓存/后端状态影响。
+  await page.route('**/api/cache/calendar/trade-dates**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        data: { dates: TRADE_DATES }
+      })
+    });
+  });
+
+  await page.route('**/api/cache/intraday**', async (route) => {
+    const url = new URL(route.request().url());
+    const date = url.searchParams.get('date') || '2026-06-05';
+    const common = {
+      code: url.searchParams.get('code') || 'sh600519',
+      name: url.searchParams.get('name') || '贵州茅台',
+      date,
+      prevClose: Number(url.searchParams.get('prevClose')) || 1975
+    };
+    const allowLatest = url.searchParams.get('allowLatestTickSource') !== '0';
+    const data = allowLatest
+      ? parseAktoolsIntradayTicks(AKTOOLS_INTRADAY_TICKS_SH600519, common)
+      : parseAktoolsHistMinuteList(AKTOOLS_HIST_MINUTE_SH600519, common);
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        data
+      })
+    });
+  });
+
+  await page.route('**/api/cache/spot/latest**', async (route) => {
+    const items = parseAktoolsLimitUpList(LIMIT_UP_BODY, 'limitUp');
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        data: { items, count: items.length }
+      })
+    });
+  });
+
+  await page.route('**/api/cache/momentum/ten-day**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        source: 'cache',
+        data: {
+          status: 'complete',
+          date: '20260605',
+          threshold: 45,
+          lookbackDays: 10,
+          universeSize: 3,
+          scanned: 3,
+          items: []
+        }
+      })
+    });
+  });
+
+  await page.route('**/api/cache/limit-up/reasons**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        data: { reasons: parseAktoolsLimitUpReasonList(LIMIT_UP_REASONS_BODY) }
+      })
+    });
+  });
+
+  await page.route('**/api/cache/limit-up**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        data: {
+          limitUpItems: parseAktoolsLimitUpList(LIMIT_UP_BODY, 'limitUp'),
+          brokenItems: parseAktoolsLimitUpList(LIMIT_UP_BROKEN_BODY, 'broken')
+        }
+      })
+    });
+  });
+
+  // K 线共享缓存在 e2e 中关闭，快速走下方已有 Eastmoney fixture。
+  await page.route('**/api/cache/kline**', async (route) => {
+    await route.fulfill({ status: 404, body: 'mock shared kline disabled' });
+  });
+
   // 实时行情 (Tencent) - 真实 API 返回 GBK 编码的 JS
   await page.route('**/api/tencent**', async (route) => {
     const gbkBytes = iconv.encode(TENCENT_QUOTES_BODY_3, 'gbk');
@@ -36,7 +146,6 @@ export async function setupApiMocks(page) {
 
   // K 线 (Eastmoney)
   await page.route('**/api/eastmoney-kline**', async (route) => {
-    const url = route.request().url();
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -64,10 +173,7 @@ export async function setupApiMocks(page) {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify([
-        { trade_date: '2026-06-03' },
-        { trade_date: '2026-06-04' },
-        { trade_date: '2026-06-05' },
-        { trade_date: '2026-06-08' }
+        ...TRADE_DATES.map((trade_date) => ({ trade_date }))
       ])
     });
   });

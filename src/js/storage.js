@@ -1,3 +1,5 @@
+import { getBeijingClockParts } from './time.js';
+
 export const STORAGE_KEYS = Object.freeze({
   WATCH_LIST: 'stock_watch_list',
   THEME: 'app_theme',
@@ -254,21 +256,25 @@ export function patchLimitUpSettings(patch) {
 
 export const KLINE_CACHE_KEY = 'kline-cache-v1';
 export const KLINE_TTL_MS = 60 * 60 * 1000;     // 盘中 1h
+export const KLINE_MINUTE_TTL_MS = 2 * 60 * 1000;
 export const KLINE_MAX_ENTRIES = 100;            // 容量上限 (10 stocks × 10 periods)
+const MINUTE_PERIODS = new Set(['1m', '5m', '15m', '30m', '60m']);
 
 function _isMarketOpen(now = Date.now()) {
   const d = new Date(now);
-  const day = d.getDay();
+  const parts = getBeijingClockParts(d);
+  const day = new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay();
   if (day === 0 || day === 6) return false;
-  const t = d.getHours() * 60 + d.getMinutes();
-  return t >= 9 * 60 + 30 && t < 15 * 60;  // 9:30 - 15:00
+  const t = parts.hour * 60 + parts.minute;
+  return (t >= 9 * 60 + 30 && t < 11 * 60 + 30) || (t >= 13 * 60 && t < 15 * 60);
 }
 
 export function isKlineCacheStale(code, period, now = Date.now()) {
   const entry = _readKlineCacheEntry(code, period);
   if (!entry) return false;
   if (!_isMarketOpen(now)) return false;
-  return now - entry.fetchedAt > KLINE_TTL_MS;
+  const ttlMs = MINUTE_PERIODS.has(period) ? KLINE_MINUTE_TTL_MS : KLINE_TTL_MS;
+  return now - entry.fetchedAt > ttlMs;
 }
 
 function _readKlineCacheEntry(code, period) {

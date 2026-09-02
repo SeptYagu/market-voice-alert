@@ -12,6 +12,32 @@ export function formatDateForInput(d = new Date()) {
   return `${y}-${m}-${day}`;
 }
 
+export function getBeijingClockParts(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).formatToParts(now);
+  const pick = (type) => parts.find((part) => part.type === type)?.value || '';
+  return {
+    year: Number(pick('year')),
+    month: Number(pick('month')),
+    day: Number(pick('day')),
+    hour: Number(pick('hour')),
+    minute: Number(pick('minute'))
+  };
+}
+
+export function getBeijingDate(now = new Date()) {
+  const parts = getBeijingClockParts(now);
+  if (!parts.year || !parts.month || !parts.day) return formatDateForInput(now);
+  return `${parts.year}-${_pad2(parts.month)}-${_pad2(parts.day)}`;
+}
+
 export function parseDateInput(date) {
   if (typeof date !== 'string') return null;
   const m = DATE_RE.exec(date.trim());

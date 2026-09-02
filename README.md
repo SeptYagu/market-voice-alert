@@ -44,6 +44,18 @@ npm run dev
 http://127.0.0.1:5173
 ```
 
+`npm run dev` 会同时提供前端页面、外部 API 代理和内置 `/api/cache/*` 共享缓存接口，不需要再单独启动缓存后端。
+开发服务启动后也会启动服务端后台任务：10 日涨幅池会在服务启动时补齐当天缓存，并按北京时间 08:00、15:01 自动扫描。E2E 测试会关闭该后台任务，避免测试时误扫真实数据源。
+
+服务器部署时先构建，再用同一个 Node 后端提供静态页面和缓存 API：
+
+```bash
+npm run build
+npm run server
+```
+
+生产服务默认端口为 `3001`，可用 `PORT` 和 `HOST` 环境变量调整。服务器仍需要能访问 AKTools 服务。
+
 ## 常用命令
 
 ```bash
@@ -51,6 +63,7 @@ npm run lint
 npm test
 npm run build
 npm run e2e
+npm run server
 ```
 
 ## 技术栈
@@ -64,4 +77,4 @@ npm run e2e
 
 ## 说明
 
-本仓库保留较多阶段文档和交接记录，方便之后继续迭代。需求源以 `SPEC.md` 为准，当前状态参考 `STATUS.md`。
+本仓库保留较多阶段文档和交接记录，方便之后继续迭代。`SPEC.md` 是早期需求源，其中已标注若干过时内容；当前实现状态优先参考 `AGENTS.md`、`STATUS.md`、最新 `docs/handoff/*` 和源码。

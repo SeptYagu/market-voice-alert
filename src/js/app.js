@@ -60,10 +60,11 @@ import {
   getAdjacentTradingDates,
   resolveLatestTradingDate
 } from './tradeCalendar.js';
-import { chartTimeToDate, formatDateForInput } from './time.js';
+import { chartTimeToDate, getBeijingDate } from './time.js';
 import {
   DEFAULT_SMART_SCHEDULE,
   getMarketSession,
+  isAutoRefreshAllowedInSession,
   isVoiceAllowedInSession,
   normalizeSmartSchedule
 } from './marketSession.js';
@@ -100,6 +101,13 @@ export const FIELD_LABELS = Object.freeze({
 export const DEFAULT_ALERT_SETTINGS = Object.freeze({
   enabled: false,
   threshold: 5
+});
+
+const DATA_REFRESH_SCHEDULE = Object.freeze({
+  enabled: true,
+  autoStartAuction: false,
+  pauseLunchBreak: true,
+  autoStopAfterClose: true
 });
 
 export function clampVolume(v) {
@@ -322,6 +330,10 @@ const state = {
   subscribed: new Set(),
   refreshInterval: DEFAULT_REFRESH,
   timer: null,
+  autoRefreshEnabled: true,
+  autoRefreshPausedBySchedule: false,
+  dataScheduleTimer: null,
+  dataLastSession: null,
   loading: false,
   lastUpdate: null,
   error: null,
@@ -349,10 +361,14 @@ const state = {
     error: null,
     refreshInterval: 30000,
     timer: null,
+    autoRefreshEnabled: true,
+    autoRefreshPausedBySchedule: false,
     abort: null,
+    requestSeq: 0,
     lastNonEmptyItems: [],
     lastNonEmptyAt: null,
     consecutiveEmptyFetches: 0,
+    forceRefreshOnce: false,
     sortKey: 'amount',
     groupSort: {},
     selectedCodes: new Set(),
@@ -499,6 +515,24 @@ function renderRefreshSelect() {
   return el('label', { class: 'refresh-label' }, '刷新: ', select);
 }
 
+function autoRefreshButtonText(enabled, paused) {
+  if (!enabled) return '开始自动刷新';
+  return paused ? '自动刷新已暂停' : '停止自动刷新';
+}
+
+function autoRefreshButtonTitle(enabled, paused) {
+  if (!enabled) return '开始自动刷新';
+  return paused ? '非交易时段，自动刷新将在开盘后恢复' : '停止自动刷新';
+}
+
+function updateMonitorAutoRefreshButton() {
+  const btn = document.getElementById('auto-refresh-toggle');
+  if (!btn) return;
+  btn.className = state.autoRefreshEnabled ? 'btn-ctl-active' : '';
+  btn.title = autoRefreshButtonTitle(state.autoRefreshEnabled, state.autoRefreshPausedBySchedule);
+  btn.textContent = autoRefreshButtonText(state.autoRefreshEnabled, state.autoRefreshPausedBySchedule);
+}
+
 function renderToolbar() {
   return el(
     'section',
@@ -528,11 +562,11 @@ function renderToolbar() {
           'button',
           {
             id: 'auto-refresh-toggle',
-            class: state.timer ? 'btn-ctl-active' : '',
-            title: state.timer ? '停止自动刷新' : '开始自动刷新',
-            on: { click: () => handleMonitorAutoRefreshToggle(!state.timer) }
+            class: state.autoRefreshEnabled ? 'btn-ctl-active' : '',
+            title: autoRefreshButtonTitle(state.autoRefreshEnabled, state.autoRefreshPausedBySchedule),
+            on: { click: () => handleMonitorAutoRefreshToggle(!state.autoRefreshEnabled) }
           },
-          state.timer ? '停止自动刷新' : '开始自动刷新'
+          autoRefreshButtonText(state.autoRefreshEnabled, state.autoRefreshPausedBySchedule)
         )
       )
     ),
@@ -1162,6 +1196,12 @@ function mergePinnedMomentumItems(nextItems) {
 
 async function fetchMomentumUniverse(signal) {
   try {
+    const sharedSpot = await fetchSharedSpot(signal);
+    if (Array.isArray(sharedSpot) && sharedSpot.length) return sharedSpot;
+  } catch (e) {
+    if (e && e.name === 'AbortError') throw e;
+  }
+  try {
     const spot = await fetchAktoolsSpotList({ signal });
     if (Array.isArray(spot) && spot.length) return spot;
   } catch (e) {
@@ -1176,9 +1216,20 @@ async function fetchMomentumUniverse(signal) {
   return quotes;
 }
 
+async function fetchSharedSpot(signal) {
+  const res = await fetch('/api/cache/spot/latest', { signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  const items = json && json.ok === true && json.data && Array.isArray(json.data.items)
+    ? json.data.items
+    : [];
+  if (!items.length) throw new Error('shared spot cache failed');
+  return items;
+}
+
 async function scanMomentumCandidate(candidate, signal) {
   if (!candidate || !/^(sh|sz|bj)\d{6}$/i.test(candidate.code)) return null;
-  const data = await fetchKline(candidate.code, { period: '1d', signal });
+  const data = await fetchKline(candidate.code, { period: '1d', signal, sharedCache: true });
   const stats = computeTenDayMomentum(data);
   if (!stats || stats.gainPercent < MOMENTUM_THRESHOLD_PCT) return null;
   const limitUpItem = (state.limitUp.items || []).find((it) => it && it.code === candidate.code);
@@ -1213,6 +1264,39 @@ async function handleMomentumScan() {
   state.momentum.total = 0;
   renderMomentumSection();
   try {
+    let cached = null;
+    try {
+      cached = await fetchSharedMomentum(abort.signal);
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw e;
+      cached = null;
+    }
+    if (cached && Array.isArray(cached.items)) {
+      state.momentum.total = cached.universeSize || cached.items.length;
+      state.momentum.scanned = cached.scanned || state.momentum.total;
+      state.momentum.items = mergePinnedMomentumItems(cached.items);
+      if (cached.status === 'scanning') {
+        state.momentum.error = '服务端定时扫描中，稍后自动刷新';
+        setTimeout(() => {
+          if (!state.momentum.loading) handleMomentumScan();
+        }, 5000);
+        return;
+      }
+      if (cached.status === 'empty') {
+        state.momentum.error = cached.message || '等待服务端定时扫描生成结果';
+        return;
+      }
+      if (cached.status === 'error') {
+        state.momentum.error = cached.error || '后端全市场扫描失败，已保留部分结果';
+        return;
+      }
+      for (const item of state.momentum.items) {
+        if (item && item.code) state.quotes.set(item.code, { ...item, type: 'stock' });
+      }
+      state.momentum.lastUpdate = new Date();
+      return;
+    }
+
     const universe = await fetchMomentumUniverse(abort.signal);
     if (!universe.length) throw new Error('没有可扫描的股票池');
     state.momentum.total = universe.length;
@@ -1252,6 +1336,18 @@ async function handleMomentumScan() {
     state.momentum.loading = false;
     renderMomentumSection();
   }
+}
+
+async function fetchSharedMomentum(signal) {
+  const usp = new URLSearchParams();
+  usp.set('threshold', String(MOMENTUM_THRESHOLD_PCT));
+  const res = await fetch(`/api/cache/momentum/ten-day?${usp.toString()}`, { signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (!json || json.ok !== true || !json.data) {
+    throw new Error((json && json.error) || 'shared momentum cache failed');
+  }
+  return json.data;
 }
 
 function handleMomentumPinToggle(code) {
@@ -1372,7 +1468,7 @@ async function loadMomentumKline(code) {
   inst.error = null;
   updateMomentumChartStatusForCode(code);
   try {
-    const data = await fetchKline(code, { period: inst.period, signal: inst.abort.signal });
+    const data = await fetchKline(code, { period: inst.period, signal: inst.abort.signal, sharedCache: true });
     if (!data) throw new Error('未能获取 K 线数据');
     if (!data.items.length) throw new Error('K 线数据为空');
     if (!state.momentum.expandedCodes.has(code)) return;
@@ -1631,6 +1727,7 @@ function renderStatus() {
   if (state.selected.size) parts.push(`已选 ${state.selected.size}`);
   if (state.subscribed.size) parts.push(`订阅 ${state.subscribed.size}`);
   if (state.voice.enabled) parts.push(state.voicePausedBySchedule ? '🔇 智能暂停' : '🔊');
+  if (state.autoRefreshEnabled && state.autoRefreshPausedBySchedule) parts.push('行情自动刷新暂停');
   if (state.alert.enabled) parts.push(`🔔 ±${state.alert.threshold}%`);
   if (state.loading) parts.push('加载中...');
   if (state.lastUpdate) {
@@ -1805,7 +1902,7 @@ function preloadKlineForCodes(codes) {
   function runNextBatch() {
     if (idx >= batches.length) return;
     const batch = batches[idx++];
-    Promise.allSettled(batch.map(code => fetchKline(code, { period }).catch(() => null)))
+    Promise.allSettled(batch.map(code => fetchKline(code, { period, sharedCache: true }).catch(() => null)))
       .then(() => {
         if (idx < batches.length) setTimeout(runNextBatch, 200);
       });
@@ -1886,38 +1983,51 @@ function fetchLimitUpListNow() {
   // User-initiated refresh should always hit the network, never the 30s
   // aktools cache. Periodic timer-driven fetches still use the cache.
   clearLimitUpMetadataCache();
+  state.limitUp.forceRefreshOnce = isLimitUpDateToday();
   return limitUpFetch();
 }
 
-async function ensureLimitUpTradingDate(rawDate = state.limitUp.selectedDate || formatDateForInput(new Date())) {
+async function ensureLimitUpTradingDate(
+  rawDate = state.limitUp.selectedDate || getBeijingDate(),
+  requestSeq = null
+) {
   state.limitUp.calendarLoading = true;
   try {
     const dates = await fetchTradeCalendar();
-    state.limitUp.tradingDates = dates;
-    const target = rawDate || formatDateForInput(new Date());
+    const target = rawDate || getBeijingDate();
     const resolved = resolveLatestTradingDate(target, dates);
     const adj = getAdjacentTradingDates(resolved, dates);
+    if (requestSeq !== null && requestSeq !== state.limitUp.requestSeq) {
+      return resolved;
+    }
+    state.limitUp.tradingDates = dates;
     state.limitUp.selectedDate = resolved;
     state.limitUp.latestTradingDate = adj.latest;
     state.limitUp.previousTradingDate = adj.previous;
     state.limitUp.nextTradingDate = adj.next;
     return resolved;
   } finally {
-    state.limitUp.calendarLoading = false;
+    if (requestSeq === null || requestSeq === state.limitUp.requestSeq) {
+      state.limitUp.calendarLoading = false;
+    }
   }
 }
 
 function refreshLimitUpDateMeta() {
   const dates = state.limitUp.tradingDates;
   const adj = getAdjacentTradingDates(
-    state.limitUp.selectedDate || formatDateForInput(new Date()),
+    state.limitUp.selectedDate || getBeijingDate(),
     dates,
-    formatDateForInput(new Date())
+    getBeijingDate()
   );
   state.limitUp.selectedDate = adj.current;
   state.limitUp.latestTradingDate = adj.latest;
   state.limitUp.previousTradingDate = adj.previous;
   state.limitUp.nextTradingDate = adj.next;
+}
+
+function isLimitUpDateToday(date = state.limitUp.selectedDate) {
+  return date === getBeijingDate();
 }
 
 function rerenderLimitUpPage() {
@@ -2007,29 +2117,51 @@ async function limitUpFetch() {
   if (state.limitUp.abort) {
     try { state.limitUp.abort.abort(); } catch { /* ignore */ }
   }
-  state.limitUp.abort = new AbortController();
+  const requestSeq = state.limitUp.requestSeq + 1;
+  state.limitUp.requestSeq = requestSeq;
+  const controller = new AbortController();
+  state.limitUp.abort = controller;
   state.limitUp.loading = true;
   state.limitUp.error = null;
   rerenderLimitUpPage();
   try {
-    const date = await ensureLimitUpTradingDate(state.limitUp.selectedDate || formatDateForInput(new Date()));
-    const rawItems = await fetchLimitUpList({ signal: state.limitUp.abort.signal, date });
-    const items = await enrichLimitUpItemsWithQuotes(rawItems, state.limitUp.abort.signal);
+    const date = await ensureLimitUpTradingDate(
+      state.limitUp.selectedDate || getBeijingDate(),
+      requestSeq
+    );
+    if (requestSeq !== state.limitUp.requestSeq || state.limitUp.selectedDate !== date) return;
+    const forceRefresh = !!state.limitUp.forceRefreshOnce;
+    state.limitUp.forceRefreshOnce = false;
+    const rawItems = await fetchLimitUpList({ signal: controller.signal, date, sharedCache: true, forceRefresh });
+    if (requestSeq !== state.limitUp.requestSeq || state.limitUp.selectedDate !== date) return;
     state.limitUp.lastUpdate = new Date();
-    state.limitUp = applyLimitUpFetchResult(state.limitUp, items);
-    kickoffLimitUpMetadataFetch(items.map((it) => it.code), date);
-    kickoffLimitUpReasonsFetch(date);
+    state.limitUp = applyLimitUpFetchResult(state.limitUp, rawItems);
+    rerenderLimitUpPage();
+    if (isLimitUpDateToday(date)) {
+      enrichLimitUpItemsWithQuotes(rawItems, controller.signal)
+        .then((items) => {
+          if (requestSeq !== state.limitUp.requestSeq || state.limitUp.selectedDate !== date) return;
+          state.limitUp = applyLimitUpFetchResult(state.limitUp, items);
+          rerenderLimitUpPage();
+        })
+        .catch(() => { /* best-effort live quote enrichment */ });
+    }
+    kickoffLimitUpMetadataFetch(rawItems, date, requestSeq);
+    kickoffLimitUpReasonsFetch(date, forceRefresh, requestSeq);
     // Phase 8: 涨停看板首次拉取后预拉前 10 个 K 线
-    if (items.length) {
+    if (rawItems.length) {
       preloadLimitUpTopCharts(10);
     }
   } catch (e) {
-    if (e && e.name !== 'AbortError') {
+    if (requestSeq === state.limitUp.requestSeq && e && e.name !== 'AbortError') {
       state.limitUp.error = e.message || String(e);
     }
   } finally {
-    state.limitUp.loading = false;
-    rerenderLimitUpPage();
+    if (requestSeq === state.limitUp.requestSeq) {
+      if (state.limitUp.abort === controller) state.limitUp.abort = null;
+      state.limitUp.loading = false;
+      rerenderLimitUpPage();
+    }
   }
 }
 
@@ -2059,10 +2191,23 @@ async function enrichLimitUpItemsWithQuotes(items, signal) {
   }
 }
 
-function kickoffLimitUpMetadataFetch(codes, date) {
-  if (!Array.isArray(codes) || !codes.length) return;
+function hasLimitUpMetadata(item) {
+  if (!item) return false;
+  return (
+    item.limitUpCount !== undefined &&
+    item.firstLimitTime !== undefined &&
+    item.lastLimitTime !== undefined &&
+    item.breakCount !== undefined
+  );
+}
+
+function kickoffLimitUpMetadataFetch(items, date, requestSeq = state.limitUp.requestSeq) {
+  if (!Array.isArray(items) || !items.length) return;
+  const codes = items.filter((it) => !hasLimitUpMetadata(it)).map((it) => it.code).filter(Boolean);
+  if (!codes.length) return;
   fetchLimitUpMetadataBatch(codes, { date })
     .then((metaMap) => {
+      if (requestSeq !== state.limitUp.requestSeq || state.limitUp.selectedDate !== date) return;
       if (!metaMap || !metaMap.size) return;
       if (!state.limitUp.items.length) return;
       let changed = false;
@@ -2080,9 +2225,10 @@ function kickoffLimitUpMetadataFetch(codes, date) {
     .catch(() => { /* best-effort; ignore */ });
 }
 
-function kickoffLimitUpReasonsFetch(date) {
-  fetchLimitUpReasons({ date })
+function kickoffLimitUpReasonsFetch(date, forceRefresh = false, requestSeq = state.limitUp.requestSeq) {
+  fetchLimitUpReasons({ date, sharedCache: true, forceRefresh })
     .then((reasonMap) => {
+      if (requestSeq !== state.limitUp.requestSeq || state.limitUp.selectedDate !== date) return;
       if (!reasonMap) return;
       state.limitUp.reasonMap = reasonMap;
       if (!state.limitUp.items.length) return;
@@ -2105,15 +2251,29 @@ function kickoffLimitUpReasonsFetch(date) {
 function handleLimitUpDateChange(newDate) {
   // YYYY-MM-DD string (HTML5 <input type="date">) or null = today
   clearLimitUpMetadataCache();
-  state.limitUp.selectedDate = newDate || formatDateForInput(new Date());
+  state.limitUp.requestSeq += 1;
+  if (state.limitUp.abort) {
+    try { state.limitUp.abort.abort(); } catch { /* ignore */ }
+    state.limitUp.abort = null;
+  }
+  state.limitUp.selectedDate = newDate || getBeijingDate();
+  state.limitUp.forceRefreshOnce = state.limitUp.selectedDate === getBeijingDate();
+  state.limitUp.items = [];
+  state.limitUp.groups = buildLimitUpGroupsForState();
+  state.limitUp.lastNonEmptyItems = [];
+  state.limitUp.lastNonEmptyAt = null;
+  state.limitUp.consecutiveEmptyFetches = 0;
   state.limitUp.reasonMap = new Map();
-  ensureLimitUpTradingDate(state.limitUp.selectedDate)
-    .then(() => limitUpFetch())
-    .catch(() => limitUpFetch());
+  state.limitUp.error = null;
+  state.limitUp.loading = true;
+  rerenderLimitUpPage();
+  state.limitUp.loading = false;
+  limitUpFetch();
 }
 
 function applyLiveTicksToLimitUp() {
   if (!state.limitUp.items.length) return;
+  if (!isLimitUpDateToday()) return;
   const merged = mergeLiveTicks(state.limitUp.items, state.quotes);
   if (merged === state.limitUp.items) return;
   state.limitUp.items = merged;
@@ -2121,22 +2281,33 @@ function applyLiveTicksToLimitUp() {
   rerenderLimitUpPage();
 }
 
-function startLimitUpTimer() {
-  stopLimitUpTimer();
+function startLimitUpTimer({ immediate = true } = {}) {
+  stopLimitUpTimer({ abort: false });
+  if (!state.limitUp.autoRefreshEnabled) {
+    state.limitUp.autoRefreshPausedBySchedule = false;
+    rerenderLimitUpPage();
+    return;
+  }
+  if (!isDataAutoRefreshAllowedNow()) {
+    state.limitUp.autoRefreshPausedBySchedule = true;
+    rerenderLimitUpPage();
+    return;
+  }
   const interval = state.limitUp.refreshInterval;
   if (!interval || interval < 1000) return;
-  limitUpFetch();
+  state.limitUp.autoRefreshPausedBySchedule = false;
+  if (immediate) limitUpFetch();
   state.limitUp.timer = setInterval(() => {
     limitUpFetch();
   }, interval);
 }
 
-function stopLimitUpTimer() {
+function stopLimitUpTimer({ abort = true } = {}) {
   if (state.limitUp.timer) {
     clearInterval(state.limitUp.timer);
     state.limitUp.timer = null;
   }
-  if (state.limitUp.abort) {
+  if (abort && state.limitUp.abort) {
     try { state.limitUp.abort.abort(); } catch { /* ignore */ }
     state.limitUp.abort = null;
   }
@@ -2145,12 +2316,16 @@ function stopLimitUpTimer() {
 function handleLimitUpRefreshChange(newIntervalMs) {
   state.limitUp.refreshInterval = newIntervalMs;
   patchLimitUpSettings({ refreshInterval: newIntervalMs });
-  if (state.limitUp.timer) startLimitUpTimer();
+  if (state.limitUp.autoRefreshEnabled) startLimitUpTimer({ immediate: false });
 }
 
 function handleLimitUpAutoRefreshToggle(enabled) {
+  state.limitUp.autoRefreshEnabled = !!enabled;
   if (enabled) startLimitUpTimer();
-  else stopLimitUpTimer();
+  else {
+    stopLimitUpTimer();
+    state.limitUp.autoRefreshPausedBySchedule = false;
+  }
   rerenderLimitUpPage();
 }
 
@@ -2370,6 +2545,22 @@ function applyLimitUpKlineToChart(code, data) {
     if (series.length) ctl.setMA(n, series, MA_COLORS[i] || '#888');
   }
   restoreRangeOrFit(ctl, inst && inst._visibleRange);
+  updateLimitUpChartStatusForCode(code);
+}
+
+function updateLimitUpChartStatusForCode(code) {
+  const inst = state.limitUp.chartInstances.get(code);
+  if (!inst) return;
+  const el2 = document.getElementById(`lu-chart-status-${code}`);
+  if (!el2) return;
+  const parts = [];
+  if (inst.loading) parts.push('图表加载中...');
+  if (inst.error) parts.push(`错误: ${inst.error}`);
+  if (inst.klineData && !inst.loading && !inst.error) {
+    parts.push(`${PERIOD_LABELS[inst.period] || inst.period} · ${inst.klineData.items.length} 根`);
+  }
+  el2.textContent = parts.join(' · ');
+  el2.className = 'chart-status' + (inst.error ? ' has-error' : '');
 }
 
 function mountLimitUpIntradayChart(code) {
@@ -2419,6 +2610,7 @@ async function loadLimitUpIntraday(code, date) {
       name: inst.klineData ? inst.klineData.name : code,
       prevClose: getPrevCloseForDate(inst.klineData && inst.klineData.items, date),
       allowLatestTickSource: isLatestKlineDate(inst, date),
+      sharedCache: true,
       signal: inst.intradayAbort.signal
     });
     if (!data) throw new Error('未能获取分时数据');
@@ -2481,6 +2673,7 @@ async function loadLimitUpKline(code) {
   try {
     const data = await fetchKline(code, {
       period: inst.period,
+      sharedCache: true,
       signal: inst.abort.signal
     });
     if (!data) throw new Error('未能获取 K 线数据');
@@ -2757,6 +2950,17 @@ function getVoiceSession() {
   return getMarketSession(new Date(), dates);
 }
 
+function getDataRefreshSession() {
+  const dates = state.limitUp.tradingDates || [];
+  return getMarketSession(new Date(), dates);
+}
+
+function isDataAutoRefreshAllowedNow() {
+  const session = getDataRefreshSession();
+  state.dataLastSession = session;
+  return isAutoRefreshAllowedInSession(session, DATA_REFRESH_SCHEDULE);
+}
+
 function isVoiceAllowedNow() {
   const smart = state.voice.smartSchedule || DEFAULT_SMART_SCHEDULE;
   const session = getVoiceSession();
@@ -3011,6 +3215,7 @@ export async function loadKlineForCode(code) {
   try {
     const data = await fetchKline(code, {
       period: inst.period,
+      sharedCache: true,
       signal: inst.abort.signal
     });
     if (!data) throw new Error('未能获取 K 线数据');
@@ -3052,6 +3257,7 @@ function applyKlineToChartForCode(code) {
     if (series.length) ctl.setMA(n, series, MA_COLORS[i] || '#888');
   }
   restoreRangeOrFit(ctl, inst._visibleRange);
+  updateChartStatusForCode(code);
 }
 
 function mountIntradayChartForCode(code) {
@@ -3094,6 +3300,7 @@ async function loadIntradayForCode(code, date) {
       name: inst.klineData ? inst.klineData.name : code,
       prevClose: getPrevCloseForDate(inst.klineData && inst.klineData.items, date),
       allowLatestTickSource: isLatestKlineDate(inst, date),
+      sharedCache: true,
       signal: inst.intradayAbort.signal
     });
     if (!data) throw new Error('未能获取分时数据');
@@ -3359,17 +3566,93 @@ function updateMomentumQuoteCells(code) {
 
 function restartTimer() {
   if (state.timer) clearInterval(state.timer);
+  state.timer = null;
+  if (!state.autoRefreshEnabled) {
+    state.autoRefreshPausedBySchedule = false;
+    renderStatus();
+    return;
+  }
+  if (!isDataAutoRefreshAllowedNow()) {
+    state.autoRefreshPausedBySchedule = true;
+    renderStatus();
+    return;
+  }
+  state.autoRefreshPausedBySchedule = false;
   state.timer = setInterval(refreshNow, state.refreshInterval);
 }
 
-function handleMonitorAutoRefreshToggle(enabled) {
-  if (enabled) {
-    restartTimer();
-  } else if (state.timer) {
+function stopMonitorTimer() {
+  if (state.timer) {
     clearInterval(state.timer);
     state.timer = null;
   }
+}
+
+function handleMonitorAutoRefreshToggle(enabled) {
+  state.autoRefreshEnabled = !!enabled;
+  if (enabled) {
+    restartTimer();
+    if (!state.autoRefreshPausedBySchedule) refreshNow();
+  } else {
+    stopMonitorTimer();
+    state.autoRefreshPausedBySchedule = false;
+  }
   renderData();
+}
+
+function applyDataRefreshSchedule() {
+  const allowed = isDataAutoRefreshAllowedNow();
+  const prevMonitorPaused = state.autoRefreshPausedBySchedule;
+  const prevLimitUpPaused = state.limitUp.autoRefreshPausedBySchedule;
+
+  if (state.autoRefreshEnabled) {
+    if (!allowed) {
+      stopMonitorTimer();
+      state.autoRefreshPausedBySchedule = true;
+    } else {
+      const wasPaused = state.autoRefreshPausedBySchedule;
+      state.autoRefreshPausedBySchedule = false;
+      if (!state.timer) {
+        state.timer = setInterval(refreshNow, state.refreshInterval);
+        if (wasPaused) refreshNow();
+      }
+    }
+  } else {
+    stopMonitorTimer();
+    state.autoRefreshPausedBySchedule = false;
+  }
+
+  if (state.limitUp.autoRefreshEnabled) {
+    if (!allowed) {
+      stopLimitUpTimer({ abort: false });
+      state.limitUp.autoRefreshPausedBySchedule = true;
+    } else {
+      const wasPaused = state.limitUp.autoRefreshPausedBySchedule;
+      state.limitUp.autoRefreshPausedBySchedule = false;
+      if (limitUpRootEl && !state.limitUp.timer) {
+        startLimitUpTimer({ immediate: wasPaused });
+      }
+    }
+  } else {
+    stopLimitUpTimer({ abort: false });
+    state.limitUp.autoRefreshPausedBySchedule = false;
+  }
+
+  if (prevMonitorPaused !== state.autoRefreshPausedBySchedule) {
+    updateMonitorAutoRefreshButton();
+    renderStatus();
+  }
+  if (prevLimitUpPaused !== state.limitUp.autoRefreshPausedBySchedule) {
+    rerenderLimitUpPage();
+  }
+}
+
+function startDataRefreshScheduleChecker() {
+  if (state.dataScheduleTimer) clearInterval(state.dataScheduleTimer);
+  warmTradeCalendar().finally(() => applyDataRefreshSchedule());
+  state.dataScheduleTimer = setInterval(() => {
+    applyDataRefreshSchedule();
+  }, 30000);
 }
 
 function _onKlineUpdated(code, period, data) {
@@ -3411,7 +3694,7 @@ export function startApp(root) {
   state.momentum.pinnedCodes = new Set(getMomentumPinnedCodes());
   renderMonitorPage(root);
   refreshNow();
-  restartTimer();
+  startDataRefreshScheduleChecker();
   startVoiceScheduleChecker();
   if (state.voice.enabled) startVoiceTimer();
   const router = createHashRouter(
@@ -3447,7 +3730,8 @@ export function startApp(root) {
           onDateChange: handleLimitUpDateChange,
           reloadKline: _handleLimitUpForceReloadChart
         });
-        startLimitUpTimer();
+        limitUpFetch();
+        startLimitUpTimer({ immediate: false });
       }
     },
     '#/',

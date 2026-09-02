@@ -1,7 +1,6 @@
 // 涨停看板 e2e
 import { test, expect } from '@playwright/test';
 import { setupApiMocks, clearLocalStorage, stubWebSpeech, stubNotification, DEFAULT_TIMEOUT } from './helpers.js';
-import { LIMIT_UP_EMPTY_BODY } from './fixtures/limits-up.js';
 
 test.describe('涨停看板', () => {
   test.beforeEach(async ({ page }) => {
@@ -82,13 +81,15 @@ test.describe('涨停看板', () => {
   test('空响应时锁定显示 + 状态栏显示缓存', async ({ page }) => {
     // 首次已有 10 只数据（来自 beforeEach 的初始 fetch）
     await expect(page.locator('#lu-status')).toContainText(/\d+ 只涨停/);
-    // 改为返回空响应 (AKTools 路径，2026-06-05 升级)
-    await page.unroute('**/api/aktools/api/public/stock_zt_pool_em**');
-    await page.route('**/api/aktools/api/public/stock_zt_pool_em**', async (route) => {
+    // 改为返回空响应 (服务端共享缓存路径)
+    await page.route(/\/api\/cache\/limit-up(?:\?|$)/, async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(LIMIT_UP_EMPTY_BODY)
+        body: JSON.stringify({
+          ok: true,
+          data: { limitUpItems: [], brokenItems: [] }
+        })
       });
     });
     await page.click('button:has-text("立即刷新")');
@@ -122,7 +123,7 @@ test.describe('涨停看板', () => {
   test('日期选择器存在 + 默认值 = 最近交易日', async ({ page }) => {
     const dateInput = page.locator('#lu-date');
     await expect(dateInput).toBeVisible();
-    await expect(dateInput).toHaveValue('2026-06-05');
+    await expect(dateInput).toHaveValue('2026-06-08');
   });
 
   test('"今天" 按钮存在 + 点击不报错', async ({ page }) => {
@@ -146,16 +147,11 @@ test.describe('涨停看板', () => {
   });
 
   test('点击 "前一天" → 日期输入框 -1 天 + 触发重新拉取', async ({ page }) => {
-    // 抓网络请求
-    let lastUrl = null;
-    page.on('request', (req) => {
-      if (req.url().includes('/api/aktools/')) lastUrl = req.url();
-    });
+    const reqPromise = waitForLimitUpCacheRequest(page, '2026-06-05');
     await page.locator('#lu-date-prev').click();
-    // 等待新请求发出
-    await page.waitForTimeout(500);
-    // 验证 URL 含正确格式的 date 参数（YYYYMMDD，无横线）
-    t_expectUrlHasUndashedDate(lastUrl);
+    const req = await reqPromise;
+    expectCacheUrlHasDate(req.url(), '2026-06-05');
+    await expect(page.locator('#lu-date')).toHaveValue('2026-06-05');
   });
 
   test('点击 "后一天" → 日期输入框到下一个交易日（不超出最近交易日）', async ({ page }) => {
@@ -166,20 +162,17 @@ test.describe('涨停看板', () => {
     await page.locator('#lu-date-next').click();
     await page.waitForTimeout(200);
     const afterNext = await page.locator('#lu-date').inputValue();
-    // mock 日历中 2026-06-04 的后一个交易日是 2026-06-05
-    t_expectDayShift(beforeNext, afterNext, 1);
+    expect(beforeNext).toBe('2026-06-05');
+    expect(afterNext).toBe('2026-06-08');
   });
 
-  test('日期 bug 回归：URL 用 YYYYMMDD 格式（非 YYYY-MM-DD）', async ({ page }) => {
-    const capturedUrls = [];
-    page.on('request', (req) => {
-      if (req.url().includes('stock_zt_pool_em')) capturedUrls.push(req.url());
-    });
+  test('日期 bug 回归：缓存请求携带选中的交易日', async ({ page }) => {
+    const reqPromise = waitForLimitUpCacheRequest(page, '2026-06-04');
     // 改日期 → 应触发新请求
     await page.locator('#lu-date').fill('2026-06-04');
     await page.locator('#lu-date').dispatchEvent('change');
-    await page.waitForTimeout(500);
-    t_expectUrlHasUndashedDate(capturedUrls[capturedUrls.length - 1]);
+    const req = await reqPromise;
+    expectCacheUrlHasDate(req.url(), '2026-06-04');
   });
 
   // ===== Phase 8: 涨停页多 chart 改造 =====
@@ -251,22 +244,16 @@ test.describe('涨停看板', () => {
   });
 });
 
-function t_expectUrlHasUndashedDate(url) {
-  if (!url) throw new Error('no URL captured');
-  if (url.includes('date=2026-06-')) {
-    throw new Error(`URL should not contain dashed date: ${url}`);
-  }
-  if (url.includes('start_date=2026-06-') || url.includes('end_date=2026-06-')) {
-    throw new Error(`URL should not contain dashed date: ${url}`);
-  }
+function waitForLimitUpCacheRequest(page, expectedDate) {
+  return page.waitForRequest((req) => {
+    const url = req.url();
+    if (!url.includes('/api/cache/limit-up')) return false;
+    if (url.includes('/api/cache/limit-up/reasons')) return false;
+    return decodeURIComponent(url).includes(`date=${expectedDate}`);
+  });
 }
 
-function t_expectDayShift(fromStr, toStr, expectedDelta) {
-  const from = new Date(fromStr + 'T00:00:00');
-  const to = new Date(toStr + 'T00:00:00');
-  const diffMs = to.getTime() - from.getTime();
-  const diffDays = Math.round(diffMs / 86400000);
-  if (diffDays !== expectedDelta) {
-    throw new Error(`expected ${expectedDelta} day shift, got ${diffDays} (${fromStr} → ${toStr})`);
-  }
+function expectCacheUrlHasDate(url, expectedDate) {
+  if (!url) throw new Error('no URL captured');
+  expect(decodeURIComponent(url)).toContain(`date=${expectedDate}`);
 }

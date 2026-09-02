@@ -1,0 +1,84 @@
+import { rm } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
+import { cachePath, getInflightRefreshCount, getOrRefresh } from '../server/cacheStore.js';
+import { createAppServer } from '../server/index.js';
+import { getKlineTtlMs } from '../server/klineService.js';
+import { resolveProxyTarget } from '../server/proxyRoutes.js';
+import { beijingDateKey, normalizeDateKey } from '../server/utils.js';
+
+function requestJson(port, path) {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest({ host: '127.0.0.1', port, path, method: 'GET' }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        try {
+          resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) });
+        } catch (err) {
+          reject(err);
+        }
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+QUnit.module('server cache and production routing', (hooks) => {
+  hooks.after(async () => {
+    await rm(cachePath('test-runtime'), { recursive: true, force: true });
+  });
+
+  QUnit.test('cold concurrent cache requests share one upstream refresh', async (t) => {
+    const key = `single-flight-${Date.now()}.json`;
+    let calls = 0;
+    const refresh = async () => {
+      calls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      return { value: 42 };
+    };
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => getOrRefresh(['test-runtime', key], 1000, refresh, { skipPrune: true }))
+    );
+    t.equal(calls, 1, 'only one refresh reached the upstream function');
+    t.ok(results.every((result) => result.data.value === 42));
+    t.equal(getInflightRefreshCount(), 0, 'in-flight entry is cleaned up');
+  });
+
+  QUnit.test('K-line TTL is period-aware', (t) => {
+    t.equal(getKlineTtlMs('1m'), 2 * 60 * 1000);
+    t.equal(getKlineTtlMs('60m'), 2 * 60 * 1000);
+    t.equal(getKlineTtlMs('1d'), 60 * 60 * 1000);
+  });
+
+  QUnit.test('default server dates use Beijing calendar date', (t) => {
+    const instant = new Date('2026-06-01T16:30:00.000Z');
+    t.equal(beijingDateKey(instant), '20260602');
+    t.equal(normalizeDateKey(null, instant), '20260602');
+  });
+
+  QUnit.test('production proxy resolver preserves path and query', (t) => {
+    const target = resolveProxyTarget('/api/tencent/q=sh600519', '?foo=bar');
+    t.equal(target.url, 'https://qt.gtimg.cn/q=sh600519?foo=bar');
+    const aktools = resolveProxyTarget(
+      '/api/aktools/api/public/stock_zt_pool_em',
+      '?date=20260605',
+      { AKTOOLS_BASE: 'http://127.0.0.1:9999' }
+    );
+    t.equal(aktools.url, 'http://127.0.0.1:9999/api/public/stock_zt_pool_em?date=20260605');
+  });
+
+  QUnit.test('unknown production API returns JSON 404 instead of index.html', async (t) => {
+    const server = createAppServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address();
+      const response = await requestJson(address.port, '/api/not-a-real-route');
+      t.equal(response.status, 404);
+      t.strictEqual(response.body.ok, false);
+      t.equal(response.body.error, 'Not found');
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});

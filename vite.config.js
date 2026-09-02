@@ -1,6 +1,24 @@
 import { defineConfig } from 'vite';
+import { handleCacheRequest, startBackgroundJobs } from './server/index.js';
+
+function cacheApiPlugin() {
+  return {
+    name: 'stock-monitor-cache-api',
+    configureServer(server) {
+      startBackgroundJobs();
+      server.middlewares.use((req, res, next) => {
+        if (!req.url || !req.url.startsWith('/api/cache')) {
+          next();
+          return;
+        }
+        handleCacheRequest(req, res).catch(next);
+      });
+    }
+  };
+}
 
 export default defineConfig({
+  plugins: [cacheApiPlugin()],
   server: {
     port: 5173,
     open: false,

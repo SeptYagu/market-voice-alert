@@ -1,5 +1,7 @@
-import { formatDateForInput } from './time.js';
+import { getBeijingClockParts, getBeijingDate } from './time.js';
 import { isTradingDate } from './tradeCalendar.js';
+
+export { getBeijingDate };
 
 export const DEFAULT_SMART_SCHEDULE = Object.freeze({
   enabled: true,
@@ -9,28 +11,8 @@ export const DEFAULT_SMART_SCHEDULE = Object.freeze({
 });
 
 function _minutesInBeijing(now = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Shanghai',
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit'
-  }).formatToParts(now);
-  const hour = Number(parts.find((p) => p.type === 'hour')?.value || 0);
-  const minute = Number(parts.find((p) => p.type === 'minute')?.value || 0);
-  return hour * 60 + minute;
-}
-
-export function getBeijingDate(now = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).formatToParts(now);
-  const y = parts.find((p) => p.type === 'year')?.value;
-  const m = parts.find((p) => p.type === 'month')?.value;
-  const d = parts.find((p) => p.type === 'day')?.value;
-  return y && m && d ? `${y}-${m}-${d}` : formatDateForInput(now);
+  const parts = getBeijingClockParts(now);
+  return parts.hour * 60 + parts.minute;
 }
 
 export function getMarketSession(now = new Date(), tradingDates = []) {
@@ -56,6 +38,10 @@ export function normalizeSmartSchedule(input) {
 }
 
 export function isVoiceAllowedInSession(session, smartSchedule) {
+  return isAutoRefreshAllowedInSession(session, smartSchedule);
+}
+
+export function isAutoRefreshAllowedInSession(session, smartSchedule) {
   const cfg = normalizeSmartSchedule(smartSchedule);
   if (!cfg.enabled) return true;
   if (session === 'trading') return true;

@@ -1,5 +1,14 @@
 # 股票/期货监控网页 - 技术规格文档
 
+> **文档状态说明（重要）**
+>
+> 本文件是项目早期需求源，保留了若干阶段性设想和历史描述。当前可运行实现以
+> `AGENTS.md`、`STATUS.md`、最新 `docs/handoff/*` 和 `src/` 代码为准。
+>
+> 本文中标注为“历史/过时”的内容不要直接当作当前实现依据，尤其是 ECharts、
+> 新浪主源、JSONP、`stock-api`、阿里云备用源、`src/pages/*.html`、`TODO.md`、
+> `public/alert.mp3`、`QUnit 3.x` 等早期描述。
+
 ## 1. 项目概述
 
 - **项目名称**: 股票期货实时监控助手
@@ -11,19 +20,25 @@
 
 ## 2. 技术栈
 
+> **当前实现对照**：当前图表库是 TradingView Lightweight Charts 4，不是 ECharts；
+> 当前测试框架版本来自 `package.json` 的 QUnit 2.x；当前实时行情主源是腾讯，涨停看板主源是本地 AKTools。
+
 | 技术 | 版本/来源 |
 |------|-----------|
 | 前端框架 | 原生 HTML5 + CSS3 + ES6+ |
 | 构建工具 | Vite 5.x |
 | 代码检查 | ESLint 8.x |
-| 图表库 | ECharts 5.x (CDN) |
+| 图表库 | **历史描述：ECharts 5.x (CDN)**；当前实现：TradingView Lightweight Charts 4 |
 | 语音合成 | Web Speech API (SpeechSynthesis) |
 | 后台任务 | Web Worker |
 | 数据存储 | localStorage |
-| 测试框架 | QUnit 3.x |
-| 数据源 | 新浪财经免费API (主) + 备用免费API |
+| 测试框架 | **历史描述：QUnit 3.x**；当前实现：QUnit 2.x + Playwright |
+| 数据源 | **历史描述：新浪财经免费API (主) + 备用免费API**；当前实现：腾讯实时行情主源 + 东财备源 + AKTools 涨停主源 |
 
-## 2.1 备用数据源
+## 2.1 备用数据源（历史设想，已过时）
+
+> 以下表格是早期设计。当前数据源请看 `AGENTS.md` 的“API 代理”和最新 handoff。
+> `stock-api (npm)`、阿里云财经 API 没有进入当前实现；新浪现在主要用于期货行情。
 
 | 优先级 | 数据源 | 说明 |
 |--------|--------|------|
@@ -35,6 +50,9 @@
 ## 3. 功能模块
 
 ### 3.1 数据获取模块 (API)
+
+> **历史描述，已过时**：股票实时行情当前不直接走新浪 JSONP，而是通过 Vite 代理优先请求腾讯，
+> 失败后回退东财；期货仍有新浪代理路径。
 
 | 功能 | 实现 |
 |------|------|
@@ -56,7 +74,7 @@
 | 导出选中 | 导出选中股票到txt文件 |
 | 持久化 | localStorage 保存 |
 
-### 3.3 走势图模块 (ECharts)
+### 3.3 走势图模块（历史写法：ECharts；当前：lightweight-charts）
 
 | 图表类型 | 说明 |
 |----------|------|
@@ -85,9 +103,13 @@
 
 ### 3.6 涨停看板模块
 
+> **数据源标注**：本节部分字段从 Phase 4 时代的东财 clist/get 演进而来。当前涨停池、
+> 炸板池、涨停原因和交易日历主源均为本地 AKTools (`/api/aktools`)；东财 clist/get
+> 相关描述只作为历史背景。
+
 | 功能 | 说明 |
 |------|------|
-| 数据获取 | 东财 clist/get 一次拉全市场涨停股（fs=m:0+t:6+f:!2,m:0+t:13+f:!2,m:0+t:80+f:!2） |
+| 数据获取 | **历史描述：东财 clist/get**；当前实现：AKTools `stock_zt_pool_em` / `stock_zt_pool_zbgc_em` |
 | 分类方式 | 4 个分组：3 连板及以上 / 2 连板 / 1 连板或首板 / 炸板 |
 | 排序规则 | 4 个选项：连板数 / 涨跌幅 / 封板时间 / 成交金额 |
 | 实时价合并 | 监控 timer 后台拉取 → 看板行内价格跟随（不影响连板数等 metadata） |
@@ -113,7 +135,7 @@
 │  │  │ ☐ sz000858 五粮液  ¥165.50   -1.20%    │  │
 │  │  │ ☐ nf2105  螺纹钢   ¥5200     +0.85%    │  │
 │  │  └─────────────────────────────────────────┘  │
-│  ├─ 走势图区域 (ECharts)                          │
+│  ├─ 走势图区域（历史写法：ECharts；当前 lightweight-charts） │
 │  │  [日K] [周K] [月K] [分时]                     │
 │  └─ 设置面板                                       │
 │       - 刷新频率 [10s ▼]                         │
@@ -252,6 +274,11 @@
 
 ## 6. 文件结构 (Vite 标准)
 
+> **历史结构，已过时**：以下目录树保留早期规划。当前真实文件结构请以 `AGENTS.md`
+> 和 `rg --files src tests e2e docs` 为准。当前没有 `TODO.md`、`public/alert.mp3`、
+> `src/css/components.css`、`src/pages/index.html`、`src/pages/limit-up.html`、
+> `src/js/export.js`、`tests/index.html`。
+
 ```
 project1/
 ├── index.html              # 主页面入口
@@ -273,7 +300,7 @@ project1/
 │       ├── storage.js     # localStorage 封装
 │       ├── worker.js      # Web Worker (后台定时)
 │       ├── tts.js         # 语音合成模块
-│       ├── chart.js       # ECharts 图表
+│       ├── chart.js       # 历史注释：ECharts 图表；当前为 lightweight-charts 封装
 │       ├── alert.js       # 提醒逻辑
 │       ├── router.js      # 页面路由 (SPA)
 │       ├── limitUp.js     # 涨停看板逻辑
@@ -307,8 +334,8 @@ project1/
 
 ### 8.1 测试框架
 
-- 框架: QUnit 3.x
-- 运行方式: 浏览器端测试 + CI集成
+- 框架: **历史描述：QUnit 3.x**；当前实现：QUnit 2.x（CLI + jsdom）+ Playwright E2E
+- 运行方式: `npm test` 跑单元测试，`npm run e2e` 跑 Playwright，`npm run ci` 串联 lint/test/e2e/build
 
 ### 8.2 测试覆盖范围
 
@@ -322,7 +349,7 @@ project1/
 | alert.js | 阈值检测、通知触发 |
 | chart.js | 图表渲染、数据更新 |
 | limitUp.js | 涨停数据获取、连板分类、排序 |
-| export.js | 导出文件生成、格式验证 |
+| export.js | **历史模块名**：导出逻辑当前在 `app.js` 内实现，独立 `src/js/export.js` 不存在 |
 | app.js | 集成测试、UI交互 |
 
 ## 9. 构建与部署
@@ -336,7 +363,7 @@ project1/
 
 ## 10. 已知限制
 
-1. **跨域**: 新浪API可能有跨域限制，需使用 JSONP
+1. **跨域（历史描述）**: 新浪API可能有跨域限制，早期设想使用 JSONP；当前开发环境主要通过 Vite proxy 解决跨域
 2. **交易时段**: 非交易时段数据可能不更新
 3. **后台运行**: 部分浏览器最小化后可能暂停 Web Worker
 4. **语音**: Web Speech API 依赖浏览器支持，部分移动端可能不支持

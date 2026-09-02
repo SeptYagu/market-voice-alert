@@ -1,4 +1,5 @@
 import { renderLimitUpPage, shiftDateString } from '../src/js/limitUpView.js';
+import { getBeijingDate, shiftCalendarDate } from '../src/js/time.js';
 
 QUnit.module('limitUpView.renderLimitUpPage (sort/select/checkboxes)', (hooks) => {
   let root;
@@ -668,13 +669,7 @@ QUnit.module('limitUpView.shiftDateString', () => {
     t.equal(shiftDateString('2025-02-28', 1), '2025-03-01');
   });
   QUnit.test('null/empty input uses today as base', (t) => {
-    const today = new Date();
-    today.setDate(today.getDate() + 1);
-    const expected = [
-      today.getFullYear(),
-      String(today.getMonth() + 1).padStart(2, '0'),
-      String(today.getDate()).padStart(2, '0')
-    ].join('-');
+    const expected = shiftCalendarDate(getBeijingDate(), 1);
     t.equal(shiftDateString(null, 1), expected);
     t.equal(shiftDateString('', 1), expected);
   });

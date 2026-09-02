@@ -18,6 +18,13 @@ test.describe('路由切换', () => {
     await expect(page.locator('header.app-header nav.app-nav')).toBeVisible();
   });
 
+  test('页面底部显示版本和更新时间', async ({ page }) => {
+    await page.goto('http://127.0.0.1:5173/');
+    const footer = page.locator('footer.app-version');
+    await expect(footer).toBeVisible({ timeout: DEFAULT_TIMEOUT });
+    await expect(footer).toHaveText('Version: 4b9de69 Updated: 2026-09-01');
+  });
+
   test('点 nav 切到涨停看板', async ({ page }) => {
     await page.goto('http://127.0.0.1:5173/');
     await page.click('a[href="#/limit-up"]');

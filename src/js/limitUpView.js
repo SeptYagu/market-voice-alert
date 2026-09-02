@@ -7,7 +7,7 @@ import {
 } from './app.js';
 import { PERIODS, PERIOD_LABELS } from './kline.js';
 import { sortLimitUpGroupItems } from './limitUp.js';
-import { formatDateForInput, shiftCalendarDate } from './time.js';
+import { getBeijingDate, shiftCalendarDate } from './time.js';
 
 const SORT_LABELS = Object.freeze({
   count: '连板',
@@ -19,6 +19,20 @@ const SORT_LABELS = Object.freeze({
   time: '最终封板',
   break: '炸板'
 });
+
+function isAutoRefreshEnabled(state) {
+  return state && state.autoRefreshEnabled !== undefined ? !!state.autoRefreshEnabled : !!(state && state.timer);
+}
+
+function autoRefreshButtonText(state) {
+  if (!isAutoRefreshEnabled(state)) return '开始自动刷新';
+  return state.autoRefreshPausedBySchedule ? '自动刷新已暂停' : '停止自动刷新';
+}
+
+function autoRefreshButtonTitle(state) {
+  if (!isAutoRefreshEnabled(state)) return '开始自动刷新';
+  return state.autoRefreshPausedBySchedule ? '非交易时段，自动刷新将在开盘后恢复' : '停止自动刷新';
+}
 
 function intradaySourceLabel(source) {
   if (source === 'aktools-stock_intraday_em') return 'AKTools成交';
@@ -428,17 +442,17 @@ function buildToolbar(state, cb) {
       ),
       el(
         'button',
-        {
-          id: 'lu-auto-refresh-toggle',
-          class: state.timer ? 'btn-ctl-active' : '',
-          title: state.timer ? '停止自动刷新' : '开始自动刷新',
+          {
+            id: 'lu-auto-refresh-toggle',
+          class: isAutoRefreshEnabled(state) ? 'btn-ctl-active' : '',
+          title: autoRefreshButtonTitle(state),
           on: {
             click: () => {
-              if (typeof cb.toggleAutoRefresh === 'function') cb.toggleAutoRefresh(!state.timer);
+              if (typeof cb.toggleAutoRefresh === 'function') cb.toggleAutoRefresh(!isAutoRefreshEnabled(state));
             }
           }
         },
-        state.timer ? '停止自动刷新' : '开始自动刷新'
+        autoRefreshButtonText(state)
       ),
       el('span', { class: 'lu-hint' }, `共 ${totalCount(state)} 只涨停${state.selectedDate ? `（${state.selectedDate}）` : ''}`)
     )
@@ -446,7 +460,7 @@ function buildToolbar(state, cb) {
 }
 
 function buildDateInput(state, onChange) {
-  const todayStr = state.latestTradingDate || formatDateForInput(new Date());
+  const todayStr = state.latestTradingDate || getBeijingDate();
   const current = state.selectedDate || todayStr;
   const input = el('input', {
     type: 'date',
@@ -509,7 +523,7 @@ function buildDateInput(state, onChange) {
 const LU_TABLE_COLSPAN = 13;
 
 export function shiftDateString(yyyymmdd, deltaDays) {
-  const base = yyyymmdd || formatDateForInput(new Date());
+  const base = yyyymmdd || getBeijingDate();
   return shiftCalendarDate(base, deltaDays);
 }
 

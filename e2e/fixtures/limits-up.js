@@ -4,7 +4,7 @@
 // 返回格式: [{"序号":1,"代码":"300897","名称":"山科智能","涨跌幅":20.0,"最新价":22.38,...}]
 // (akshare 风格 DataFrame JSON，UTF-8 编码)
 
-const item = (code, name, price, pct, count = 0, time = null, breaks = 0, isST = false) => ({
+const item = (code, name, price, pct, count = 0, time = null, breaks = 0) => ({
   序号: 0,
   代码: code,
   名称: name,

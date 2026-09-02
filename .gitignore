@@ -11,6 +11,7 @@ test-results
 .tesseract-extracted
 .tmp-pdf-tools
 artifacts
+data/cache
 backups/*.zip
 backups/*.tar
 backups/*.tar.gz

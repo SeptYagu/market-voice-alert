@@ -1,5 +1,6 @@
 import {
   getMarketSession,
+  isAutoRefreshAllowedInSession,
   isVoiceAllowedInSession,
   normalizeSmartSchedule
 } from '../src/js/marketSession.js';
@@ -28,5 +29,18 @@ QUnit.module('marketSession', () => {
     t.equal(isVoiceAllowedInSession('lunch', cfg), false);
     t.equal(isVoiceAllowedInSession('after-close', cfg), false);
     t.equal(isVoiceAllowedInSession('opening-auction', cfg), false);
+  });
+
+  QUnit.test('data auto refresh can reuse session rules without voice state', (t) => {
+    const cfg = normalizeSmartSchedule({
+      enabled: true,
+      pauseLunchBreak: true,
+      autoStopAfterClose: true,
+      autoStartAuction: false
+    });
+    t.equal(isAutoRefreshAllowedInSession('trading', cfg), true);
+    t.equal(isAutoRefreshAllowedInSession('lunch', cfg), false);
+    t.equal(isAutoRefreshAllowedInSession('after-close', cfg), false);
+    t.equal(isAutoRefreshAllowedInSession('opening-auction', cfg), false);
   });
 });

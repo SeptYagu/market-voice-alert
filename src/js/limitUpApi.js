@@ -68,6 +68,14 @@ export function parseLimitUpList(json) {
 // =====================================================================
 
 export async function fetchLimitUpList(opts = {}) {
+  if (opts.sharedCache === true) {
+    try {
+      const payload = await fetchSharedLimitUp(opts);
+      if (payload && Array.isArray(payload.limitUpItems)) return payload.limitUpItems;
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw e;
+    }
+  }
   return await fetchAktoolsLimitUpList({
     signal: opts.signal,
     kind: 'limitUp',
@@ -78,6 +86,16 @@ export async function fetchLimitUpList(opts = {}) {
 export async function fetchLimitUpAndBrokenList(opts = {}) {
   const signal = opts.signal;
   const date = opts.date;
+  if (opts.sharedCache === true) {
+    try {
+      const payload = await fetchSharedLimitUp(opts);
+      if (payload && Array.isArray(payload.limitUpItems) && Array.isArray(payload.brokenItems)) {
+        return { limitUpItems: payload.limitUpItems, brokenItems: payload.brokenItems };
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw e;
+    }
+  }
   const [limitUpItems, brokenItems] = await Promise.all([
     fetchAktoolsLimitUpList({ signal, kind: 'limitUp', date }),
     fetchAktoolsLimitUpList({ signal, kind: 'broken', date })
@@ -92,6 +110,20 @@ export async function fetchLimitUpAndBrokenList(opts = {}) {
 // =====================================================================
 
 export async function fetchLimitUpReasons(opts = {}) {
+  if (opts.sharedCache === true) {
+    try {
+      const payload = await fetchSharedLimitUpReasons(opts);
+      if (payload && Array.isArray(payload.reasons)) {
+        const out = new Map();
+        for (const it of payload.reasons) {
+          out.set(it.code, { reason: it.reason, interpretation: it.interpretation });
+        }
+        return out;
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw e;
+    }
+  }
   const items = await fetchAktoolsLimitUpReasonList({
     signal: opts.signal,
     date: opts.date
@@ -139,4 +171,28 @@ export async function fetchLimitUpMetadataBatch(codes, options = {}) {
 
 export function clearLimitUpMetadataCache() {
   clearAktoolsCache();
+}
+
+async function fetchSharedLimitUp(opts = {}) {
+  const usp = new URLSearchParams();
+  if (opts.date) usp.set('date', String(opts.date));
+  if (opts.forceRefresh) usp.set('force', '1');
+  const url = `/api/cache/limit-up${usp.toString() ? `?${usp.toString()}` : ''}`;
+  const res = await fetch(url, { signal: opts.signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (!json || json.ok !== true) throw new Error((json && json.error) || 'shared limit-up cache failed');
+  return json.data;
+}
+
+async function fetchSharedLimitUpReasons(opts = {}) {
+  const usp = new URLSearchParams();
+  if (opts.date) usp.set('date', String(opts.date));
+  if (opts.forceRefresh) usp.set('force', '1');
+  const url = `/api/cache/limit-up/reasons${usp.toString() ? `?${usp.toString()}` : ''}`;
+  const res = await fetch(url, { signal: opts.signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (!json || json.ok !== true) throw new Error((json && json.error) || 'shared reason cache failed');
+  return json.data;
 }

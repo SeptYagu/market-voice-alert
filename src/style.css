@@ -58,12 +58,28 @@ body {
   color: var(--text-color);
   min-height: 100vh;
   padding: 20px;
+  display: flex;
+  flex-direction: column;
   transition: background 0.3s, color 0.3s;
 }
 
 #app {
+  width: 100%;
+  flex: 1 0 auto;
   max-width: 1200px;
   margin: 0 auto;
+}
+
+.app-version {
+  width: 100%;
+  max-width: 1200px;
+  margin: 18px auto 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
 }
 
 button, select, input, textarea {
