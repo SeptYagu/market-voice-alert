@@ -22,7 +22,7 @@ import { isFutureCode } from './futures/instrument.js';
 import { fetchFuturesQuotes, fetchFuturesIntraday, fetchFuturesKline } from './futures/futuresApi.js';
 
 const STOCK_RE = /^(sh|sz|bj)\d{6}$/i;
-const FUTURE_RE = /^nf[a-z0-9]+$/i;
+export const FUTURE_RE = /^(?:nf_?)?[a-z]{1,3}\d{1,4}$/i;
 
 export const EASTMONEY_FIELDS = 'f43,f44,f45,f46,f47,f48,f50,f51,f52,f57,f58,f60,f116,f117,f169,f170';
 const EASTMONEY_TRENDS_FIELDS1 = 'f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13';
@@ -60,10 +60,19 @@ export function buildEastmoneyTrendsUrl(code) {
   return `/api/eastmoney-kline/qt/stock/trends2/get?${params.join('&')}`;
 }
 
+export function toSinaFutureSymbol(code) {
+  if (!code || typeof code !== 'string') return '';
+  const s = code.trim();
+  if (/^nf_/i.test(s)) return s;
+  if (/^nf[a-z0-9]+$/i.test(s)) return s.toLowerCase();
+  return `nf_${s.toUpperCase()}`;
+}
+
 export function buildSinaFutureUrl(codes) {
   const list = (Array.isArray(codes) ? codes : [codes])
-    .filter((c) => typeof c === 'string' && FUTURE_RE.test(c))
-    .map((c) => c.toLowerCase());
+    .filter((c) => typeof c === 'string' && (FUTURE_RE.test(c) || isFutureCode(c)))
+    .map(toSinaFutureSymbol)
+    .filter(Boolean);
   if (!list.length) return null;
   return `/api/sina/list=${list.join(',')}`;
 }

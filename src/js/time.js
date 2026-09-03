@@ -76,12 +76,32 @@ export function shiftCalendarDate(date, deltaDays) {
   return formatDateForInput(base);
 }
 
+export function parseBeijingDateToChartSeconds(raw) {
+  if (typeof raw !== 'string') return null;
+  const m = DATE_RE.exec(raw.trim());
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const ms = Date.UTC(y, mo - 1, d, 0, 0, 0);
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+}
+
 // Lightweight Charts has no first-class timezone support. Passing these
 // "wall-clock UTC" seconds makes a Beijing 09:30 bar render as 09:30 instead
-// of being shifted by the user's local timezone.
+// of being shifted by the user's local timezone. Accepts YYYY-MM-DD or YYYY-MM-DD HH:mm:ss.
 export function parseBeijingDateTimeToChartSeconds(raw) {
   if (typeof raw !== 'string') return null;
-  const m = DATETIME_RE.exec(raw.trim());
+  const trimmed = raw.trim();
+  const dateMatch = DATE_RE.exec(trimmed);
+  if (dateMatch) {
+    const y = Number(dateMatch[1]);
+    const mo = Number(dateMatch[2]);
+    const d = Number(dateMatch[3]);
+    const ms = Date.UTC(y, mo - 1, d, 0, 0, 0);
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+  }
+  const m = DATETIME_RE.exec(trimmed);
   if (!m) return null;
   const y = Number(m[1]);
   const mo = Number(m[2]);

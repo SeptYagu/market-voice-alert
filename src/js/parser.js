@@ -122,7 +122,8 @@ export function parseSinaFuture(text) {
   let match;
   SINA_FUTURE_RE.lastIndex = 0;
   while ((match = SINA_FUTURE_RE.exec(text)) !== null) {
-    const code = match[1].toLowerCase();
+    const rawCode = match[1].toLowerCase();
+    const code = rawCode.startsWith('nf_') ? rawCode.slice(3) : rawCode;
     const payload = match[2];
     if (!payload) continue;
     const f = payload.split(',');
@@ -146,19 +147,20 @@ export function parseSinaFuture(text) {
       price = parseFloat(f[3]) || 0;
       volume = parseInt(f[4], 10) || 0;
       openInterest = parseInt(f[6], 10) || 0;
-      prevSettlement = parseFloat(f[7]) || 0;
-      prevClose = parseFloat(f[14]) || prevSettlement;
-      name = f[37] || code;
+      prevClose = parseFloat(f[14]) || 0;
+      prevSettlement = parseFloat(f[15]) || prevClose;
+      const foundName = f.slice(35).find((x) => /[\u4e00-\u9fa5]/.test(x));
+      name = foundName ? foundName.trim() : (f[f.length - 1] ? f[f.length - 1].trim() : code);
     } else {
-      name = f[0] || code;
+      name = (f[0] || code).trim();
       open = parseFloat(f[2]) || 0;
       high = parseFloat(f[3]) || 0;
       low = parseFloat(f[4]) || 0;
       prevClose = parseFloat(f[5]) || 0;
       price = parseFloat(f[8]) || parseFloat(f[6]) || 0;
-      prevSettlement = parseFloat(f[9]) || 0;
-      openInterest = parseInt(f[12], 10) || 0;
-      volume = parseInt(f[14], 10) || parseInt(f[13], 10) || 0;
+      prevSettlement = parseFloat(f[10]) || 0;
+      openInterest = parseInt(f[13], 10) || 0;
+      volume = parseInt(f[14], 10) || 0;
     }
 
     if (!Number.isFinite(price) || price === 0) continue;

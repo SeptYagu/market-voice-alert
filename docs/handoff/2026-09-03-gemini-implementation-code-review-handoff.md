@@ -7,6 +7,8 @@
 > 审查性质：只读审查；本轮未修改业务代码
 >
 > 审查对象：两份代码审查 handoff、期货需求技术方案，以及 Gemini 声称完成这些文档后的实现
+>
+> **补充审查（2026-09-03 17:45）**：在本文 §5-§10 的初审基础上，由第二位审查员对 Gemini 新建模块、chartRowController、已有文件变更和测试覆盖进行了深度补充排查。补充发现的 ~50 个新缺陷已合并至 §13-§17。
 
 ## 1. 结论先行
 
@@ -14,17 +16,14 @@
 
 虽然静态模块、路由、缓存接口、双图容器和自动化测试框架已经搭建，且现有 lint、单测、E2E、构建分别通过，但真实 AKTools 数据契约与前端/服务端契约存在多处 P0 级错配。实际浏览器中添加 `RB0` 后，报价全为空，展开后日 K 报“数据为空”，分时图没有绘制。因此，自动化通过不能证明真实功能可用。
 
-保守评估：
+**两轮审查合并统计**：
 
-| 范围 | 当前状态 | 评估 |
-|---|---|---|
-| 原两份审查文档 | 部分问题已修，仍有多项 HIGH 未关闭，并出现新的正确性回归 | 未完成 |
-| F0 基础标的识别 | 有输入和 `nf_` 基础支持，但真实报价解析及代码归一化失败 | 部分完成 |
-| F1 合约与交易时段 | 有静态目录和会话骨架，但交易日、夜盘、跨日逻辑错误或未接入 | 部分完成 |
-| F2 服务端数据层 | 接口存在，但报价字段、日 K 日期、周期、缓存语义均有关键错误 | 未通过 |
-| F3 前端双图 | DOM 容器存在，但真实报价和图表不可用，时间轴仍是股票时段 | 未通过 |
-| F4 实时刷新与播报 | 仍由股票交易时段控制，夜盘和部分日盘不会更新 | 未通过 |
-| F5 验收与回归 | Mock 自动化通过，但缺少真实契约和真实运行验收 | 未通过 |
+| 级别 | 初审发现 | 补充发现 | 合计 |
+|------|----------|----------|------|
+| P0 阻断级 | 7 | 8 | **15** |
+| P1 严重 | 9 | 20 | **29** |
+| P2+ 中低危 | 6 | 22 | **28** |
+| **合计** | **22** | **~50** | **~72** |
 
 按“用户可实际使用”的标准，期货能力完成度目前不足 30%。
 
@@ -338,3 +337,223 @@ Gemini 修复了若干问题，包括 UUID 临时文件、量比字段、集合�
 `a9a3a89` 可以作为继续修复的开发基线，但**不能标记为期货全链路完成，也不建议按该功能口径交付用户**。
 
 在 Batch A 和 Batch B 完成前，真实期货主流程处于阻断状态；在 Batch C 和真实 F5 验收完成前，不应宣称符合既定期货需求。现有自动化通过记录应保留，但必须同时明确它验证的是 Mock 场景，而非真实供应商和真实浏览器数据链路。
+
+---
+
+# 以下为补充审查（§13-§17）
+
+> 补充审查日期：2026-09-03 17:45
+>
+> 审查方式：3 个独立审查员分别负责新建期货模块、已有文件变更/chartRowController、测试覆盖率
+>
+> 新发现缺陷：~50 个（P0: 8 / P1: 20 / P2: 22），均为初审 §5-§10 未覆盖的新问题
+
+## 13. 补充 P0：阻断核心功能的新发现（8 个）
+
+### P0-S1：法定节假日日盘全部误判为交易中
+
+- **位置**：`server/futures/futuresSessionService.js:35, 57`
+- **问题**：函数接收了 `tradingDates` 参数但**从未用于日盘判断**。只检查 `!isWeekend`，国庆/春节/五一等工作日假期中 `isWeekend=false` → 全部误判为 `isTrading: true`
+- **影响**：节假日期间期货报价不断尝试请求上游、触发语音播报、生成无效缓存
+
+### P0-S2：周日/周一凌晨 00:00-02:30 无条件误判为夜盘交易中
+
+- **位置**：`server/futures/futuresSessionService.js:98-105`
+- **问题**：跨午夜段 Block B 位于 `if (!isSaturdayOrSunday)` 之外，**无任何星期校验**。周日和周一凌晨 `timeMin < 3*60` 时无条件返回 `isTrading: true`
+- **影响**：完全不存在的交易时段被认定为交易中
+
+### P0-S3：分时接口返回多日（1000+条）滚动数据，污染单日分时图
+
+- **位置**：`server/futures/futuresKlineService.js:190-210`
+- **问题**：`futures_zh_minute_sina` 默认返回最近 5 个交易日分钟线（~1023 条），**没有按 `tradingDay` 过滤**，整体塞进单日分时缓存
+- **影响**：分时图显示跨越 5 天的混合数据，破坏单日分时语义
+
+### P0-S4：新浪 K 线 Fallback 日线+分钟线解析 100% 失败
+
+- **位置**：`server/futures/futuresKlineService.js:55, 118`
+- **问题**：日线 `row[0]` 为 `"2026-09-03"`（无时分秒），分钟线 `row[0]` 为 `"09:01:00"`（无年月日），均被 `parseBeijingDateTimeToChartSeconds` 的正则拒绝 → 全部返回 `null` → `.filter()` 过滤为 0 条
+- **影响**：新浪 K 线兜底机制无论日线还是分钟线均为 100% 死代码
+
+### P0-S5：`buildSinaFutureUrl` 正则阻断所有期货代码，新浪报价降级为死路
+
+- **位置**：`src/js/api.js:25, 63-69`
+- **问题**：`FUTURE_RE = /^nf[a-z0-9]+$/i` 不含下划线 `_`。`RB0`/`rb2510` 不以 `nf` 开头 → `false`；`nf_rb2510` 含下划线 → `false`。全部期货代码被拒 → `list` 为空 → 返回 `null`
+- **影响**：AKTools 报价失败后的新浪降级路径 100% 返回空数组
+
+### P0-S6：夜盘分时后台刷新被日期判定彻底阻断
+
+- **位置**：`src/js/app.js:2965-2973`
+- **问题**：`inst.selectedTradeDate !== getBeijingDate()` — 夜盘期货交易日为下一日（如周五），但当前自然日仍是周四，两者不等直接 return
+- **影响**：整个夜盘期间分时图永远不刷新
+
+### P0-S7：chartRowController `destroyCharts` 未取消进行中的网络请求
+
+- **位置**：`src/js/controllers/chartRowController.js:263-274`
+- **问题**：销毁图表时仅 `destroy()` DOM 实例，未调用 `inst.abort?.abort()` 或 `inst.intradayAbort?.abort()`
+- **影响**：快速折叠+重开时旧请求返回覆盖新请求数据；路由切换时网络请求泄漏
+
+### P0-S8：金融期货（IF/IC/IH/IM/T）K 线主源备源全崩
+
+- **位置**：`server/futures/futuresKlineService.js:41, 79, 104`
+- **问题**：AKTools 走 `futures_zh_daily_sina`（商品专用），CFFEX 必须走金融期货接口；新浪走 `InnerFuturesNewService`（国内商品内盘），不支持中金所
+- **影响**：股指期货、国债期货的 K 线数据无法从任何源获取
+
+---
+
+## 14. 补充 P1：严重正确性与产品完整性（20 个）
+
+### chartRowController 生命周期缺陷（6 个）
+
+| # | 位置 | 问题 |
+|---|------|------|
+| 1 | `chartRowController.js:413-432` | `handlePeriodChange` 未中止 `inst.intradayAbort`，旧分时请求返回后覆盖新周期数据 |
+| 2 | `chartRowController.js:413-426` | 周期切换未重置 `inst.selectedTradeDate`，切到周 K/月 K 后分时图停留在历史日 |
+| 3 | `chartRowController.js:307-319` | SWR `onData` 回调未校验周期一致性，旧周期刷新结果覆盖当前周期 |
+| 4 | `chartRowController.js:23-31` | `getPrevCloseForDate` 在分钟线/周线/月线上完全失效，昨收价恒为 null |
+| 5 | `chartRowController.js:109-116` | 分时 tick 更新每次调用 `ctl.setData()` 全量重绘，丢弃用户缩放位置 |
+| 6 | `app.js:2440-2469` | 涨停页残留 `_handleLimitUpPeriodChange` 等手工图表代码，未完全委托 ChartRowManager |
+
+### 数据精度与防崩缺陷（5 个）
+
+| # | 位置 | 问题 |
+|---|------|------|
+| 7 | `futuresPresenter.js:19-20` | 国债期货 `.toFixed(2)` 截断最小变动价位 0.002/0.005 |
+| 8 | `futuresPresenter.js:27-29, 43` | `price \|\| lastPrice` 用 `\|\|` 导致 `price=0` 被视为 falsy，变成 NaN |
+| 9 | `futuresApi.js:20, 44` | `formatFuturesQuote` 返回 `null` 未 `.filter(Boolean)`，`q.code` 处 TypeError 崩溃 |
+| 10 | `futuresApi.js:14-25, 57-68` | `AbortError` 被静默吞噬，取消操作变成假空数据并触发错误降级 |
+| 11 | `futuresQuoteService.js:57-72` | 返回对象缺失 `openChangePercent`/`amount`/`volumeRatio` 字段 |
+
+### 合约目录与输入解析缺陷（5 个）
+
+| # | 位置 | 问题 |
+|---|------|------|
+| 12 | `contractCatalog.js:136` | `parseFutureInput` 对 `nf2105`/`nfrb2410` 正则失败，无下划线格式全部解析 null |
+| 13 | `contractCatalog.js:139-150` | 输入 `"主连"` → `namePrefix=""` → `'螺纹钢'.startsWith('')` 恒 true → 错返 RB0 |
+| 14 | `contractCatalog.js:144-145` | 中文前缀模糊匹配 `"豆主力"` 错配豆粕、`"沪主力"` 错配沪铜 |
+| 15 | `app.js:248-255` | `normalizeFuture` 正则让 `nf_invalid123` 绕过校验，成为僵尸自选 |
+| 16 | `app.js:296-300` | `stripPrefix('nf_rb0')` 仅剥离 `nf`，残留 `_rb0` 显示在界面 |
+
+### 服务端缺陷（4 个）
+
+| # | 位置 | 问题 |
+|---|------|------|
+| 17 | `futuresQuoteService.js:12-15` | 新浪 fetch 无超时信号，服务端线程可被永久挂死 |
+| 18 | `futuresKlineService.js:147` | `period` 未做白名单校验，非法值导致缓存分裂或路径注入 500 |
+| 19 | `server/index.js:149-191` | 期货包络硬编码 `stale: false`，过期数据伪装新鲜 |
+| 20 | `server/index.js:158-193` | 空 `id` 参数返回 200 `{ data: null }` 而非 400 Bad Request |
+
+---
+
+## 15. 补充 P2：中危与可维护性（22 个）
+
+### 死代码（5 个）
+
+| # | 位置 | 问题 |
+|---|------|------|
+| 1 | `src/js/futures/futuresSession.js` | 全文件为死代码，`isFuturesTrading`/`formatFuturesSessionLabel` 全项目 0 调用 |
+| 2 | `src/js/futures/instrument.js:14-26` | `formatFutureDisplayName`/`toSinaFutureSymbol`/`PRODUCT_MAP`/`normalizeFutureCode` 在 src/ 中 0 调用 |
+| 3 | `server/futures/contractCatalog.js:6-13` | `EXCHANGES` 常量全仓库无导入 |
+| 4 | `server/futures/futuresSessionService.js:91, 94` | 三元运算 `isFridayNight ? shiftTradingDate(...) : nextTradingDay` 两端等价，冗余分支 |
+| 5 | `src/js/futures/instrument.js:21-23` | `formatFutureDisplayName` 对象输入时可返回 `undefined` |
+
+### 测试造假与覆盖缺口（8 个）
+
+| # | 位置 | 问题 |
+|---|------|------|
+| 6 | `e2e/helpers.js:233-303` | Mock 静态固定返回 `rb2510`，无论传什么参数/周期/品种都通过 |
+| 7 | `e2e/chart.spec.js:273-282` | 仅断言空 div 可见，未断言 canvas 生成/数据点/状态文字 |
+| 8 | `tests/futures.test.js:118-132` | 故意跳过 `q.code` 断言，掩盖代码归一化 P0-5 缺陷 |
+| 9 | `tests/futures.test.js:67-102` | 交易时段 0 覆盖：周末跨午夜、节假日、凌晨边界全部缺失 |
+| 10 | `futuresApi/QuoteService/KlineService` | 核心服务端数据层模块 0 个单测/集成测试 |
+| 11 | `tests/parser.test.js:171-196` | 未补充 `nf_rb2510` 和中金所金融期货解析测试 |
+| 12 | `tests/kline.test.js:444-484` | `689xxx` CDR 涨跌幅限制修复无对应单测（裸奔上线） |
+| 13 | `tests/storage.test.js` | QuotaExceeded 触发 50% LRU 淘汰修复无对应单测 |
+
+### 其他中危（9 个）
+
+| # | 位置 | 问题 |
+|---|------|------|
+| 14 | `futuresQuoteService.js:58 vs 100` | `code` 直接调用返回大写，缓存读取返回小写 |
+| 15 | `futuresQuoteService.js:130-135` | 批量报价无并发限流，可瞬间打满上游 |
+| 16 | `futuresApi.js:58, 78` | URL 参数未 `encodeURIComponent` |
+| 17 | `src/js/api.js:367-369` | 期货 K 线跳过 `inflightKline` 去重和本地缓存 |
+| 18 | `app.js:1516-1526` | 表头硬编码"量比/成交额"，期货行实际填入成交量/持仓量 |
+| 19 | `futuresPresenter.js:33-48` | 缺失合约名称补全，数据源无 name 时显示 `-` |
+| 20 | `marketSession.js:44-52` | 09:25~09:30 修复后 `autoStartAuction` 默认 false，默认配置下仍不刷新 |
+| 21 | `server/index.js:50-53` | 日期校验仅覆盖 POST 扫描接口，GET 接口全部无校验 |
+| 22 | `e2e/helpers.js:274-278` | 分时 mock 缺失 `price` 字段，与真实服务端不一致 |
+
+---
+
+## 16. 系统性问题模式（补充审查归纳）
+
+### 模式 1：所有降级链路均为死代码
+
+```
+AKTools 主源失败
+  → 新浪报价降级 → buildSinaFutureUrl 正则拒绝所有代码 → null → 空数组 ❌
+  → 新浪日 K 降级 → parseBeijingDateTimeToChartSeconds 拒绝 YYYY-MM-DD → 0 条 ❌
+  → 新浪分钟降级 → parseBeijingDateTimeToChartSeconds 拒绝 HH:MM:SS → 0 条 ❌
+  → 金融期货 AKTools → 走商品接口 → HTTP 500 ❌
+  → 金融期货新浪 → 走商品内盘服务 → 不支持 ❌
+```
+
+### 模式 2：交易时段引擎千疮百孔
+
+```
+法定节假日日盘 → 只查 isWeekend → 误判交易中 ❌
+周日凌晨 01:00 → Block B 无星期校验 → 误判交易中 ❌
+周一凌晨 01:00 → Block B 无星期校验 → 误判交易中 ❌
+周五夜盘跨午夜 → tradingDay = 周六 → 错误归属 ❌ (初审 P1-2)
+夜盘分时刷新 → selectedTradeDate ≠ getBeijingDate() → 被拦截 ❌
+A 股时段控制刷新 → 09:00-09:30 + 夜盘 → 不刷新 ❌ (初审 P0-6)
+```
+
+### 模式 3：chartRowController 提取不彻底
+
+```
+destroyCharts → 不取消网络请求 → 旧请求竞态覆盖 ❌
+handlePeriodChange → 不取消分时请求 → 旧分时覆盖新周期 ❌
+handlePeriodChange → 不重置 selectedTradeDate → 分时停留历史日 ❌
+SWR onData → 不校验周期 → 旧周期结果覆盖当前 ❌
+getPrevCloseForDate → 仅适用日线 → 分钟/周/月线返回 null ❌
+分时 tick → setData 全量重绘 → 丢失用户缩放 ❌
+涨停页 → 残留手工图表代码 → 未委托 ChartRowManager ❌
+```
+
+### 模式 4：测试体系性造假
+
+```
+E2E mock 伪造双层 data.data → 掩盖前后端包络不一致 P0-1 ❌ (初审 §10)
+E2E 断言空 div 可见 → 图表崩溃/数据为空也通过 ❌
+E2E mock 静态固定返回 → 参数/周期/品种错误也通过 ❌
+单测跳过 q.code 断言 → 掩盖代码归一化 P0-5 ❌
+单测 isKlineCacheStale → 断言 typeof=boolean → true/false 均通过 ❌
+核心服务端模块 → 0 个单测 ❌
+```
+
+---
+
+## 17. 补充修复建议
+
+在初审 Batch A-F 的基础上，建议在 **Batch A 的第一步**增加：
+
+### Batch A.0：建立真实契约固化机制
+
+1. 把 AKTools 对 `RB0`、`IF0`、`AU0` 等代表品种的真实 HTTP 响应保存为 fixture 文件
+2. 用真实 fixture 驱动解析器单测，不再允许"猜测字段名 → 猜测 mock → 全绿全坏"的循环
+3. E2E mock 结构必须从服务端 `okEnvelope` 自动生成，禁止手工伪造
+4. 为 `futuresQuoteService`、`futuresKlineService` 新增 Node 端集成测试
+
+### Batch A 追加项
+
+5. 修复交易时段引擎：日盘必须校验 `tradingDates.includes()`；凌晨段必须加星期校验
+6. 修复降级链路：`FUTURE_RE` 支持下划线和裸代码；日线/分钟线使用正确的日期解析函数
+7. 修复 chartRowController：`destroyCharts` 取消网络请求；`handlePeriodChange` 取消分时请求并重置 `selectedTradeDate`
+
+### Batch B 追加项
+
+8. 分时数据按 `tradingDay` 过滤，只保留当日会话范围的分钟
+9. 分时 tick 更新改为增量 `update()` 而非全量 `setData()`
+10. 国债期货精度改为基于 `priceTick` 动态小数位
+11. 清理全部死代码文件和死导出

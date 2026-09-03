@@ -145,6 +145,10 @@ export async function handleCacheRequest(req, res) {
     if (path === '/api/cache/futures/quote') {
       const idsParam = url.searchParams.get('ids') || url.searchParams.get('id');
       const ids = idsParam ? idsParam.split(',').map((s) => s.trim()).filter(Boolean) : [];
+      if (!ids.length) {
+        jsonResponse(res, 400, errorEnvelope('Missing ids parameter'));
+        return;
+      }
       const result = await getCachedFuturesQuotes(ids);
       jsonResponse(res, 200, okEnvelope({
         source: 'server-futures-quote',
@@ -157,6 +161,10 @@ export async function handleCacheRequest(req, res) {
 
     if (path === '/api/cache/futures/kline') {
       const id = url.searchParams.get('id') || url.searchParams.get('symbol');
+      if (!id) {
+        jsonResponse(res, 400, errorEnvelope('Missing id parameter'));
+        return;
+      }
       const period = url.searchParams.get('period') || 'day';
       const result = await getCachedFuturesKline(id, period);
       jsonResponse(res, 200, okEnvelope({
@@ -170,7 +178,12 @@ export async function handleCacheRequest(req, res) {
 
     if (path === '/api/cache/futures/intraday') {
       const id = url.searchParams.get('id') || url.searchParams.get('symbol');
-      const result = await getCachedFuturesIntraday(id);
+      if (!id) {
+        jsonResponse(res, 400, errorEnvelope('Missing id parameter'));
+        return;
+      }
+      const date = url.searchParams.get('date') || url.searchParams.get('tradingDay');
+      const result = await getCachedFuturesIntraday(id, { date });
       jsonResponse(res, 200, okEnvelope({
         source: 'server-futures-intraday',
         stale: false,
@@ -182,6 +195,10 @@ export async function handleCacheRequest(req, res) {
 
     if (path === '/api/cache/futures/session') {
       const id = url.searchParams.get('id') || url.searchParams.get('symbol');
+      if (!id) {
+        jsonResponse(res, 400, errorEnvelope('Missing id parameter'));
+        return;
+      }
       const result = getFuturesSession(id);
       jsonResponse(res, 200, okEnvelope({
         source: 'server-futures-session',

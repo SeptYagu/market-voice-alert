@@ -1,0 +1,19 @@
+[
+  {
+    "symbol": "螺纹钢连续",
+    "time": "230000",
+    "open": 3145,
+    "high": 3158,
+    "low": 3137,
+    "current_price": 3156,
+    "bid_price": 3155,
+    "ask_price": 3156,
+    "buy_vol": 618,
+    "sell_vol": 6,
+    "hold": 1467749,
+    "volume": 245269,
+    "avg_price": 0,
+    "last_close": 0,
+    "last_settle_price": 3137
+  }
+]

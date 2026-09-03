@@ -18,18 +18,22 @@ async function fetchFuturesMinute(inst, period = '1') {
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length) {
-        return {
-          source: 'aktools-futures_zh_minute_sina',
-          items: data.map((row) => ({
-            time: parseBeijingDateTimeToChartSeconds(row.datetime || row.time),
-            open: Number(row.open),
-            high: Number(row.high),
-            low: Number(row.low),
-            close: Number(row.close),
-            volume: Number(row.volume) || 0,
-            openInterest: Number(row.hold || row.position || row.open_interest) || 0
-          })).filter((item) => Number.isFinite(item.time) && Number.isFinite(item.close))
-        };
+        const items = data.map((row) => ({
+          time: parseBeijingDateTimeToChartSeconds(row.datetime || row.time),
+          open: Number(row.open),
+          high: Number(row.high),
+          low: Number(row.low),
+          close: Number(row.close),
+          volume: Number(row.volume) || 0,
+          openInterest: Number(row.hold ?? row.position ?? row.open_interest) || 0
+        })).filter((item) => Number.isFinite(item.time) && Number.isFinite(item.close));
+
+        if (items.length) {
+          return {
+            source: 'aktools-futures_zh_minute_sina',
+            items
+          };
+        }
       }
     }
   } catch (_e) {
@@ -49,18 +53,31 @@ async function fetchFuturesMinute(inst, period = '1') {
       if (match) {
         const arr = JSON.parse(match[1]);
         if (Array.isArray(arr) && arr.length) {
-          return {
-            source: 'sina-futures-minline',
-            items: arr.map((row) => ({
-              time: parseBeijingDateTimeToChartSeconds(row[0]),
+          const baseDate = arr[0] && arr[0][6] ? arr[0][6] : null;
+          const items = arr.map((row) => {
+            let time = null;
+            if (row[0] && row[0].length >= 10) {
+              time = parseBeijingDateTimeToChartSeconds(row[0]);
+            } else if (row[0] && baseDate) {
+              time = parseBeijingDateTimeToChartSeconds(`${baseDate} ${row[0]}:00`);
+            }
+            return {
+              time,
               open: Number(row[1]),
-              high: Number(row[2]),
-              low: Number(row[3]),
-              close: Number(row[4]),
+              high: Number(row[2] || row[1]),
+              low: Number(row[3] || row[1]),
+              close: Number(row[4] || row[1]),
               volume: Number(row[5]) || 0,
               openInterest: Number(row[6]) || 0
-            })).filter((item) => Number.isFinite(item.time) && Number.isFinite(item.close))
-          };
+            };
+          }).filter((item) => Number.isFinite(item.time) && Number.isFinite(item.close));
+
+          if (items.length) {
+            return {
+              source: 'sina-futures-minline',
+              items
+            };
+          }
         }
       }
     }
@@ -68,7 +85,7 @@ async function fetchFuturesMinute(inst, period = '1') {
     // ignore
   }
 
-  return { source: 'empty', items: [] };
+  throw new Error(`Failed to fetch futures minute kline for ${inst.symbol}`);
 }
 
 /**
@@ -81,25 +98,30 @@ async function fetchFuturesDaily(inst) {
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length) {
-        return {
-          source: 'aktools-futures_zh_daily_sina',
-          items: data.map((row) => ({
-            time: parseBeijingDateTimeToChartSeconds(row.date || row.datetime),
-            open: Number(row.open),
-            high: Number(row.high),
-            low: Number(row.low),
-            close: Number(row.close),
-            volume: Number(row.volume) || 0,
-            openInterest: Number(row.hold || row.position || row.open_interest) || 0
-          })).filter((item) => Number.isFinite(item.time) && Number.isFinite(item.close))
-        };
+        const items = data.map((row) => ({
+          time: parseBeijingDateTimeToChartSeconds(row.date || row.datetime),
+          open: Number(row.open),
+          high: Number(row.high),
+          low: Number(row.low),
+          close: Number(row.close),
+          volume: Number(row.volume) || 0,
+          openInterest: Number(row.hold ?? row.position ?? row.open_interest) || 0,
+          settle: Number(row.settle) || null
+        })).filter((item) => Number.isFinite(item.time) && Number.isFinite(item.close));
+
+        if (items.length) {
+          return {
+            source: 'aktools-futures_zh_daily_sina',
+            items
+          };
+        }
       }
     }
   } catch (_e) {
     // fallback to sina
   }
 
-  // Sina Fallback for futures daily
+  // Sina Fallback for futures daily: Sina returns [{ d: "2026-09-03", o, h, l, c, v, p, s }]
   try {
     const url = `https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20_data=/InnerFuturesNewService.getDailyKLine?symbol=${inst.symbol}`;
     const res = await fetch(url, {
@@ -112,18 +134,23 @@ async function fetchFuturesDaily(inst) {
       if (match) {
         const arr = JSON.parse(match[1]);
         if (Array.isArray(arr) && arr.length) {
-          return {
-            source: 'sina-futures-dailykline',
-            items: arr.map((row) => ({
-              time: parseBeijingDateTimeToChartSeconds(row[0]),
-              open: Number(row[1]),
-              high: Number(row[2]),
-              low: Number(row[3]),
-              close: Number(row[4]),
-              volume: Number(row[5]) || 0,
-              openInterest: Number(row[6]) || 0
-            })).filter((item) => Number.isFinite(item.time) && Number.isFinite(item.close))
-          };
+          const items = arr.map((row) => ({
+            time: parseBeijingDateTimeToChartSeconds(row.d || row.date || row[0]),
+            open: Number(row.o ?? row.open ?? row[1]),
+            high: Number(row.h ?? row.high ?? row[2]),
+            low: Number(row.l ?? row.low ?? row[3]),
+            close: Number(row.c ?? row.close ?? row[4]),
+            volume: Number(row.v ?? row.volume ?? row[5]) || 0,
+            openInterest: Number(row.p ?? row.hold ?? row.position ?? row[6]) || 0,
+            settle: Number(row.s ?? row.settle) || null
+          })).filter((item) => Number.isFinite(item.time) && Number.isFinite(item.close));
+
+          if (items.length) {
+            return {
+              source: 'sina-futures-dailykline',
+              items
+            };
+          }
         }
       }
     }
@@ -131,7 +158,7 @@ async function fetchFuturesDaily(inst) {
     // ignore
   }
 
-  return { source: 'empty', items: [] };
+  throw new Error(`Failed to fetch futures daily kline for ${inst.symbol}`);
 }
 
 export async function getCachedFuturesKline(symbolOrId, period = 'day', opts = {}) {
@@ -173,6 +200,51 @@ export async function getCachedFuturesKline(symbolOrId, period = 'day', opts = {
   return result ? result.data : null;
 }
 
+function getPreviousTradeDayStr(dayStr) {
+  const [y, m, d] = String(dayStr).split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const dayOfWeek = dt.getUTCDay(); // 0 is Sun, 1 is Mon
+  const delta = dayOfWeek === 1 ? 3 : (dayOfWeek === 0 ? 2 : 1);
+  dt.setUTCDate(dt.getUTCDate() - delta);
+  const ry = dt.getUTCFullYear();
+  const rm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const rd = String(dt.getUTCDate()).padStart(2, '0');
+  return `${ry}-${rm}-${rd}`;
+}
+
+function filterMinuteBarsForTradingDay(bars, targetTradingDay, inst) {
+  if (!Array.isArray(bars) || !bars.length) return [];
+  const prevDay = getPreviousTradeDayStr(targetTradingDay);
+
+  let nightStart = null;
+  let nightEnd = null;
+
+  if (inst.nightSessionEnd) {
+    nightStart = parseBeijingDateTimeToChartSeconds(`${prevDay} 21:00:00`);
+    if (inst.nightSessionEnd === '23:00') {
+      nightEnd = parseBeijingDateTimeToChartSeconds(`${prevDay} 23:00:00`);
+    } else if (inst.nightSessionEnd === '01:00') {
+      nightEnd = parseBeijingDateTimeToChartSeconds(`${targetTradingDay} 01:00:00`);
+    } else if (inst.nightSessionEnd === '02:30') {
+      nightEnd = parseBeijingDateTimeToChartSeconds(`${targetTradingDay} 02:30:00`);
+    }
+  }
+
+  const dayStart = parseBeijingDateTimeToChartSeconds(`${targetTradingDay} 08:59:00`);
+  const dayEnd = parseBeijingDateTimeToChartSeconds(`${targetTradingDay} 15:16:00`);
+
+  return bars.filter((b) => {
+    if (!Number.isFinite(b.time)) return false;
+    if (nightStart !== null && nightEnd !== null && b.time >= nightStart && b.time <= nightEnd) {
+      return true;
+    }
+    if (b.time >= dayStart && b.time <= dayEnd) {
+      return true;
+    }
+    return false;
+  });
+}
+
 export async function getCachedFuturesIntraday(symbolOrId, opts = {}) {
   const inst = typeof symbolOrId === 'object' && symbolOrId !== null
     ? symbolOrId
@@ -181,19 +253,42 @@ export async function getCachedFuturesIntraday(symbolOrId, opts = {}) {
   if (!inst) return null;
 
   const session = getFuturesSession(inst);
-  const cacheKey = ['futures', 'intraday', `${inst.symbol}-${session.tradingDay}.json`];
+  const targetTradingDay = opts.date || opts.tradingDay || session.tradingDay;
+  const cacheKey = ['futures', 'intraday', `${inst.symbol}-${targetTradingDay}.json`];
 
   const result = await getOrRefresh(
     cacheKey,
     session.isTrading ? INTRADAY_TTL_MS : KLINE_HISTORICAL_TTL_MS,
     async () => {
       const raw = await fetchFuturesMinute(inst, '1');
-      let prevClose = null;
-      if (raw.items && raw.items.length) {
-        prevClose = raw.items[0].open;
+      if (!raw || !raw.items || !raw.items.length) {
+        throw new Error(`Failed to fetch minute data for ${inst.symbol}`);
       }
-      const intradayItems = raw.items.map((it) => {
-        const pc = prevClose || it.close;
+
+      // Filter 5-day rolling items (~1023 bars) to only the target tradingDay
+      const dayBars = filterMinuteBarsForTradingDay(raw.items, targetTradingDay, inst);
+      const itemsToUse = dayBars.length ? dayBars : raw.items;
+
+      let prevSettlement = null;
+      try {
+        const daily = await fetchFuturesDaily(inst);
+        if (daily && daily.items && daily.items.length) {
+          const targetSec = parseBeijingDateTimeToChartSeconds(targetTradingDay);
+          const prevDayBar = daily.items.filter((b) => b.time < targetSec).pop();
+          if (prevDayBar) {
+            prevSettlement = prevDayBar.settle || prevDayBar.close;
+          }
+        }
+      } catch (_e) {
+        // ignore fallback to first bar
+      }
+
+      if (!prevSettlement && itemsToUse.length) {
+        prevSettlement = itemsToUse[0].open;
+      }
+
+      const intradayItems = itemsToUse.map((it) => {
+        const pc = prevSettlement || it.close;
         const percent = pc > 0 ? ((it.close - pc) / pc) * 100 : 0;
         return {
           time: it.time,
@@ -211,7 +306,8 @@ export async function getCachedFuturesIntraday(symbolOrId, opts = {}) {
       return {
         instrumentId: inst.id,
         symbol: inst.symbol,
-        tradingDay: session.tradingDay,
+        tradingDay: targetTradingDay,
+        prevSettlement,
         source: raw.source,
         items: intradayItems,
         fetchedAt: Date.now()

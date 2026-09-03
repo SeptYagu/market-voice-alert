@@ -12,15 +12,19 @@ export async function fetchFuturesQuotes(codes, { signal } = {}) {
   if (!validCodes.length) return [];
 
   try {
-    const url = `/api/cache/futures/quote?ids=${validCodes.join(',')}`;
+    const url = `/api/cache/futures/quote?ids=${encodeURIComponent(validCodes.join(','))}`;
     const res = await fetch(url, { signal });
     if (res.ok) {
       const json = await res.json();
-      if (json && json.data && Array.isArray(json.data.data)) {
-        return json.data.data.map(formatFuturesQuote);
+      const rawList = Array.isArray(json.data)
+        ? json.data
+        : (json && json.data && Array.isArray(json.data.data) ? json.data.data : []);
+      if (rawList.length) {
+        return rawList.map(formatFuturesQuote).filter(Boolean);
       }
     }
-  } catch (_e) {
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
     // fallback to sina
   }
 
@@ -28,9 +32,9 @@ export async function fetchFuturesQuotes(codes, { signal } = {}) {
   try {
     const sinaSymbols = validCodes.map((c) => {
       const inst = parseFutureInput(c);
-      return inst ? inst.providerSymbols.sina : `nf_${c}`;
+      return inst ? inst.providerSymbols.sina : `nf_${c.toUpperCase()}`;
     });
-    const url = `/api/sina/list=${sinaSymbols.join(',')}`;
+    const url = `/api/sina/list=${encodeURIComponent(sinaSymbols.join(','))}`;
     const res = await fetch(url, { signal });
     if (res.ok) {
       const buf = await res.arrayBuffer();
@@ -41,30 +45,37 @@ export async function fetchFuturesQuotes(codes, { signal } = {}) {
         text = new TextDecoder('utf-8').decode(buf);
       }
       const parsed = parseSinaFuture(text);
-      return parsed.map(formatFuturesQuote);
+      return parsed.map(formatFuturesQuote).filter(Boolean);
     }
-  } catch (_e) {
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
     // fallback failed
   }
 
   return [];
 }
 
-export async function fetchFuturesIntraday(code, { signal } = {}) {
+export async function fetchFuturesIntraday(code, { signal, date, tradingDay } = {}) {
   const inst = parseFutureInput(code);
   if (!inst) return { source: 'invalid', items: [] };
 
   try {
-    const url = `/api/cache/futures/intraday?id=${inst.symbol}`;
+    const params = new URLSearchParams({ id: inst.symbol });
+    if (date) params.set('date', date);
+    else if (tradingDay) params.set('tradingDay', tradingDay);
+    const url = `/api/cache/futures/intraday?${params.toString()}`;
     const res = await fetch(url, { signal });
     if (res.ok) {
       const json = await res.json();
-      if (json && json.data && json.data.data) {
-        return json.data.data;
+      const data = (json && json.data && Array.isArray(json.data.items))
+        ? json.data
+        : (json && json.data && json.data.data && Array.isArray(json.data.data.items) ? json.data.data : null);
+      if (data) {
+        return data;
       }
     }
-  } catch (_e) {
-    // empty fallback
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
   }
 
   return { source: 'empty', items: [] };
@@ -75,16 +86,19 @@ export async function fetchFuturesKline(code, period = 'day', { signal } = {}) {
   if (!inst) return { source: 'invalid', items: [] };
 
   try {
-    const url = `/api/cache/futures/kline?id=${inst.symbol}&period=${period}`;
+    const url = `/api/cache/futures/kline?id=${encodeURIComponent(inst.symbol)}&period=${encodeURIComponent(period)}`;
     const res = await fetch(url, { signal });
     if (res.ok) {
       const json = await res.json();
-      if (json && json.data && json.data.data) {
-        return json.data.data;
+      const data = (json && json.data && Array.isArray(json.data.items))
+        ? json.data
+        : (json && json.data && json.data.data && Array.isArray(json.data.data.items) ? json.data.data : null);
+      if (data) {
+        return data;
       }
     }
-  } catch (_e) {
-    // empty fallback
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
   }
 
   return { source: 'empty', items: [] };
