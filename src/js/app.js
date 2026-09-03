@@ -36,6 +36,8 @@ import {
   formatVolumeBars,
   formatCandleColors,
   applyLiveTickToKline,
+  applyLiveQuoteToKline,
+  applyLiveQuoteToIntraday,
   getLastKlineDate
 } from './kline.js';
 import { createKlineChart, createIntradayChart, MA_COLORS } from './chart.js';
@@ -382,6 +384,8 @@ const state = {
   momentum: {
     items: [],
     loading: false,
+    serverScanning: false,
+    message: null,
     error: null,
     abort: null,
     lastUpdate: null,
@@ -443,7 +447,9 @@ function createChartState(period = DEFAULT_PERIOD) {
     intradayData: null,
     intradayLoading: false,
     intradayError: null,
-    intradayAbort: null
+    intradayAbort: null,
+    intradayRefreshing: false,
+    intradayLastFetchAt: 0
   };
 }
 
@@ -936,8 +942,9 @@ function renderMomentumSection() {
   }
   wrap.innerHTML = '';
   const statusBits = [];
-  if (s.loading) statusBits.push(`扫描中 ${s.scanned}/${s.total || '?'}`);
+  if (s.loading || s.serverScanning) statusBits.push(`扫描中 ${s.scanned}/${s.total || '?'}`);
   else if (s.lastUpdate) statusBits.push(`更新于 ${s.lastUpdate.toLocaleTimeString()}`);
+  if (s.message) statusBits.push(s.message);
   if (s.error) statusBits.push(`错误: ${s.error}`);
   const head = el(
     'header',
@@ -947,7 +954,7 @@ function renderMomentumSection() {
       el(
         'button',
         {
-          disabled: s.loading,
+          disabled: s.loading || s.serverScanning,
           on: { click: handleMomentumScan }
         },
         '扫描'
@@ -955,7 +962,7 @@ function renderMomentumSection() {
       el(
         'button',
         {
-          disabled: !s.loading,
+          disabled: !s.loading && !s.serverScanning,
           on: { click: stopMomentumScan }
         },
         '停止'
@@ -970,7 +977,7 @@ function renderMomentumSection() {
 
   const items = sortMomentumItems(s.items, s.pinnedCodes);
   if (!items.length) {
-    wrap.appendChild(el('div', { class: 'momentum-empty' }, s.loading ? '扫描中...' : '暂无结果'));
+    wrap.appendChild(el('div', { class: 'momentum-empty' }, (s.loading || s.serverScanning) ? '扫描中...' : '暂无结果'));
     return;
   }
 
@@ -1180,6 +1187,8 @@ function stopMomentumScan() {
   }
   state.momentum.abort = null;
   state.momentum.loading = false;
+  state.momentum.serverScanning = false;
+  state.momentum.message = '已停止页面轮询；服务端任务可继续在后台完成';
   renderMomentumSection();
 }
 
@@ -1251,7 +1260,7 @@ async function scanMomentumCandidate(candidate, signal) {
   };
 }
 
-async function handleMomentumScan() {
+async function handleMomentumScan(options = {}) {
   if (state.momentum.loading) return;
   if (state.momentum.abort) {
     try { state.momentum.abort.abort(); } catch { /* ignore */ }
@@ -1259,11 +1268,17 @@ async function handleMomentumScan() {
   const abort = new AbortController();
   state.momentum.abort = abort;
   state.momentum.loading = true;
+  if (!options || options.poll !== true) state.momentum.serverScanning = false;
+  state.momentum.message = null;
   state.momentum.error = null;
   state.momentum.scanned = 0;
   state.momentum.total = 0;
   renderMomentumSection();
   try {
+    if (!options || options.poll !== true) {
+      await startSharedMomentumScan(abort.signal);
+      state.momentum.serverScanning = true;
+    }
     let cached = null;
     try {
       cached = await fetchSharedMomentum(abort.signal);
@@ -1276,12 +1291,14 @@ async function handleMomentumScan() {
       state.momentum.scanned = cached.scanned || state.momentum.total;
       state.momentum.items = mergePinnedMomentumItems(cached.items);
       if (cached.status === 'scanning') {
-        state.momentum.error = '服务端定时扫描中，稍后自动刷新';
+        state.momentum.serverScanning = true;
+        state.momentum.message = '服务端扫描中，稍后自动刷新';
         setTimeout(() => {
-          if (!state.momentum.loading) handleMomentumScan();
+          if (state.momentum.serverScanning && !state.momentum.loading) handleMomentumScan({ poll: true });
         }, 5000);
         return;
       }
+      state.momentum.serverScanning = false;
       if (cached.status === 'empty') {
         state.momentum.error = cached.message || '等待服务端定时扫描生成结果';
         return;
@@ -1289,6 +1306,9 @@ async function handleMomentumScan() {
       if (cached.status === 'error') {
         state.momentum.error = cached.error || '后端全市场扫描失败，已保留部分结果';
         return;
+      }
+      if (cached.status === 'partial') {
+        state.momentum.message = cached.message || '部分股票数据源刷新失败；当前仅展示有效结果';
       }
       for (const item of state.momentum.items) {
         if (item && item.code) state.quotes.set(item.code, { ...item, type: 'stock' });
@@ -1330,6 +1350,7 @@ async function handleMomentumScan() {
     }
     state.momentum.lastUpdate = new Date();
   } catch (e) {
+    state.momentum.serverScanning = false;
     if (e && e.name !== 'AbortError') state.momentum.error = e.message || String(e);
   } finally {
     if (state.momentum.abort === abort) state.momentum.abort = null;
@@ -1347,6 +1368,19 @@ async function fetchSharedMomentum(signal) {
   if (!json || json.ok !== true || !json.data) {
     throw new Error((json && json.error) || 'shared momentum cache failed');
   }
+  return json.data;
+}
+
+async function startSharedMomentumScan(signal) {
+  const usp = new URLSearchParams();
+  usp.set('threshold', String(MOMENTUM_THRESHOLD_PCT));
+  const res = await fetch(`/api/cache/momentum/ten-day/scan?${usp.toString()}`, {
+    method: 'POST',
+    signal
+  });
+  if (!res.ok) throw new Error(`启动扫描失败: HTTP ${res.status}`);
+  const json = await res.json();
+  if (!json || json.ok !== true) throw new Error((json && json.error) || '启动扫描失败');
   return json.data;
 }
 
@@ -1699,7 +1733,13 @@ function renderInlineChartRow(code) {
     el(
       'section',
       { class: 'chart-pane chart-pane-intraday' },
-      el('div', { class: 'chart-pane-title' }, '分时图'),
+      el(
+        'div',
+        { class: 'chart-pane-title' },
+        el('span', {}, '分时图'),
+        el('span', { class: 'intraday-legend intraday-legend-price' }, '价格'),
+        el('span', { class: 'intraday-legend intraday-legend-average' }, '均价')
+      ),
       intradayStatus,
       intradayHost
     ),
@@ -1774,6 +1814,7 @@ function intradaySourceLabel(source) {
   if (source === 'aktools-stock_zh_a_hist_min_em') return 'AKTools分钟';
   if (source === 'eastmoney-trends2') return '东财备用';
   if (source === 'eastmoney-kline-1m') return '东财K线备用';
+  if (source === 'eastmoney-kline-1m-cache') return '东财K线缓存备用';
   return source ? String(source) : '';
 }
 
@@ -1794,6 +1835,7 @@ function intradayStatusParts(inst) {
     const summary = [`${inst.selectedTradeDate || ''} · ${items.length} 点`];
     if (Number.isFinite(Number(last.close))) summary.push(formatNumber(last.close));
     if (Number.isFinite(Number(last.percent))) summary.push(formatPercent(last.percent));
+    if (!items.some((item) => Number(item && item.avgPrice) > 0)) summary.push('均价不可用');
     if (source) summary.push(source);
     parts.push(summary.join(' · '));
   } else if (!inst.intradayLoading && !inst.intradayError) {
@@ -2616,6 +2658,7 @@ async function loadLimitUpIntraday(code, date) {
     if (!data) throw new Error('未能获取分时数据');
     if (!state.limitUp.expandedCodes.has(code)) return;
     inst.intradayData = data;
+    inst.intradayLastFetchAt = Date.now();
     inst.intradayLoading = false;
     applyLimitUpIntradayToChart(code);
   } catch (e) {
@@ -2642,12 +2685,17 @@ function handleLimitUpKlineBarClick(code, time) {
   loadLimitUpIntraday(code, date);
 }
 
-function applyLimitUpLiveTickToChart(code, livePrice) {
+function applyLimitUpLiveTickToChart(code, quoteOrPrice) {
   const ctl = limitUpChartCtlMap.get(code);
   const inst = state.limitUp.chartInstances.get(code);
   if (!ctl || !inst || !inst.klineData) return;
+  const livePrice = Number(
+    quoteOrPrice && typeof quoteOrPrice === 'object' ? quoteOrPrice.price : quoteOrPrice
+  );
   if (!Number.isFinite(livePrice) || livePrice <= 0) return;
-  const updated = applyLiveTickToKline(inst.klineData.items, livePrice, inst.period);
+  const updated = quoteOrPrice && typeof quoteOrPrice === 'object'
+    ? applyLiveQuoteToKline(inst.klineData.items, quoteOrPrice, inst.period)
+    : applyLiveTickToKline(inst.klineData.items, livePrice, inst.period);
   if (updated === inst.klineData.items) return;
   inst.klineData = { ...inst.klineData, items: updated };
   const last = updated[updated.length - 1];
@@ -3306,6 +3354,7 @@ async function loadIntradayForCode(code, date) {
     if (!data) throw new Error('未能获取分时数据');
     if (!state.expandedCodes.has(code)) return;
     inst.intradayData = data;
+    inst.intradayLastFetchAt = Date.now();
     inst.intradayLoading = false;
     applyIntradayToChartForCode(code);
   } catch (e) {
@@ -3334,12 +3383,17 @@ function handleKlineBarClick(code, time) {
 
 // Live-tick update: only mutates the LAST bar via series.update(bar), which
 // preserves the user's zoom/pan on the time scale. No setData, no fitContent.
-export function applyLiveTickToChartForCode(code, livePrice) {
+export function applyLiveTickToChartForCode(code, quoteOrPrice) {
   const ctl = chartInstanceMap.get(code);
   const inst = state.chartInstances.get(code);
   if (!ctl || !inst || !inst.klineData) return;
+  const livePrice = Number(
+    quoteOrPrice && typeof quoteOrPrice === 'object' ? quoteOrPrice.price : quoteOrPrice
+  );
   if (!Number.isFinite(livePrice) || livePrice <= 0) return;
-  const updated = applyLiveTickToKline(inst.klineData.items, livePrice, inst.period);
+  const updated = quoteOrPrice && typeof quoteOrPrice === 'object'
+    ? applyLiveQuoteToKline(inst.klineData.items, quoteOrPrice, inst.period)
+    : applyLiveTickToKline(inst.klineData.items, livePrice, inst.period);
   if (updated === inst.klineData.items) return;
   inst.klineData = { ...inst.klineData, items: updated };
   const last = updated[updated.length - 1];
@@ -3355,6 +3409,52 @@ export function applyLiveTickToChartForCode(code, livePrice) {
   updateChartStatusForCode(code);
 }
 
+export function applyLiveQuoteToIntradayForCode(code, quote, isLimitUp = false, now = new Date()) {
+  const instances = isLimitUp ? state.limitUp.chartInstances : state.chartInstances;
+  const controllers = isLimitUp ? limitUpIntradayChartCtlMap : intradayChartCtlMap;
+  const inst = instances.get(code);
+  const ctl = controllers.get(code);
+  if (!inst || !ctl || !inst.intradayData || inst.selectedTradeDate !== getBeijingDate(now)) return;
+  const updated = applyLiveQuoteToIntraday(inst.intradayData.items, quote, now);
+  if (updated === inst.intradayData.items) return;
+  inst.intradayData = { ...inst.intradayData, items: updated };
+  ctl.setData(updated);
+  if (isLimitUp) updateLimitUpIntradayStatusForCode(code);
+  else updateIntradayStatusForCode(code);
+}
+
+async function refreshLiveIntradayForCode(code, isLimitUp = false) {
+  const instances = isLimitUp ? state.limitUp.chartInstances : state.chartInstances;
+  const expandedCodes = isLimitUp ? state.limitUp.expandedCodes : state.expandedCodes;
+  const inst = instances.get(code);
+  if (
+    !inst ||
+    inst.intradayRefreshing ||
+    inst.selectedTradeDate !== getBeijingDate() ||
+    Date.now() - inst.intradayLastFetchAt < 10000
+  ) return;
+  inst.intradayRefreshing = true;
+  try {
+    const data = await fetchIntraday(code, {
+      date: inst.selectedTradeDate,
+      name: inst.klineData ? inst.klineData.name : code,
+      prevClose: getPrevCloseForDate(inst.klineData && inst.klineData.items, inst.selectedTradeDate),
+      allowLatestTickSource: true,
+      sharedCache: true
+    });
+    if (!data || !expandedCodes.has(code)) return;
+    inst.intradayData = data;
+    inst.intradayLastFetchAt = Date.now();
+    if (isLimitUp) applyLimitUpIntradayToChart(code);
+    else applyIntradayToChartForCode(code);
+  } catch (e) {
+    // Keep the latest live-quote point visible when a background backfill fails.
+    if (console && console.warn) console.warn('intraday background refresh failed for', code, e);
+  } finally {
+    inst.intradayRefreshing = false;
+  }
+}
+
 export function updateChartLastTickMulti() {
   // 监控页
   if (state.expandedCodes.size) {
@@ -3364,7 +3464,9 @@ export function updateChartLastTickMulti() {
       const livePrice = Number(q.price);
       if (!Number.isFinite(livePrice) || livePrice <= 0) continue;
       try {
-        applyLiveTickToChartForCode(code, livePrice);
+        applyLiveTickToChartForCode(code, q);
+        applyLiveQuoteToIntradayForCode(code, q);
+        void refreshLiveIntradayForCode(code);
       } catch (e) {
         if (console && console.warn) console.warn('live tick failed (monitor) for', code, e);
       }
@@ -3378,7 +3480,9 @@ export function updateChartLastTickMulti() {
       const livePrice = Number(q.price);
       if (!Number.isFinite(livePrice) || livePrice <= 0) continue;
       try {
-        applyLimitUpLiveTickToChart(code, livePrice);
+        applyLimitUpLiveTickToChart(code, q);
+        applyLiveQuoteToIntradayForCode(code, q, true);
+        void refreshLiveIntradayForCode(code, true);
       } catch (e) {
         if (console && console.warn) console.warn('live tick failed (limitUp) for', code, e);
       }
@@ -3416,6 +3520,12 @@ export function _setChartInstance(code, ctl) {
   if (!code) return;
   if (ctl === null || ctl === undefined) chartInstanceMap.delete(code);
   else chartInstanceMap.set(code, ctl);
+}
+
+export function _setIntradayChartInstance(code, ctl) {
+  if (!code) return;
+  if (ctl === null || ctl === undefined) intradayChartCtlMap.delete(code);
+  else intradayChartCtlMap.set(code, ctl);
 }
 
 // Test helper: get the live chart ctl for a code. Returns undefined if not

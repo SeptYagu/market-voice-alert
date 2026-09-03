@@ -21,14 +21,17 @@ import {
   applyLimitUpFetchResult,
   _internal,
   _setChartInstance,
+  _setIntradayChartInstance,
   openChart as _openChart,
   closeChart as _closeChart,
   closeAllCharts as _closeAllCharts,
   handlePeriodChange as _handlePeriodChange,
   mountChartForCode as _mountChartForCode,
   applyLiveTickToChartForCode as _applyLiveTickToChartForCode,
+  applyLiveQuoteToIntradayForCode as _applyLiveQuoteToIntradayForCode,
   updateChartLastTickMulti as _updateChartLastTickMulti
 } from '../src/js/app.js';
+import { parseBeijingDateTimeToChartSeconds } from '../src/js/time.js';
 
 QUnit.module('app.parseBatchInput', () => {
   QUnit.test('parses comma-separated codes with auto-prefix', (t) => {
@@ -656,6 +659,60 @@ QUnit.module('app.applyLiveTickToChartForCode', (hooks) => {
     _openChart('sh600519');
     t.equal(_applyLiveTickToChartForCode('sh600519', 100), undefined, 'no kline data, no throw');
     t.equal(_applyLiveTickToChartForCode('sh999999', 100), undefined, 'unknown code, no throw');
+  });
+
+  QUnit.test('full daily quote updates current OHLCV instead of close only', (t) => {
+    const { state } = _internal();
+    _openChart('sh600519');
+    const inst = state.chartInstances.get('sh600519');
+    inst.klineData = {
+      code: 'sh600519',
+      name: 'X',
+      items: [{ time: '2026-09-02', open: 10, high: 11, low: 9, close: 10.5, volume: 1000, amount: 10000 }]
+    };
+    _setChartInstance('sh600519', {
+      updateKline() {}, updateVolume() {}, updateMA() {}, destroy() {}
+    });
+    _applyLiveTickToChartForCode('sh600519', {
+      price: 12, open: 10.2, high: 12.5, low: 8.8, volume: 1800, amount: 20000
+    });
+    const last = inst.klineData.items[0];
+    t.equal(last.open, 10.2);
+    t.equal(last.high, 12.5);
+    t.equal(last.low, 8.8);
+    t.equal(last.close, 12);
+    t.equal(last.volume, 1800);
+    t.equal(last.amount, 20000);
+  });
+});
+
+QUnit.module('app.applyLiveQuoteToIntradayForCode', (hooks) => {
+  hooks.afterEach(() => {
+    _setIntradayChartInstance('sh600519', null);
+    _closeAllCharts();
+  });
+
+  QUnit.test('updates chart state and controller in the active Beijing minute', (t) => {
+    const { state } = _internal();
+    _openChart('sh600519');
+    const inst = state.chartInstances.get('sh600519');
+    inst.selectedTradeDate = '2026-09-02';
+    inst.intradayData = {
+      source: 'test',
+      items: [{
+        time: parseBeijingDateTimeToChartSeconds('2026-09-02 10:00'),
+        open: 100, high: 100, low: 100, close: 100, volume: 100, preClose: 100
+      }]
+    };
+    let rendered = null;
+    _setIntradayChartInstance('sh600519', { setData(items) { rendered = items; } });
+    _applyLiveQuoteToIntradayForCode('sh600519', {
+      price: 101, prevClose: 100, volume: 140, amount: 1414000
+    }, false, new Date('2026-09-02T02:01:10.000Z'));
+    t.equal(inst.intradayData.items.length, 2);
+    t.equal(inst.intradayData.items[1].close, 101);
+    t.equal(inst.intradayData.items[1].volume, 40);
+    t.strictEqual(rendered, inst.intradayData.items, 'controller receives the updated series');
   });
 });
 

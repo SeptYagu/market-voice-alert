@@ -2,7 +2,9 @@ import { normalizeCode, toEastmoneySecId } from './parser.js';
 import {
   parseBeijingDateTimeToChartSeconds,
   parseTencentMinuteToChartSeconds,
-  chartTimeToDate
+  chartTimeToDate,
+  getBeijingClockParts,
+  getBeijingMinuteChartSeconds
 } from './time.js';
 
 export const PERIODS = Object.freeze({
@@ -362,6 +364,91 @@ export function applyLiveTickToKline(items, livePrice, period) {
   }
 
   return [...items.slice(0, -1), updated];
+}
+
+function _positiveNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+export function applyLiveQuoteToKline(items, quote, period) {
+  if (!Array.isArray(items) || !items.length || !quote || typeof quote !== 'object') return items;
+  const price = _positiveNumber(quote.price);
+  if (!price) return items;
+  const last = items[items.length - 1];
+  const updated = { ...last, close: price };
+  const quoteHigh = _positiveNumber(quote.high);
+  const quoteLow = _positiveNumber(quote.low);
+  const lastHigh = _positiveNumber(last.high);
+  const lastLow = _positiveNumber(last.low);
+  updated.high = Math.max(lastHigh, quoteHigh, price);
+  const lowCandidates = [lastLow, quoteLow, price].filter((value) => value > 0);
+  updated.low = lowCandidates.length ? Math.min(...lowCandidates) : price;
+
+  if (period === '1d') {
+    const quoteOpen = _positiveNumber(quote.open);
+    if (quoteOpen) updated.open = quoteOpen;
+    const quoteVolume = _positiveNumber(quote.volume);
+    const quoteAmount = _positiveNumber(quote.amount);
+    if (quoteVolume) updated.volume = quoteVolume;
+    if (quoteAmount) updated.amount = quoteAmount;
+  }
+
+  return [...items.slice(0, -1), updated];
+}
+
+function _isContinuousTradingMinute(parts) {
+  const minutes = parts.hour * 60 + parts.minute;
+  return (
+    (minutes >= 9 * 60 + 30 && minutes < 11 * 60 + 30) ||
+    (minutes >= 13 * 60 && minutes < 15 * 60)
+  );
+}
+
+export function applyLiveQuoteToIntraday(items, quote, now = new Date()) {
+  if (!Array.isArray(items) || !items.length || !quote || typeof quote !== 'object') return items;
+  const price = _positiveNumber(quote.price);
+  if (!price) return items;
+  const parts = getBeijingClockParts(now);
+  if (!_isContinuousTradingMinute(parts)) return items;
+  const time = getBeijingMinuteChartSeconds(now);
+  if (!Number.isFinite(time)) return items;
+
+  const last = items[items.length - 1];
+  const lastTime = Number(last && last.time);
+  if (Number.isFinite(lastTime) && time < lastTime) return items;
+  const sameMinute = lastTime === time;
+  const priorItems = sameMinute ? items.slice(0, -1) : items;
+  const priorVolume = priorItems.reduce((sum, item) => sum + Math.max(0, Number(item && item.volume) || 0), 0);
+  const cumulativeVolume = _positiveNumber(quote.volume);
+  const minuteVolume = cumulativeVolume > 0
+    ? Math.max(0, cumulativeVolume - priorVolume)
+    : Math.max(0, Number(sameMinute && last ? last.volume : 0) || 0);
+  const cumulativeAmount = _positiveNumber(quote.amount);
+  const avgPrice = cumulativeAmount > 0 && cumulativeVolume > 0
+    ? cumulativeAmount / (cumulativeVolume * 100)
+    : _positiveNumber(last && last.avgPrice);
+  const prevClose = _positiveNumber(quote.prevClose) || _positiveNumber(last && (last.preClose || last.prevClose));
+  const base = sameMinute ? last : null;
+  const baseOpen = _positiveNumber(base && base.open) || price;
+  const baseHigh = _positiveNumber(base && base.high) || price;
+  const baseLow = _positiveNumber(base && base.low) || price;
+  const point = {
+    ...(base || {}),
+    time,
+    open: baseOpen,
+    high: Math.max(baseHigh, price),
+    low: Math.min(baseLow, price),
+    close: price,
+    price,
+    volume: minuteVolume,
+    amount: Math.max(0, Number(base && base.amount) || 0),
+    avgPrice,
+    preClose: prevClose,
+    percent: prevClose > 0 ? (price / prevClose - 1) * 100 : 0,
+    changePercent: prevClose > 0 ? (price / prevClose - 1) * 100 : 0
+  };
+  return sameMinute ? [...priorItems, point] : [...items, point];
 }
 
 export function filterKlineItemsByDate(items, date) {

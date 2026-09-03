@@ -2,10 +2,14 @@ import { filterKlineItemsByDate } from '../src/js/kline.js';
 import { chartSecondsToTime, chartTimeToDate } from '../src/js/time.js';
 import { getOrRefresh, readCache } from './cacheStore.js';
 import { getCachedKline } from './klineService.js';
-import { fetchAktoolsHistMinute, fetchAktoolsIntradayTicks } from './marketData.js';
+import {
+  fetchAktoolsHistMinute,
+  fetchAktoolsIntradayTicks,
+  fetchEastmoneyIntradayTrends
+} from './marketData.js';
 import { normalizeCodeParam, normalizeDateKey, parsePositiveNumber, sanitizeSegment } from './utils.js';
 
-const INTRADAY_TTL_MS = 60 * 1000;
+const INTRADAY_TTL_MS = 10 * 1000;
 const SESSION_RANGES = Object.freeze([
   Object.freeze([9 * 60 + 15, 11 * 60 + 30]),
   Object.freeze([13 * 60, 15 * 60])
@@ -68,7 +72,7 @@ function decorateKlineIntraday(data, opts = {}) {
   return {
     code: opts.code,
     name: opts.name || data.name || opts.code,
-    source: 'eastmoney-kline-1m',
+    source: opts.source || 'eastmoney-kline-1m',
     preClose: prevClose || 0,
     items
   };
@@ -95,22 +99,50 @@ async function fetchIntradayNetwork(common, allowLatestTickSource) {
   const errors = [];
   if (allowLatestTickSource) {
     try {
-      const tickData = await fetchAktoolsIntradayTicks(common);
-      const filtered = filterIntradaySessions(tickData, common.date);
+      const trendData = await fetchEastmoneyIntradayTrends(common);
+      const filtered = filterIntradaySessions(trendData, common.date);
       if (hasItems(filtered)) return filtered;
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;
-      errors.push(e);
+      errors.push({ source: 'eastmoney-trends2', error: e });
     }
   }
 
-  try {
-    const histData = await fetchAktoolsHistMinute(common);
-    const filtered = filterIntradaySessions(histData, common.date);
+  const aktoolsTasks = [];
+  if (allowLatestTickSource) {
+    aktoolsTasks.push({
+      source: 'aktools-stock_intraday_em',
+      promise: fetchAktoolsIntradayTicks(common)
+    });
+  }
+  aktoolsTasks.push({
+    source: 'aktools-stock_zh_a_hist_min_em',
+    promise: fetchAktoolsHistMinute(common)
+  });
+  const aktoolsResults = await Promise.allSettled(aktoolsTasks.map((task) => task.promise));
+  for (let i = 0; i < aktoolsResults.length; i++) {
+    const result = aktoolsResults[i];
+    const source = aktoolsTasks[i].source;
+    if (result.status === 'fulfilled') {
+      const filtered = filterIntradaySessions(result.value, common.date);
+      if (hasItems(filtered)) return filtered;
+    } else {
+      if (result.reason && result.reason.name === 'AbortError') throw result.reason;
+      errors.push({ source, error: result.reason });
+    }
+  }
+
+  // A minute cache that is a few minutes old is a better immediate fallback
+  // than blocking the UI on another multi-upstream K-line refresh. Live quote
+  // ticks update the current point while the next background refresh retries.
+  const cachedMinute = await readCache(['kline', common.code, '1m.json']);
+  if (cachedMinute && cachedMinute.data) {
+    const decorated = decorateKlineIntraday(cachedMinute.data, {
+      ...common,
+      source: 'eastmoney-kline-1m-cache'
+    });
+    const filtered = filterIntradaySessions(decorated, common.date);
     if (hasItems(filtered)) return filtered;
-  } catch (e) {
-    if (e && e.name === 'AbortError') throw e;
-    errors.push(e);
   }
 
   try {
@@ -128,12 +160,12 @@ async function fetchIntradayNetwork(common, allowLatestTickSource) {
     }
   } catch (e) {
     if (e && e.name === 'AbortError') throw e;
-    errors.push(e);
+    errors.push({ source: 'eastmoney-kline-1m', error: e });
   }
 
   if (errors.length) {
-    const last = errors[errors.length - 1];
-    throw new Error(last && last.message ? last.message : '未能获取分时数据');
+    const details = errors.map(({ source, error }) => `${source}: ${error && error.message ? error.message : error}`).join('; ');
+    throw new Error(`分时数据源全部失败: ${details}`);
   }
   return {
     code: common.code,
@@ -184,7 +216,8 @@ export async function getCachedIntraday({
       date: selectedDate,
       prevClose,
       signal
-    }, allowLatest)
+    }, allowLatest),
+    { skipPrune: true }
   );
   return {
     ...result,

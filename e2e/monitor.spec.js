@@ -60,4 +60,14 @@ test.describe('监控页', () => {
     await page.press('#code-input', 'Enter');
     await expect(page.locator('#status-bar')).toContainText('共 1 项', { timeout: DEFAULT_TIMEOUT });
   });
+
+  test('10日涨幅扫描按钮会 POST 启动任务且不把正常状态显示成错误', async ({ page }) => {
+    await page.goto('http://127.0.0.1:5173/');
+    const requestPromise = page.waitForRequest((request) => (
+      request.method() === 'POST' && request.url().includes('/api/cache/momentum/ten-day/scan')
+    ));
+    await page.getByRole('button', { name: '扫描', exact: true }).click();
+    await requestPromise;
+    await expect(page.locator('.momentum-actions')).not.toContainText('错误:', { timeout: DEFAULT_TIMEOUT });
+  });
 });

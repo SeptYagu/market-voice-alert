@@ -38,6 +38,14 @@ export function getBeijingDate(now = new Date()) {
   return `${parts.year}-${_pad2(parts.month)}-${_pad2(parts.day)}`;
 }
 
+export function getBeijingMinuteChartSeconds(now = new Date()) {
+  const parts = getBeijingClockParts(now);
+  if (!parts.year || !parts.month || !parts.day) return null;
+  return parseBeijingDateTimeToChartSeconds(
+    `${parts.year}-${_pad2(parts.month)}-${_pad2(parts.day)} ${_pad2(parts.hour)}:${_pad2(parts.minute)}`
+  );
+}
+
 export function parseDateInput(date) {
   if (typeof date !== 'string') return null;
   const m = DATE_RE.exec(date.trim());

@@ -55,6 +55,9 @@ export default defineConfig({
     port: 5173,
     open: false,
     host: '127.0.0.1',
+    watch: {
+      ignored: ['**/data/cache/**']
+    },
     proxy: {
       '/api/tencent': {
         target: 'https://qt.gtimg.cn',

@@ -6,7 +6,11 @@ import { getCachedTradeCalendar } from './calendarService.js';
 import { getCachedIntraday } from './intradayService.js';
 import { getCachedKline } from './klineService.js';
 import { getCachedLimitUp, getCachedLimitUpReasons } from './limitUpService.js';
-import { getCachedTenDayMomentum, startMomentumScheduler } from './momentumService.js';
+import {
+  getCachedTenDayMomentum,
+  startMomentumScheduler,
+  startTenDayMomentumScan
+} from './momentumService.js';
 import { getCachedSpotLatest } from './spotService.js';
 import { handleProxyRequest } from './proxyService.js';
 import { DEFAULT_PORT, errorEnvelope, jsonResponse, okEnvelope } from './utils.js';
@@ -35,13 +39,27 @@ export async function handleCacheRequest(req, res) {
     jsonResponse(res, 204, {});
     return;
   }
+  const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
+  const path = url.pathname.replace(/\/+$/, '') || '/';
+  if (req.method === 'POST' && path === '/api/cache/momentum/ten-day/scan') {
+    const date = url.searchParams.get('date');
+    const threshold = url.searchParams.get('threshold');
+    // Register the single-flight job before replying so an immediate GET poll
+    // cannot observe the old empty cache between POST and task startup.
+    startTenDayMomentumScan({ date, threshold, reason: 'manual' });
+    jsonResponse(res, 202, okEnvelope({
+      source: 'job',
+      stale: false,
+      ttlMs: 0,
+      data: { status: 'scanning', date, threshold: Number(threshold) || 45 }
+    }));
+    return;
+  }
   if (req.method !== 'GET') {
     jsonResponse(res, 405, errorEnvelope('Method not allowed'));
     return;
   }
 
-  const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
-  const path = url.pathname.replace(/\/+$/, '') || '/';
   try {
     if (path === '/api/cache/kline') {
       const result = await getCachedKline({

@@ -2,7 +2,7 @@
 
 > **新窗口从这里开始**：本文件记录了完整的重做计划、决策、当前阶段和下一步任务。无需阅读历史对话。
 >
-> **新窗口交接文档**：[`docs/handoff/2026-06-05-phase5-bugfixes-handoff.md`](docs/handoff/2026-06-05-phase5-bugfixes-handoff.md) — Phase 5 + 2 个 K线图 bug 修复完整记录。读完本文件 + 上述 handoff + `AGENTS.md` + `SPEC.md` 即可接手。
+> **新窗口交接文档**：[`docs/handoff/2026-09-02-runtime-bugs-chart-benchmark-handoff.md`](docs/handoff/2026-09-02-runtime-bugs-chart-benchmark-handoff.md) — 10 日涨幅扫描、分时/K 线实时更新与国内行情图对照修复。历史 Phase 5 记录仍见 [`docs/handoff/2026-06-05-phase5-bugfixes-handoff.md`](docs/handoff/2026-06-05-phase5-bugfixes-handoff.md)。
 
 ## 项目定位
 
@@ -12,6 +12,16 @@
 - 语音播报 + 价格提醒
 - 走势图 (TradingView Lightweight Charts)
 - **涨停看板（独立页面，按连板数分类）**
+
+## 2026-09-02 运行缺陷修复状态
+
+- ✅ 保留桌面端左分时、右 K 线同时显示；分时增加昨收对称双轴、真实均价线、完整交易时间框架和当前点详情，K 线增加 OHLC/MA/量详情。
+- ✅ 行情刷新同步更新左分时末点与右侧当前 K 柱完整 OHLCV；新增交易时段连续报价 E2E。
+- ✅ 分时数据源 waterfall 收敛到服务端，东财 trends2 实测 241 点约 3.15 秒成功；前端不再重复 AKTools 失败链。
+- ✅ 10 日涨幅按钮改为 POST 启动 single-flight 后台任务、GET 轮询；进度可见，Windows 缓存写入竞态已修复，最后成功结果独立保留。
+- ✅ 10 日算法按目标日期截断，并只展示全体数据中最新交易日结果，杜绝退市/陈旧缓存被当作当前 10 日涨幅。
+- ⚠️ 本机真实全量扫描遍历 5,863 个缓存代码；因东财断连、腾讯 WAF 501，终态为 `partial`：最新交易日覆盖 1,404/5,863，9 个有效结果，4,015 个刷新失败。UI 明确显示覆盖与失败数，不再假报完成。
+- ✅ `npm run ci` 通过：562 单测、51 E2E、lint、生产构建全部成功。
 
 ## 备份
 

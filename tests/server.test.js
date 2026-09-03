@@ -3,6 +3,7 @@ import { request as httpRequest } from 'node:http';
 import { cachePath, getInflightRefreshCount, getOrRefresh } from '../server/cacheStore.js';
 import { createAppServer } from '../server/index.js';
 import { getKlineTtlMs } from '../server/klineService.js';
+import { computeTenDayMomentum } from '../server/momentumService.js';
 import { resolveProxyTarget } from '../server/proxyRoutes.js';
 import { beijingDateKey, normalizeDateKey } from '../server/utils.js';
 import { getAppVersionMetadata } from '../vite.config.js';
@@ -50,6 +51,26 @@ QUnit.module('server cache and production routing', (hooks) => {
     t.equal(getKlineTtlMs('1m'), 2 * 60 * 1000);
     t.equal(getKlineTtlMs('60m'), 2 * 60 * 1000);
     t.equal(getKlineTtlMs('1d'), 60 * 60 * 1000);
+  });
+
+  QUnit.test('10-day momentum ignores bars after the requested scan date', (t) => {
+    const items = Array.from({ length: 13 }, (_, index) => ({
+      time: `2026-09-${String(index + 1).padStart(2, '0')}`,
+      close: 100 + index
+    }));
+    const result = computeTenDayMomentum({ items }, 10, '2026-09-11');
+    t.equal(result.startTime, '2026-09-01');
+    t.equal(result.endTime, '2026-09-11');
+    t.equal(result.endDateKey, '20260911');
+  });
+
+  QUnit.test('10-day momentum rejects a stale series with too few bars by the scan date', (t) => {
+    const items = Array.from({ length: 10 }, (_, index) => ({
+      time: `2014-11-${String(index + 1).padStart(2, '0')}`,
+      close: 10 + index
+    }));
+    items.push({ time: '2026-09-03', close: 100 });
+    t.strictEqual(computeTenDayMomentum({ items }, 10, '2026-09-02'), null);
   });
 
   QUnit.test('default server dates use Beijing calendar date', (t) => {

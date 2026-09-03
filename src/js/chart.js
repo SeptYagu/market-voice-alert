@@ -4,12 +4,19 @@ import {
   CrosshairMode,
   LineStyle
 } from 'lightweight-charts';
-import { chartSecondsToDate, chartSecondsToTime } from './time.js';
+import {
+  chartSecondsToDate,
+  chartSecondsToTime,
+  chartTimeToDate,
+  parseBeijingDateTimeToChartSeconds
+} from './time.js';
 
 export const CANDLE_UP_COLOR = '#E74C3C';
 export const CANDLE_DOWN_COLOR = '#27AE60';
 
 export const MA_COLORS = ['#F39C12', '#3498DB', '#9B59B6', '#16A085'];
+export const INTRADAY_PRICE_COLOR = '#2980B9';
+export const INTRADAY_AVG_COLOR = '#F39C12';
 
 const THEME_PALETTE = Object.freeze({
   warm: {
@@ -92,7 +99,9 @@ function _volumeSeriesOptions() {
   return {
     priceScaleId: 'vol',
     priceFormat: { type: 'volume' },
-    color: CANDLE_UP_COLOR
+    color: CANDLE_UP_COLOR,
+    priceLineVisible: false,
+    lastValueVisible: false
   };
 }
 
@@ -101,6 +110,30 @@ function _percentFormatter(value) {
   if (!Number.isFinite(n)) return '';
   const sign = n > 0 ? '+' : '';
   return `${sign}${n.toFixed(2)}%`;
+}
+
+function _timeKey(time) {
+  return time === null || time === undefined ? '' : String(time);
+}
+
+function _detailTime(time) {
+  if (typeof time === 'string') return time;
+  const date = chartTimeToDate(time);
+  const hhmm = chartSecondsToTime(time);
+  return [date, hhmm].filter(Boolean).join(' ');
+}
+
+function _detailNumber(value, digits = 2) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(digits) : '--';
+}
+
+function _createDetailLegend(container, className) {
+  if (typeof document === 'undefined') return null;
+  const legend = document.createElement('div');
+  legend.className = `chart-crosshair-detail ${className || ''}`.trim();
+  container.appendChild(legend);
+  return legend;
 }
 
 export function createKlineChart(container, opts = {}) {
@@ -118,12 +151,42 @@ export function createKlineChart(container, opts = {}) {
   });
 
   const maSeriesMap = new Map();
+  const maDataMap = new Map();
+  const klineDataMap = new Map();
+  const volumeDataMap = new Map();
+  const detailLegend = _createDetailLegend(container, 'kline-crosshair-detail');
   let lastCrosshairTime = null;
+
+  function renderDetail(time) {
+    if (!detailLegend) return;
+    const key = _timeKey(time);
+    const entry = klineDataMap.get(key);
+    if (!entry) return;
+    const { bar, prevClose } = entry;
+    const pct = Number(prevClose) > 0 ? (Number(bar.close) / Number(prevClose) - 1) * 100 : NaN;
+    const volume = volumeDataMap.get(key);
+    const maParts = [];
+    for (const [period, data] of maDataMap) {
+      const value = data.get(key);
+      if (Number.isFinite(value)) maParts.push(`MA${period} ${_detailNumber(value)}`);
+    }
+    detailLegend.textContent = [
+      _detailTime(time),
+      `开 ${_detailNumber(bar.open)}`,
+      `高 ${_detailNumber(bar.high)}`,
+      `低 ${_detailNumber(bar.low)}`,
+      `收 ${_detailNumber(bar.close)}`,
+      Number.isFinite(pct) ? `幅 ${_percentFormatter(pct)}` : '',
+      Number.isFinite(volume) ? `量 ${Math.round(volume).toLocaleString('en-US')}` : '',
+      ...maParts
+    ].filter(Boolean).join('  ');
+  }
 
   if (typeof chart.subscribeCrosshairMove === 'function') {
     chart.subscribeCrosshairMove((param) => {
       if (param && param.time !== undefined && param.time !== null) {
         lastCrosshairTime = param.time;
+        renderDetail(param.time);
       }
     });
   }
@@ -138,11 +201,23 @@ export function createKlineChart(container, opts = {}) {
   }
 
   function setKline(items) {
-    candleSeries.setData(Array.isArray(items) ? items : []);
+    const arr = Array.isArray(items) ? items : [];
+    candleSeries.setData(arr);
+    klineDataMap.clear();
+    for (let i = 0; i < arr.length; i++) {
+      klineDataMap.set(_timeKey(arr[i].time), {
+        bar: arr[i],
+        prevClose: i > 0 ? arr[i - 1].close : null
+      });
+    }
+    if (arr.length) renderDetail(arr[arr.length - 1].time);
   }
 
   function setVolume(bars) {
-    volumeSeries.setData(Array.isArray(bars) ? bars : []);
+    const arr = Array.isArray(bars) ? bars : [];
+    volumeSeries.setData(arr);
+    volumeDataMap.clear();
+    for (const bar of arr) volumeDataMap.set(_timeKey(bar.time), Number(bar.value));
   }
 
   // Live-tick update API: mutates the LAST bar only, preserving the user's
@@ -157,6 +232,9 @@ export function createKlineChart(container, opts = {}) {
     } catch {
       candleSeries.setData([bar]);
     }
+    const previous = klineDataMap.get(_timeKey(bar.time));
+    klineDataMap.set(_timeKey(bar.time), { bar, prevClose: previous ? previous.prevClose : null });
+    renderDetail(bar.time);
   }
 
   function updateVolume(bar) {
@@ -166,6 +244,7 @@ export function createKlineChart(container, opts = {}) {
     } catch {
       volumeSeries.setData([bar]);
     }
+    volumeDataMap.set(_timeKey(bar.time), Number(bar.value));
   }
 
   function updateMA(period, lastPoint) {
@@ -176,6 +255,9 @@ export function createKlineChart(container, opts = {}) {
     } catch {
       /* ignore */
     }
+    if (!maDataMap.has(period)) maDataMap.set(period, new Map());
+    maDataMap.get(period).set(_timeKey(lastPoint.time), Number(lastPoint.value));
+    renderDetail(lastPoint.time);
   }
 
   function setMA(period, data, color) {
@@ -193,7 +275,11 @@ export function createKlineChart(container, opts = {}) {
     } else if (color) {
       series.applyOptions({ color });
     }
+    maDataMap.set(period, new Map(
+      (Array.isArray(data) ? data : []).map((point) => [_timeKey(point.time), Number(point.value)])
+    ));
     series.setData(Array.isArray(data) ? data : []);
+    if (Array.isArray(data) && data.length) renderDetail(data[data.length - 1].time);
   }
 
   function clearMA() {
@@ -205,6 +291,7 @@ export function createKlineChart(container, opts = {}) {
       }
     }
     maSeriesMap.clear();
+    maDataMap.clear();
   }
 
   function applyTheme(nextTheme) {
@@ -280,6 +367,10 @@ export function createKlineChart(container, opts = {}) {
       /* ignore */
     }
     maSeriesMap.clear();
+    maDataMap.clear();
+    klineDataMap.clear();
+    volumeDataMap.clear();
+    if (detailLegend) detailLegend.remove();
   }
 
   return {
@@ -309,30 +400,90 @@ export function createIntradayChart(container, opts = {}) {
   let colors = getChartThemeColors(currentTheme);
   let currentPrevClose = 0;
   let zeroLine = null;
+  let symmetricPriceRange = null;
+  let symmetricPercentRange = null;
   const chart = createChart(container, buildChartOptions({ width, height, theme: currentTheme, period: '1m' }));
   const priceSeries = chart.addLineSeries({
-    color: colors.up,
-    lineWidth: 1,
+    priceScaleId: 'left',
+    color: INTRADAY_PRICE_COLOR,
+    lineWidth: 2,
     priceLineVisible: false,
     lastValueVisible: true,
+    autoscaleInfoProvider: () => symmetricPriceRange ? { priceRange: symmetricPriceRange } : null,
     priceFormat: {
       type: 'custom',
       formatter: (value) => {
         const price = Number(value);
-        if (!Number.isFinite(price)) return '';
-        const pct = currentPrevClose > 0 ? (price / currentPrevClose - 1) * 100 : null;
-        return pct === null ? price.toFixed(2) : `${price.toFixed(2)} (${_percentFormatter(pct)})`;
+        return Number.isFinite(price) ? price.toFixed(2) : '';
       }
     }
+  });
+  const averageSeries = chart.addLineSeries({
+    priceScaleId: 'left',
+    color: INTRADAY_AVG_COLOR,
+    lineWidth: 1,
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerVisible: false
+  });
+  const percentSeries = chart.addLineSeries({
+    priceScaleId: 'right',
+    color: 'rgba(0,0,0,0)',
+    lineWidth: 1,
+    lineVisible: false,
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerVisible: false,
+    autoscaleInfoProvider: () => symmetricPercentRange ? { priceRange: symmetricPercentRange } : null,
+    priceFormat: { type: 'custom', formatter: _percentFormatter }
   });
   const volumeSeries = chart.addHistogramSeries({
     priceScaleId: 'vol',
     priceFormat: { type: 'volume' },
-    color: colors.up
+    color: colors.up,
+    priceLineVisible: false,
+    lastValueVisible: false
   });
   chart.priceScale('vol').applyOptions({
     scaleMargins: { top: 0.78, bottom: 0 }
   });
+  chart.priceScale('left').applyOptions({
+    visible: true,
+    borderColor: colors.border,
+    scaleMargins: { top: 0.08, bottom: 0.24 }
+  });
+  chart.priceScale('right').applyOptions({
+    visible: true,
+    borderColor: colors.border,
+    scaleMargins: { top: 0.08, bottom: 0.24 }
+  });
+  const intradayDataMap = new Map();
+  const detailLegend = _createDetailLegend(container, 'intraday-crosshair-detail');
+
+  function renderIntradayDetail(time) {
+    if (!detailLegend) return;
+    const point = intradayDataMap.get(_timeKey(time));
+    if (!point) return;
+    const close = Number(point.close);
+    const pct = currentPrevClose > 0 && Number.isFinite(close)
+      ? (close / currentPrevClose - 1) * 100
+      : Number(point.percent);
+    const average = Number(point.avgPrice);
+    const volume = Number(point.volume);
+    detailLegend.textContent = [
+      _detailTime(time),
+      `价 ${_detailNumber(close)}`,
+      Number.isFinite(pct) ? `幅 ${_percentFormatter(pct)}` : '',
+      average > 0 ? `均 ${_detailNumber(average)}` : '均 --',
+      Number.isFinite(volume) ? `量 ${Math.round(volume).toLocaleString('en-US')}` : ''
+    ].filter(Boolean).join('  ');
+  }
+
+  if (typeof chart.subscribeCrosshairMove === 'function') {
+    chart.subscribeCrosshairMove((param) => {
+      if (param && param.time !== undefined && param.time !== null) renderIntradayDetail(param.time);
+    });
+  }
 
   let ro = null;
   if (typeof ResizeObserver !== 'undefined') {
@@ -345,6 +496,8 @@ export function createIntradayChart(container, opts = {}) {
 
   function setData(items) {
     const arr = Array.isArray(items) ? items : [];
+    intradayDataMap.clear();
+    for (const point of arr) intradayDataMap.set(_timeKey(point.time), point);
     const firstWithPreClose = arr.find((it) => Number.isFinite(Number(it.preClose)) && Number(it.preClose) > 0);
     currentPrevClose = firstWithPreClose
       ? Number(firstWithPreClose.preClose)
@@ -355,23 +508,72 @@ export function createIntradayChart(container, opts = {}) {
         currentPrevClose = Number(firstPct.close) / (1 + Number(firstPct.percent) / 100);
       }
     }
-    const priceData = Array.isArray(items)
-      ? items.map((it) => ({ time: it.time, value: Number(it.close) })).filter((it) => Number.isFinite(it.value))
-      : [];
-    const volumeData = arr
-      .map((it) => {
+    const byTime = new Map(arr.filter((it) => Number.isFinite(Number(it && it.time))).map((it) => [Number(it.time), it]));
+    const firstTime = arr.find((it) => Number.isFinite(Number(it && it.time)))?.time;
+    const date = chartSecondsToDate(firstTime);
+    const timeline = [];
+    if (date) {
+      for (const [startHour, startMinute, endHour, endMinute] of [[9, 30, 11, 30], [13, 0, 15, 0]]) {
+        const start = startHour * 60 + startMinute;
+        const end = endHour * 60 + endMinute;
+        for (let minute = start; minute <= end; minute++) {
+          const hh = String(Math.floor(minute / 60)).padStart(2, '0');
+          const mm = String(minute % 60).padStart(2, '0');
+          const time = parseBeijingDateTimeToChartSeconds(`${date} ${hh}:${mm}`);
+          if (Number.isFinite(time)) timeline.push(time);
+        }
+      }
+    }
+    const displayTimes = timeline.length ? timeline : [...byTime.keys()].sort((a, b) => a - b);
+    const averageByTime = new Map();
+    for (const it of arr) {
+      const explicitAverage = Number(it && it.avgPrice);
+      if (Number.isFinite(Number(it && it.time)) && explicitAverage > 0) {
+        averageByTime.set(Number(it.time), explicitAverage);
+      }
+    }
+    const priceData = displayTimes.map((time) => {
+      const it = byTime.get(time);
+      const value = Number(it && it.close);
+      return Number.isFinite(value) ? { time, value } : { time };
+    });
+    const averageData = displayTimes.map((time) => {
+      const value = averageByTime.get(time);
+      return Number.isFinite(value) ? { time, value } : { time };
+    });
+    const percentData = displayTimes.map((time) => {
+      const it = byTime.get(time);
+      const close = Number(it && it.close);
+      const value = currentPrevClose > 0 && Number.isFinite(close) ? (close / currentPrevClose - 1) * 100 : NaN;
+      return Number.isFinite(value) ? { time, value } : { time };
+    });
+    const volumeData = displayTimes.map((time) => {
+        const it = byTime.get(time);
+        if (!it) return { time };
         const value = Number(it.volume);
-        if (!Number.isFinite(value)) return null;
+        if (!Number.isFinite(value)) return { time };
         const close = Number(it.close);
         const open = Number(it.open);
         return {
-          time: it.time,
+          time,
           value,
           color: Number.isFinite(close) && Number.isFinite(open) && close < open ? colors.down : colors.up
         };
-      })
-      .filter(Boolean);
+      });
+    if (currentPrevClose > 0) {
+      const prices = arr.map((it) => Number(it && it.close)).filter(Number.isFinite);
+      const maxDeviation = prices.reduce((max, price) => Math.max(max, Math.abs(price - currentPrevClose)), currentPrevClose * 0.002);
+      const padded = maxDeviation * 1.08;
+      symmetricPriceRange = { minValue: currentPrevClose - padded, maxValue: currentPrevClose + padded };
+      const maxPercent = (padded / currentPrevClose) * 100;
+      symmetricPercentRange = { minValue: -maxPercent, maxValue: maxPercent };
+    } else {
+      symmetricPriceRange = null;
+      symmetricPercentRange = null;
+    }
     priceSeries.setData(priceData);
+    averageSeries.setData(averageData);
+    percentSeries.setData(percentData);
     volumeSeries.setData(volumeData);
     if (zeroLine) {
       try { priceSeries.removePriceLine(zeroLine); } catch { /* ignore */ }
@@ -383,10 +585,11 @@ export function createIntradayChart(container, opts = {}) {
         color: colors.text,
         lineWidth: 1,
         lineStyle: LineStyle.Dotted,
-        axisLabelVisible: true,
-        title: '0%'
+        axisLabelVisible: false,
+        title: '昨收'
       });
     }
+    if (arr.length) renderIntradayDetail(arr[arr.length - 1].time);
   }
 
   function applyTheme(nextTheme) {
@@ -399,7 +602,8 @@ export function createIntradayChart(container, opts = {}) {
       theme: currentTheme,
       period: '1m'
     }));
-    priceSeries.applyOptions({ color: c.up });
+    priceSeries.applyOptions({ color: INTRADAY_PRICE_COLOR });
+    averageSeries.applyOptions({ color: INTRADAY_AVG_COLOR });
     volumeSeries.applyOptions({ color: c.up });
     if (zeroLine) {
       zeroLine.applyOptions({ color: c.text });
@@ -439,6 +643,8 @@ export function createIntradayChart(container, opts = {}) {
       ro = null;
     }
     try { chart.remove(); } catch { /* ignore */ }
+    intradayDataMap.clear();
+    if (detailLegend) detailLegend.remove();
   }
 
   return { setData, applyTheme, resize, fitContent, getVisibleRange, setVisibleRange, destroy };

@@ -6,7 +6,7 @@ import { isFresh, normalizeDateKey, nowMs, parsePositiveNumber } from './utils.j
 const MOMENTUM_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_THRESHOLD = 45;
 const LOOKBACK_DAYS = 10;
-const CONCURRENCY = 8;
+const CONCURRENCY = 32;
 const SCHEDULED_SCAN_TIMES = Object.freeze([
   Object.freeze({ hour: 8, minute: 0, label: 'pre-open' }),
   Object.freeze({ hour: 15, minute: 1, label: 'after-close' })
@@ -15,8 +15,20 @@ const JOBS = new Map();
 let schedulerTimer = null;
 let schedulerStarted = false;
 
-function computeTenDayMomentum(klineData, lookbackDays = LOOKBACK_DAYS) {
-  const items = klineData && Array.isArray(klineData.items) ? klineData.items : [];
+function klineDateKey(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[1]}${match[2]}${match[3]}` : '';
+}
+
+export function computeTenDayMomentum(klineData, lookbackDays = LOOKBACK_DAYS, cutoffDate = '') {
+  const cutoffKey = normalizeDateKey(cutoffDate) || '';
+  const sourceItems = klineData && Array.isArray(klineData.items) ? klineData.items : [];
+  const items = cutoffKey
+    ? sourceItems.filter((item) => {
+      const itemDate = klineDateKey(item && item.time);
+      return itemDate && itemDate <= cutoffKey;
+    })
+    : sourceItems;
   if (items.length < lookbackDays + 1) return null;
   const end = items[items.length - 1];
   const start = items[items.length - 1 - lookbackDays];
@@ -28,6 +40,7 @@ function computeTenDayMomentum(klineData, lookbackDays = LOOKBACK_DAYS) {
     lookbackDays,
     startTime: start.time,
     endTime: end.time,
+    endDateKey: klineDateKey(end.time),
     startClose,
     lastClose,
     gainPercent: Number(gainPercent.toFixed(2))
@@ -42,6 +55,7 @@ async function mapLimit(items, limit, fn) {
       const idx = cursor;
       cursor += 1;
       out[idx] = await fn(items[idx], idx);
+      await new Promise((resolve) => setImmediate(resolve));
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
@@ -51,6 +65,11 @@ async function mapLimit(items, limit, fn) {
 function cacheParts(dateKey, threshold) {
   const thresholdKey = String(threshold).replace(/\./g, 'p');
   return ['momentum', dateKey, `ten-day-${thresholdKey}pct.json`];
+}
+
+function successCacheParts(dateKey, threshold) {
+  const thresholdKey = String(threshold).replace(/\./g, 'p');
+  return ['momentum', dateKey, `ten-day-${thresholdKey}pct-success.json`];
 }
 
 function beijingParts(now = new Date()) {
@@ -112,7 +131,7 @@ async function writeMomentumProgress(parts, data) {
     generatedAt: nowMs(),
     ttlMs: MOMENTUM_TTL_MS,
     data
-  });
+  }, { skipPrune: true });
 }
 
 function emptyMomentumData(dateKey, threshold, message) {
@@ -128,18 +147,23 @@ function emptyMomentumData(dateKey, threshold, message) {
   };
 }
 
-async function buildMomentum({ dateKey, threshold, parts, signal }) {
+async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt }) {
   const spotResult = await getCachedSpotLatest({ signal });
   const universe = spotResult && spotResult.data && Array.isArray(spotResult.data.items)
     ? spotResult.data.items
     : [];
   const found = [];
+  const endDateCounts = new Map();
+  let latestMarketDate = '';
+  let refreshFailures = 0;
   const scanned = { count: 0 };
+  let progressWrite = Promise.resolve();
   await writeMomentumProgress(parts, {
     status: 'scanning',
     date: dateKey,
     threshold,
     lookbackDays: LOOKBACK_DAYS,
+    jobStartedAt,
     universeSize: universe.length,
     scanned: 0,
     items: []
@@ -147,9 +171,16 @@ async function buildMomentum({ dateKey, threshold, parts, signal }) {
   await mapLimit(universe, CONCURRENCY, async (candidate) => {
     if (!candidate || !/^(sh|sz|bj)\d{6}$/i.test(candidate.code)) return null;
     try {
-      const data = await getKlineDataForMomentum(candidate.code, signal);
-      const stats = computeTenDayMomentum(data);
+      const klineResult = await getKlineDataForMomentum(candidate.code, signal, dateKey);
+      const data = klineResult && klineResult.data;
+      if (klineResult && klineResult.source === 'stale' && !klineResult.fresh) refreshFailures += 1;
+      const stats = computeTenDayMomentum(data, LOOKBACK_DAYS, dateKey);
+      if (stats && stats.endDateKey) {
+        latestMarketDate = latestMarketDate > stats.endDateKey ? latestMarketDate : stats.endDateKey;
+        endDateCounts.set(stats.endDateKey, (endDateCounts.get(stats.endDateKey) || 0) + 1);
+      }
       if (!stats || stats.gainPercent < threshold) return null;
+      const { endDateKey: _endDateKey, ...publicStats } = stats;
       const item = {
         code: candidate.code,
         name: candidate.name || (data && data.name) || candidate.code,
@@ -162,7 +193,8 @@ async function buildMomentum({ dateKey, threshold, parts, signal }) {
         interpretation: candidate.interpretation || '',
         limitStats: candidate.limitStats || '',
         anomaly: `10日涨幅超${threshold}%`,
-        ...stats
+        ...publicStats,
+        marketDate: stats.endDateKey
       };
       found.push(item);
       return item;
@@ -172,27 +204,46 @@ async function buildMomentum({ dateKey, threshold, parts, signal }) {
     } finally {
       scanned.count += 1;
       if (scanned.count > 0 && scanned.count % 100 === 0) {
-        await writeMomentumProgress(parts, {
+        const progress = {
           status: 'scanning',
           date: dateKey,
           threshold,
           lookbackDays: LOOKBACK_DAYS,
+          jobStartedAt,
           universeSize: universe.length,
           scanned: scanned.count,
-          items: found.slice().sort((a, b) => (b.gainPercent || 0) - (a.gainPercent || 0))
-        });
+          latestMarketDate,
+          freshUniverseSize: endDateCounts.get(latestMarketDate) || 0,
+          refreshFailures,
+          items: found
+            .filter((item) => item.marketDate === latestMarketDate)
+            .slice()
+            .sort((a, b) => (b.gainPercent || 0) - (a.gainPercent || 0))
+        };
+        progressWrite = progressWrite.then(() => writeMomentumProgress(parts, progress));
+        await progressWrite;
       }
     }
   });
-  found.sort((a, b) => (b.gainPercent || 0) - (a.gainPercent || 0));
+  await progressWrite;
+  const freshFound = found
+    .filter((item) => item.marketDate === latestMarketDate)
+    .sort((a, b) => (b.gainPercent || 0) - (a.gainPercent || 0));
   return {
-    status: 'complete',
+    status: refreshFailures > 0 ? 'partial' : 'complete',
     date: dateKey,
     threshold,
     lookbackDays: LOOKBACK_DAYS,
+    jobStartedAt,
     universeSize: universe.length,
     scanned: scanned.count,
-    items: found
+    latestMarketDate,
+    freshUniverseSize: endDateCounts.get(latestMarketDate) || 0,
+    refreshFailures,
+    message: refreshFailures > 0
+      ? `${refreshFailures} 只股票的日 K 刷新失败；最新交易日覆盖 ${endDateCounts.get(latestMarketDate) || 0}/${universe.length}，仅展示有效结果`
+      : '',
+    items: freshFound
   };
 }
 
@@ -205,7 +256,30 @@ export async function getCachedTenDayMomentum({ date, threshold: rawThreshold, s
     throw err;
   }
   const parts = cacheParts(dateKey, threshold);
-  const cached = await readCache(parts);
+  const cached = await readCache(parts, { skipTouch: true });
+  const jobKey = `${dateKey}|${threshold}`;
+  if (JOBS.has(jobKey)) {
+    const jobState = JOBS.get(jobKey);
+    const priorData = cached && cached.data ? cached.data : {};
+    const sameJob = Number(priorData.jobStartedAt) === Number(jobState.startedAt);
+    return {
+      source: 'job',
+      stale: false,
+      generatedAt: nowMs(),
+      ttlMs: MOMENTUM_TTL_MS,
+      data: {
+        ...priorData,
+        status: 'scanning',
+        date: dateKey,
+        threshold,
+        lookbackDays: LOOKBACK_DAYS,
+        jobStartedAt: jobState.startedAt,
+        universeSize: sameJob ? Number(priorData.universeSize) || 0 : 0,
+        scanned: sameJob ? Number(priorData.scanned) || 0 : 0,
+        items: Array.isArray(priorData.items) ? priorData.items : []
+      }
+    };
+  }
   if (cached && cached.data) {
     const fresh = isFresh(cached, MOMENTUM_TTL_MS);
     return {
@@ -214,25 +288,6 @@ export async function getCachedTenDayMomentum({ date, threshold: rawThreshold, s
       generatedAt: cached.generatedAt,
       ttlMs: cached.ttlMs || MOMENTUM_TTL_MS,
       data: cached.data
-    };
-  }
-
-  const jobKey = `${dateKey}|${threshold}`;
-  if (JOBS.has(jobKey)) {
-    return {
-      source: 'network',
-      stale: false,
-      generatedAt: nowMs(),
-      ttlMs: MOMENTUM_TTL_MS,
-      data: {
-        status: 'scanning',
-        date: dateKey,
-        threshold,
-        lookbackDays: LOOKBACK_DAYS,
-        universeSize: 0,
-        scanned: 0,
-        items: []
-      }
     };
   }
 
@@ -252,13 +307,27 @@ export function startTenDayMomentumScan({ date, threshold: rawThreshold, reason 
   const jobKey = `${dateKey}|${threshold}`;
   if (!JOBS.has(jobKey)) {
     const controller = new AbortController();
-    const job = buildMomentum({ dateKey, threshold, parts, signal: controller.signal })
+    const startedAt = nowMs();
+    const job = buildMomentum({
+      dateKey,
+      threshold,
+      parts,
+      signal: controller.signal,
+      jobStartedAt: startedAt
+    })
       .then(async (data) => {
-        await writeMomentumProgress(parts, { ...data, reason });
+        const completed = { ...data, reason };
+        await writeMomentumProgress(parts, completed);
+        if (completed.status === 'complete') {
+          await writeMomentumProgress(successCacheParts(dateKey, threshold), completed);
+        }
         return data;
       })
       .catch(async (err) => {
-        const prior = await readCache(parts);
+        const lastSuccess = await readCache(successCacheParts(dateKey, threshold), { skipTouch: true });
+        const prior = lastSuccess && lastSuccess.data
+          ? lastSuccess
+          : await readCache(parts, { skipTouch: true });
         const data = {
           status: 'error',
           date: dateKey,
@@ -276,15 +345,15 @@ export function startTenDayMomentumScan({ date, threshold: rawThreshold, reason 
       .finally(() => {
         JOBS.delete(jobKey);
       });
-    JOBS.set(jobKey, job);
+    JOBS.set(jobKey, { promise: job, startedAt });
   }
-  return JOBS.get(jobKey);
+  return JOBS.get(jobKey).promise;
 }
 
 async function ensureStartupMomentumScan(logger) {
   const dateKey = beijingDateKey();
   const threshold = DEFAULT_THRESHOLD;
-  const cached = await readCache(cacheParts(dateKey, threshold));
+  const cached = await readCache(cacheParts(dateKey, threshold), { skipTouch: true });
   if (
     cached &&
     cached.data &&

@@ -4,6 +4,24 @@
 // 不强求 canvas。
 import { test, expect } from '@playwright/test';
 import { setupApiMocks, clearLocalStorage, stubWebSpeech, stubNotification, DEFAULT_TIMEOUT } from './helpers.js';
+import { TENCENT_QUOTES_BODY_1 } from './fixtures/tencent-quotes.js';
+
+function liveQuoteBody({ price, high, low, volume, amount }) {
+  const match = TENCENT_QUOTES_BODY_1.match(/="([\s\S]*)";/);
+  const fields = match[1].split('~');
+  const prevClose = Number(fields[4]);
+  fields[1] = 'Moutai';
+  fields[3] = String(price);
+  fields[5] = '1808.00';
+  fields[6] = String(volume);
+  fields[30] = '20260605100500';
+  fields[31] = (price - prevClose).toFixed(2);
+  fields[32] = (((price / prevClose) - 1) * 100).toFixed(2);
+  fields[33] = String(high);
+  fields[34] = String(low);
+  fields[35] = `${price}/${volume}/${amount}`;
+  return `v_sh600519="${fields.join('~')}";`;
+}
 
 test.describe('K 线图展开', () => {
   test.beforeEach(async ({ page }) => {
@@ -148,6 +166,41 @@ test.describe('K 线图展开', () => {
     await expect(page.locator('#intraday-status-sh600519')).toContainText(/%/, { timeout: DEFAULT_TIMEOUT });
     await expect(page.locator('#intraday-status-sh600519')).toContainText(/AKTools/, { timeout: DEFAULT_TIMEOUT });
     await expect(page.locator('#chart-status-sh600519')).toContainText(/\d+ 根/, { timeout: DEFAULT_TIMEOUT });
+  });
+
+  test('交易时段连续报价同步更新表格和左侧分时末点', async ({ page }) => {
+    await page.addInitScript(() => {
+      const RealDate = Date;
+      const realStart = RealDate.now();
+      const marketStart = RealDate.parse('2026-06-11T02:05:10.000Z');
+      class MarketDate extends RealDate {
+        constructor(...args) {
+          super(...(args.length ? args : [marketStart + (RealDate.now() - realStart)]));
+        }
+        static now() { return marketStart + (RealDate.now() - realStart); }
+      }
+      globalThis.Date = MarketDate;
+    });
+    await page.unroute('**/api/tencent**');
+    let quoteCalls = 0;
+    await page.route('**/api/tencent**', async (route) => {
+      quoteCalls += 1;
+      const body = quoteCalls === 1
+        ? liveQuoteBody({ price: 1850, high: 1860, low: 1800, volume: 12500, amount: 2310000000 })
+        : liveQuoteBody({ price: 1852, high: 1862, low: 1799, volume: 13000, amount: 2407600000 });
+      await route.fulfill({ status: 200, contentType: 'text/plain; charset=utf-8', body });
+    });
+
+    await page.goto('http://127.0.0.1:5173/');
+    await page.fill('#code-input', 'sh600519');
+    await page.press('#code-input', 'Enter');
+    await expect(page.locator('tr[data-code="sh600519"]')).toBeVisible({ timeout: DEFAULT_TIMEOUT });
+    await page.locator('tr[data-code="sh600519"] td.code').click();
+    await expect(page.locator('#intraday-status-sh600519')).toContainText(/点/, { timeout: DEFAULT_TIMEOUT });
+    await page.click('button:has-text("立即刷新")');
+    await expect.poll(() => quoteCalls, { timeout: 5000 }).toBeGreaterThanOrEqual(2);
+    await expect(page.locator('tr[data-code="sh600519"] td').nth(4)).toHaveText('1852.00');
+    await expect(page.locator('#intraday-status-sh600519')).toContainText('1852.00');
   });
 
   test('监控页多图周期互不影响', async ({ page }) => {

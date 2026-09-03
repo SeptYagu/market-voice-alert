@@ -254,12 +254,14 @@ function _decorateKlineIntraday(data, opts = {}) {
 }
 
 export async function fetchIntraday(code, opts = {}) {
+  let sharedCacheError = null;
   if (opts.sharedCache === true) {
     try {
       const cached = await _fetchIntradayFromSharedCache(code, opts);
       if (cached) return cached;
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;
+      sharedCacheError = e;
     }
   }
 
@@ -270,26 +272,30 @@ export async function fetchIntraday(code, opts = {}) {
     prevClose: opts.prevClose,
     signal: opts.signal
   };
-  const errors = [];
+  const errors = sharedCacheError ? [{ source: 'shared-cache', error: sharedCacheError }] : [];
 
-  if (opts.allowLatestTickSource !== false) {
+  // The shared server already tried the AKTools tick/minute sources. When it
+  // fails, do not repeat the same slow upstream waterfall in the browser.
+  if (opts.sharedCache !== true && opts.allowLatestTickSource !== false) {
     try {
       const tickData = await fetchAktoolsIntradayTicks(common);
       const filtered = _filterIntradaySessions(tickData, opts.date);
       if (_hasIntradayItems(filtered)) return filtered;
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;
-      errors.push(e);
+      errors.push({ source: 'aktools-stock_intraday_em', error: e });
     }
   }
 
-  try {
-    const histData = await fetchAktoolsHistMinute(common);
-    const filtered = _filterIntradaySessions(histData, opts.date);
-    if (_hasIntradayItems(filtered)) return filtered;
-  } catch (e) {
-    if (e && e.name === 'AbortError') throw e;
-    errors.push(e);
+  if (opts.sharedCache !== true) {
+    try {
+      const histData = await fetchAktoolsHistMinute(common);
+      const filtered = _filterIntradaySessions(histData, opts.date);
+      if (_hasIntradayItems(filtered)) return filtered;
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw e;
+      errors.push({ source: 'aktools-stock_zh_a_hist_min_em', error: e });
+    }
   }
 
   if (opts.allowLatestTickSource !== false) {
@@ -299,7 +305,7 @@ export async function fetchIntraday(code, opts = {}) {
       if (_hasIntradayItems(filtered)) return filtered;
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;
-      errors.push(e);
+      errors.push({ source: 'eastmoney-trends2', error: e });
     }
   }
 
@@ -316,12 +322,14 @@ export async function fetchIntraday(code, opts = {}) {
     }
   } catch (e) {
     if (e && e.name === 'AbortError') throw e;
-    errors.push(e);
+    errors.push({ source: 'eastmoney-kline-1m', error: e });
   }
 
   if (errors.length) {
-    const last = errors[errors.length - 1];
-    throw new Error(last && last.message ? last.message : '未能获取分时数据');
+    const details = errors
+      .map(({ source, error }) => `${source}: ${error && error.message ? error.message : error}`)
+      .join('; ');
+    throw new Error(`分时数据源全部失败: ${details}`);
   }
   return { code, name: opts.name || code, source: 'none', preClose: Number(opts.prevClose) || 0, items: [] };
 }

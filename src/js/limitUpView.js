@@ -262,7 +262,13 @@ function buildInlineChartRow(item, ctx) {
     'div',
     { class: 'chart-split lu-chart-split' },
     el('section', { class: 'chart-pane chart-pane-intraday' },
-      el('div', { class: 'chart-pane-title' }, '分时图'),
+      el(
+        'div',
+        { class: 'chart-pane-title' },
+        el('span', {}, '分时图'),
+        el('span', { class: 'intraday-legend intraday-legend-price' }, '价格'),
+        el('span', { class: 'intraday-legend intraday-legend-average' }, '均价')
+      ),
       intradayStatus,
       intradayHost
     ),

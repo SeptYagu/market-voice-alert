@@ -26,13 +26,13 @@ export function cachePath(...parts) {
   return resolveCachePath(parts);
 }
 
-export async function readCache(parts) {
+export async function readCache(parts, opts = {}) {
   const path = resolveCachePath(parts);
   try {
     const raw = await readFile(path, 'utf8');
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
-    touchCacheAccess(parts, parsed.generatedAt).catch(() => {});
+    if (!opts.skipTouch) touchCacheAccess(parts, parsed.generatedAt).catch(() => {});
     return parsed;
   } catch {
     return null;
@@ -70,7 +70,7 @@ export async function writeCache(parts, payload, opts = {}) {
 }
 
 export async function getOrRefresh(parts, ttlMs, refreshFn, opts = {}) {
-  const cached = await readCache(parts);
+  const cached = await readCache(parts, { skipTouch: !!opts.skipTouch });
   if (!opts.force && isFresh(cached, ttlMs)) {
     return {
       source: 'cache',

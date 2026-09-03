@@ -16,8 +16,11 @@ import {
   LIMIT_UP_COLOR,
   LIMIT_BROKEN_COLOR,
   isMinutePeriod,
-  applyLiveTickToKline
+  applyLiveTickToKline,
+  applyLiveQuoteToKline,
+  applyLiveQuoteToIntraday
 } from '../src/js/kline.js';
+import { parseBeijingDateTimeToChartSeconds } from '../src/js/time.js';
 
 QUnit.module('kline.PERIODS / labels', () => {
   QUnit.test('PERIODS exposes 8 supported periods', (t) => {
@@ -664,5 +667,82 @@ QUnit.module('kline.applyLiveTickToKline', () => {
     t.equal(last.close, 55);
     t.equal(last.high, 55, 'high derived from price when missing');
     t.equal(last.low, 55, 'low derived from price when missing');
+  });
+});
+
+QUnit.module('kline.applyLiveQuoteToKline', () => {
+  QUnit.test('daily quote updates the complete current OHLCV bar', (t) => {
+    const items = [{
+      time: '2026-09-02', open: 100, high: 103, low: 98, close: 101, volume: 1000, amount: 100000
+    }];
+    const out = applyLiveQuoteToKline(items, {
+      price: 104, open: 99, high: 105, low: 97, volume: 1800, amount: 180000
+    }, '1d');
+    t.deepEqual(out[0], {
+      time: '2026-09-02', open: 99, high: 105, low: 97, close: 104, volume: 1800, amount: 180000
+    });
+    t.notStrictEqual(out, items, 'returns immutable replacement');
+  });
+
+  QUnit.test('weekly quote expands price range without corrupting aggregated volume', (t) => {
+    const items = [{ time: '2026-09-02', open: 100, high: 103, low: 98, close: 101, volume: 9000 }];
+    const out = applyLiveQuoteToKline(items, {
+      price: 97, high: 104, low: 96, volume: 1800
+    }, '1w');
+    t.equal(out[0].close, 97);
+    t.equal(out[0].high, 104);
+    t.equal(out[0].low, 96);
+    t.equal(out[0].volume, 9000, 'daily cumulative volume must not replace weekly aggregate');
+  });
+});
+
+QUnit.module('kline.applyLiveQuoteToIntraday', () => {
+  const firstTime = parseBeijingDateTimeToChartSeconds('2026-09-02 10:00');
+  const base = [{
+    time: firstTime,
+    open: 100,
+    high: 101,
+    low: 99,
+    close: 100,
+    volume: 100,
+    avgPrice: 100,
+    preClose: 100,
+    percent: 0
+  }];
+
+  QUnit.test('updates the current minute with price, volume, average, and percent', (t) => {
+    const now = new Date('2026-09-02T02:00:30.000Z');
+    const out = applyLiveQuoteToIntraday(base, {
+      price: 102,
+      prevClose: 100,
+      volume: 150,
+      amount: 1515000
+    }, now);
+    t.equal(out.length, 1);
+    t.equal(out[0].close, 102);
+    t.equal(out[0].high, 102);
+    t.equal(out[0].low, 99);
+    t.equal(out[0].volume, 150);
+    t.equal(out[0].avgPrice, 101);
+    t.ok(Math.abs(out[0].percent - 2) < 1e-9);
+  });
+
+  QUnit.test('appends a new point when the Beijing minute advances', (t) => {
+    const now = new Date('2026-09-02T02:01:10.000Z');
+    const out = applyLiveQuoteToIntraday(base, {
+      price: 101,
+      prevClose: 100,
+      volume: 140,
+      amount: 1414000
+    }, now);
+    t.equal(out.length, 2);
+    t.equal(out[1].time, parseBeijingDateTimeToChartSeconds('2026-09-02 10:01'));
+    t.equal(out[1].volume, 40, 'new minute gets the cumulative-volume delta');
+    t.equal(out[1].close, 101);
+  });
+
+  QUnit.test('does not append outside continuous trading', (t) => {
+    const lunch = new Date('2026-09-02T04:00:00.000Z');
+    t.strictEqual(applyLiveQuoteToIntraday(base, { price: 103 }, lunch), base);
   });
 });
