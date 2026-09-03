@@ -1,4 +1,4 @@
-import { parseFutureInput, PRODUCT_MAP } from '../../../server/futures/contractCatalog.js';
+import { parseFutureInput, PRODUCT_MAP } from './contractCatalog.js';
 
 export { parseFutureInput, PRODUCT_MAP };
 
@@ -19,8 +19,8 @@ export function toSinaFutureSymbol(input) {
 export function formatFutureDisplayName(instrumentOrSymbol) {
   if (!instrumentOrSymbol) return '';
   if (typeof instrumentOrSymbol === 'object') {
-    return instrumentOrSymbol.name || instrumentOrSymbol.symbol;
+    return instrumentOrSymbol.name || instrumentOrSymbol.symbol || '';
   }
   const parsed = parseFutureInput(instrumentOrSymbol);
-  return parsed ? parsed.name : instrumentOrSymbol;
+  return parsed ? parsed.name : String(instrumentOrSymbol);
 }

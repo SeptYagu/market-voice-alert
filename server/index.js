@@ -166,13 +166,17 @@ export async function handleCacheRequest(req, res) {
         return;
       }
       const period = url.searchParams.get('period') || 'day';
-      const result = await getCachedFuturesKline(id, period);
-      jsonResponse(res, 200, okEnvelope({
-        source: 'server-futures-kline',
-        stale: false,
-        ttlMs: 10000,
-        data: result
-      }));
+      try {
+        const result = await getCachedFuturesKline(id, period);
+        jsonResponse(res, 200, okEnvelope({
+          source: 'server-futures-kline',
+          stale: false,
+          ttlMs: 10000,
+          data: result
+        }));
+      } catch (err) {
+        jsonResponse(res, 400, errorEnvelope(err.message));
+      }
       return;
     }
 

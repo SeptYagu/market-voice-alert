@@ -161,7 +161,14 @@ async function fetchFuturesDaily(inst) {
   throw new Error(`Failed to fetch futures daily kline for ${inst.symbol}`);
 }
 
+const VALID_PERIODS = new Set(['day', '1d', 'daily', '1', '5', '15', '30', '60', '1m', '5m', '15m', '30m', '60m']);
+
 export async function getCachedFuturesKline(symbolOrId, period = 'day', opts = {}) {
+  const normPeriod = String(period || 'day').toLowerCase();
+  if (!VALID_PERIODS.has(normPeriod)) {
+    throw new Error(`Invalid futures kline period: ${period}`);
+  }
+
   const inst = typeof symbolOrId === 'object' && symbolOrId !== null
     ? symbolOrId
     : parseFutureInput(symbolOrId);
@@ -169,9 +176,9 @@ export async function getCachedFuturesKline(symbolOrId, period = 'day', opts = {
   if (!inst) return null;
 
   const session = getFuturesSession(inst);
-  const isIntradayPeriod = ['1', '5', '15', '30', '60', '1m', '5m', '15m', '30m', '60m'].includes(String(period));
+  const isIntradayPeriod = ['1', '5', '15', '30', '60', '1m', '5m', '15m', '30m', '60m'].includes(normPeriod);
   const ttlMs = session.isTrading ? (isIntradayPeriod ? INTRADAY_TTL_MS : KLINE_LIVE_TTL_MS) : KLINE_HISTORICAL_TTL_MS;
-  const cacheKey = ['futures', 'kline', `${inst.symbol}-${period}.json`];
+  const cacheKey = ['futures', 'kline', `${inst.symbol}-${normPeriod}.json`];
 
   const result = await getOrRefresh(
     cacheKey,

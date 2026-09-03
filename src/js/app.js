@@ -249,10 +249,10 @@ export function parseBatchInput(input) {
 
 function normalizeFuture(input) {
   if (!input || typeof input !== 'string') return null;
-  const raw = input.trim().toLowerCase();
-  if (/^nf_?[a-z0-9]+$/.test(raw)) return raw;
   const inst = parseFutureInput(input);
   if (inst) return inst.symbol.toLowerCase();
+  const raw = input.trim().toLowerCase();
+  if (/^nf\d{4}$/.test(raw)) return raw;
   return null;
 }
 
@@ -1509,6 +1509,7 @@ function renderTable() {
   }
 
   const table = el('table', { class: 'watch-table' });
+  const hasFuturesInList = (state.watchList || []).some(isFutureCode);
   const thead = el(
     'thead',
     {},
@@ -1522,8 +1523,8 @@ function renderTable() {
       el('th', { class: 'num' }, '现价'),
       el('th', { class: 'num' }, '涨跌幅'),
       el('th', { class: 'num' }, '开盘(涨幅)'),
-      el('th', { class: 'num' }, '量比'),
-      el('th', { class: 'num' }, '成交额'),
+      el('th', { class: 'num', title: hasFuturesInList ? '股票显示量比，期货显示成交量' : '量比' }, hasFuturesInList ? '量比 / 量' : '量比'),
+      el('th', { class: 'num', title: hasFuturesInList ? '股票显示成交额，期货显示持仓量' : '成交额' }, hasFuturesInList ? '成交额 / 持仓' : '成交额'),
       el('th', { class: 'col-op' }, '操作')
     )
   );
@@ -1569,6 +1570,7 @@ function renderRow(code, isActive) {
   });
   const isFuture = q.type === 'future' || isFutureCode(code);
   const displayCode = isFuture ? code.toUpperCase() : code;
+  const priceDecimals = isFuture && q.priceTick && q.priceTick < 0.01 ? 3 : 2;
   return el(
     'tr',
     {
@@ -1581,11 +1583,11 @@ function renderRow(code, isActive) {
     el('td', { class: 'col-sub' }, subCheckbox),
     el('td', { class: 'code' }, displayCode),
     el('td', { class: 'name' }, q.name || '...'),
-    el('td', { class: `num ${dir}` }, formatNumber(q.price)),
+    el('td', { class: `num ${dir}` }, formatNumber(q.price, priceDecimals)),
     el('td', { class: `num ${dir}` }, formatPercent(q.changePercent)),
     el('td', { class: 'num' }, formatPriceWithPercent(q.open, q.openChangePercent)),
-    el('td', { class: 'num' }, isFuture ? (q.volume ? `${Math.round(q.volume).toLocaleString('en-US')}` : '-') : formatNumber(q.volumeRatio)),
-    el('td', { class: 'num' }, isFuture ? (q.openInterest ? `持仓 ${Math.round(q.openInterest).toLocaleString('en-US')}` : '-') : formatAmount(q.amount)),
+    el('td', { class: 'num', title: isFuture ? '成交量' : '量比' }, isFuture ? (q.volume ? `${Math.round(q.volume).toLocaleString('en-US')}` : '-') : formatNumber(q.volumeRatio)),
+    el('td', { class: 'num', title: isFuture ? '持仓量' : '成交额' }, isFuture ? (q.openInterest ? `持仓 ${Math.round(q.openInterest).toLocaleString('en-US')}` : '-') : formatAmount(q.amount)),
     el(
       'td',
       { class: 'col-op' },

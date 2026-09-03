@@ -1,7 +1,7 @@
 import { parseFutureInput } from '../server/futures/contractCatalog.js';
 import { getFuturesSession } from '../server/futures/futuresSessionService.js';
 import { calculateFuturesChange, formatFuturesQuote } from '../src/js/futures/futuresPresenter.js';
-import { isFutureCode, normalizeFutureCode, toSinaFutureSymbol } from '../src/js/futures/instrument.js';
+import { isFutureCode, normalizeFutureCode, toSinaFutureSymbol, formatFutureDisplayName } from '../src/js/futures/instrument.js';
 
 QUnit.module('futures.contractCatalog & instrument', () => {
   QUnit.test('parses specific commodity contracts', (t) => {
@@ -42,6 +42,24 @@ QUnit.module('futures.contractCatalog & instrument', () => {
     const inst = parseFutureInput('nf_rb2510');
     t.ok(inst);
     t.equal(inst.symbol, 'RB2510');
+
+    const instNoUnderscore = parseFutureInput('nfrb2410');
+    t.ok(instNoUnderscore, 'parsed nfrb2410 without underscore');
+    t.equal(instNoUnderscore.symbol, 'RB2410');
+  });
+
+  QUnit.test('parses Chinese aliases with ambiguity protection', (t) => {
+    // Exact or multi-char prefix matches
+    t.equal(parseFutureInput('螺纹主连')?.symbol, 'RB0');
+    t.equal(parseFutureInput('白糖主力')?.symbol, 'SR0');
+    t.equal(parseFutureInput('豆粕主力')?.symbol, 'M0');
+    t.equal(parseFutureInput('沪铜主力')?.symbol, 'CU0');
+
+    // Ambiguous or bare prefixes must return null
+    t.equal(parseFutureInput('主连'), null, '"主连" alone must not match');
+    t.equal(parseFutureInput('主力'), null, '"主力" alone must not match');
+    t.equal(parseFutureInput('豆主力'), null, 'Single-char "豆" is ambiguous (A, B, M, Y)');
+    t.equal(parseFutureInput('沪主力'), null, 'Single-char "沪" is ambiguous (CU, AL, ZN, AU, etc.)');
   });
 
   QUnit.test('normalizes 3-digit CZCE contracts (e.g. sr501 -> sr2501)', (t) => {
@@ -52,15 +70,20 @@ QUnit.module('futures.contractCatalog & instrument', () => {
 
   QUnit.test('returns null for invalid inputs', (t) => {
     t.equal(parseFutureInput(''), null);
-    t.equal(parseFutureInput('not-a-contract'), null);
+    t.equal(parseFutureInput(null), null);
     t.equal(parseFutureInput('600519'), null);
+    t.equal(parseFutureInput('sh600519'), null);
+    t.equal(parseFutureInput('nf_invalid123'), null);
   });
 
-  QUnit.test('instrument helpers', (t) => {
+  QUnit.test('instrument helpers and formatFutureDisplayName', (t) => {
     t.equal(isFutureCode('rb2510'), true);
     t.equal(isFutureCode('600519'), false);
     t.equal(normalizeFutureCode('rb2510'), 'RB2510');
     t.equal(toSinaFutureSymbol('rb2510'), 'nf_RB2510');
+    t.equal(formatFutureDisplayName({}), '', 'empty object yields empty string');
+    t.equal(formatFutureDisplayName(null), '', 'null yields empty string');
+    t.equal(formatFutureDisplayName('rb2510'), '螺纹钢2510');
   });
 });
 
