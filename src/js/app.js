@@ -32,15 +32,16 @@ import {
   PERIOD_LABELS,
   DEFAULT_PERIOD,
   isValidPeriod,
-  calcMA,
-  formatVolumeBars,
-  formatCandleColors,
-  applyLiveTickToKline,
-  applyLiveQuoteToKline,
-  applyLiveQuoteToIntraday,
   getLastKlineDate
 } from './kline.js';
-import { createKlineChart, createIntradayChart, MA_COLORS } from './chart.js';
+import {
+  ChartRowManager,
+  createChartState,
+  rememberRange,
+  restoreRangeOrFit,
+  getPrevCloseForDate,
+  applyKlineDataToChart
+} from './controllers/chartRowController.js';
 import {
   speak as ttsSpeak,
   cancel as ttsCancel,
@@ -350,6 +351,7 @@ const state = {
   voiceScheduleTimer: null,
   voiceLastSession: null,
   voicePausedBySchedule: false,
+  tradingDates: [],
   limitUp: {
     items: [],
     groups: [],
@@ -400,15 +402,55 @@ const state = {
 
 let limitUpRootEl = null;
 let abortController = null;
-const chartInstanceMap = new Map();
-const limitUpChartCtlMap = new Map();  // code → chart ctl (Phase 8: 多 chart)
-const intradayChartCtlMap = new Map();
-const limitUpIntradayChartCtlMap = new Map();
-const momentumChartCtlMap = new Map();
-const MA_PERIODS = [5, 10, 20, 60];
+
 const MOMENTUM_THRESHOLD_PCT = 45;
 const MOMENTUM_LOOKBACK_TRADING_DAYS = 10;
 const MOMENTUM_SCAN_CONCURRENCY = 8;
+
+export const monitorChartMgr = new ChartRowManager({
+  prefix: '',
+  hasIntraday: true,
+  klineHeight: 360,
+  intradayHeight: 360,
+  getTheme: getCurrentTheme,
+  getChartInstances: () => state.chartInstances,
+  isExpanded: (code) => state.expandedCodes.has(code),
+  resolveTradeDate: (_code, data) => getLastKlineDate(data.items),
+  isLatestKlineDate: (inst, date) => isLatestKlineDate(inst, date),
+  onStateChange: () => renderData()
+});
+export const chartInstanceMap = monitorChartMgr.klineCtlMap;
+export const intradayChartCtlMap = monitorChartMgr.intradayCtlMap;
+
+export const limitUpChartMgr = new ChartRowManager({
+  prefix: 'lu-',
+  hasIntraday: true,
+  klineHeight: 360,
+  intradayHeight: 360,
+  getTheme: getCurrentTheme,
+  getChartInstances: () => state.limitUp.chartInstances,
+  isExpanded: (code) => state.limitUp.expandedCodes.has(code),
+  resolveTradeDate: (_code, data) => {
+    const latestTradeDate = (state.tradingDates || state.limitUp.tradingDates || []).at(-1);
+    const isHistorical = state.limitUp.selectedDate && latestTradeDate && state.limitUp.selectedDate < latestTradeDate;
+    return isHistorical ? state.limitUp.selectedDate : getLastKlineDate(data.items);
+  },
+  isLatestKlineDate: (inst, date) => isLatestKlineDate(inst, date),
+  onStateChange: () => rerenderLimitUpPage()
+});
+export const limitUpChartCtlMap = limitUpChartMgr.klineCtlMap;
+export const limitUpIntradayChartCtlMap = limitUpChartMgr.intradayCtlMap;
+
+export const momentumChartMgr = new ChartRowManager({
+  prefix: 'momentum-',
+  hasIntraday: false,
+  klineHeight: 320,
+  getTheme: getCurrentTheme,
+  getChartInstances: () => state.momentum.chartInstances,
+  isExpanded: (code) => state.momentum.expandedCodes.has(code),
+  onStateChange: () => renderMomentumSection()
+});
+export const momentumChartCtlMap = momentumChartMgr.klineCtlMap;
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -433,36 +475,6 @@ function el(tag, attrs = {}, ...children) {
     node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
   }
   return node;
-}
-
-function createChartState(period = DEFAULT_PERIOD) {
-  return {
-    ctl: null,
-    period,
-    klineData: null,
-    loading: true,
-    error: null,
-    abort: null,
-    selectedTradeDate: '',
-    intradayData: null,
-    intradayLoading: false,
-    intradayError: null,
-    intradayAbort: null,
-    intradayRefreshing: false,
-    intradayLastFetchAt: 0
-  };
-}
-
-function rememberRange(inst, ctl, field = '_visibleRange') {
-  if (!inst || !ctl || typeof ctl.getVisibleRange !== 'function') return;
-  const range = ctl.getVisibleRange();
-  if (range) inst[field] = range;
-}
-
-function restoreRangeOrFit(ctl, range) {
-  if (!ctl) return;
-  if (range && typeof ctl.setVisibleRange === 'function' && ctl.setVisibleRange(range)) return;
-  if (typeof ctl.fitContent === 'function') ctl.fitContent();
 }
 
 export function renderMonitorPage(root) {
@@ -1402,17 +1414,13 @@ function openMomentumChart(code) {
   state.momentum.expandedCodes.add(code);
   state.momentum.chartInstances.set(code, createChartState(DEFAULT_PERIOD));
   renderMomentumSection();
-  loadMomentumKline(code);
+  momentumChartMgr.loadKline(code);
 }
 
 function closeMomentumChart(code) {
   if (!code || !state.momentum.expandedCodes.has(code)) return;
   state.momentum.expandedCodes.delete(code);
-  const ctl = momentumChartCtlMap.get(code);
-  if (ctl) {
-    try { ctl.destroy(); } catch { /* ignore */ }
-    momentumChartCtlMap.delete(code);
-  }
+  momentumChartMgr.destroyCharts(code);
   const inst = state.momentum.chartInstances.get(code);
   if (inst && inst.abort) {
     try { inst.abort.abort(); } catch { /* ignore */ }
@@ -1422,100 +1430,15 @@ function closeMomentumChart(code) {
 }
 
 function handleMomentumKlinePeriodChange(code, period) {
-  if (!code || !isValidPeriod(period)) return;
-  const inst = state.momentum.chartInstances.get(code);
-  if (!inst || inst.period === period) return;
-  inst.period = period;
-  inst.klineData = null;
-  inst.loading = true;
-  inst.error = null;
-  inst._visibleRange = null;
-  if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
-  renderMomentumSection();
-  loadMomentumKline(code);
+  momentumChartMgr.handlePeriodChange(period, code);
 }
 
 function handleMomentumForceReloadChart(code) {
-  const inst = state.momentum.chartInstances.get(code);
-  if (!inst) return;
-  inst.klineData = null;
-  inst.loading = true;
-  inst.error = null;
-  inst._visibleRange = null;
-  if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
-  renderMomentumSection();
-  loadMomentumKline(code);
-}
-
-function updateMomentumChartStatusForCode(code) {
-  const inst = state.momentum.chartInstances.get(code);
-  const el2 = document.getElementById(`momentum-chart-status-${code}`);
-  if (!inst || !el2) return;
-  const parts = [];
-  if (inst.loading) parts.push('图表加载中...');
-  if (inst.error) parts.push('错误: ' + inst.error);
-  if (inst.klineData && !inst.loading && !inst.error) {
-    parts.push(`${PERIOD_LABELS[inst.period]} · ${inst.klineData.items.length} 根`);
-  }
-  el2.textContent = parts.join(' · ');
-  el2.className = 'chart-status' + (inst.error ? ' has-error' : '');
+  momentumChartMgr.loadKline(code, { force: true });
 }
 
 function mountMomentumChart(code) {
-  if (momentumChartCtlMap.has(code)) return;
-  const host = document.getElementById(`momentum-chart-host-${code}`);
-  if (!host) return;
-  const inst = state.momentum.chartInstances.get(code);
-  try {
-    const ctl = createKlineChart(host, { theme: getCurrentTheme(), height: 320, period: inst ? inst.period : DEFAULT_PERIOD });
-    momentumChartCtlMap.set(code, ctl);
-    if (inst && inst.klineData) applyMomentumKlineToChart(code);
-  } catch (e) {
-    if (inst) inst.error = e.message || String(e);
-  }
-}
-
-function applyMomentumKlineToChart(code) {
-  const ctl = momentumChartCtlMap.get(code);
-  const inst = state.momentum.chartInstances.get(code);
-  if (!ctl || !inst || !inst.klineData) return;
-  if (typeof ctl.setPeriod === 'function') ctl.setPeriod(inst.period);
-  const candles = formatCandleColors(inst.klineData.items, inst.klineData.code, inst.klineData.name);
-  ctl.setKline(candles);
-  ctl.setVolume(formatVolumeBars(inst.klineData.items));
-  ctl.clearMA();
-  for (let i = 0; i < MA_PERIODS.length; i++) {
-    const n = MA_PERIODS[i];
-    const series = calcMA(inst.klineData.items, n);
-    if (series.length) ctl.setMA(n, series, MA_COLORS[i] || '#888');
-  }
-  restoreRangeOrFit(ctl, inst._visibleRange);
-  updateMomentumChartStatusForCode(code);
-}
-
-async function loadMomentumKline(code) {
-  const inst = state.momentum.chartInstances.get(code);
-  if (!inst) return;
-  if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
-  inst.abort = new AbortController();
-  inst.loading = true;
-  inst.error = null;
-  updateMomentumChartStatusForCode(code);
-  try {
-    const data = await fetchKline(code, { period: inst.period, signal: inst.abort.signal, sharedCache: true });
-    if (!data) throw new Error('未能获取 K 线数据');
-    if (!data.items.length) throw new Error('K 线数据为空');
-    if (!state.momentum.expandedCodes.has(code)) return;
-    inst.klineData = data;
-    inst.loading = false;
-    applyMomentumKlineToChart(code);
-  } catch (e) {
-    if (e && e.name !== 'AbortError') inst.error = e.message || String(e);
-    inst.loading = false;
-    updateMomentumChartStatusForCode(code);
-  } finally {
-    state.momentum.chartInstances.set(code, inst);
-  }
+  momentumChartMgr.mountCharts(code);
 }
 
 function buildWatchHeaderCheckbox() {
@@ -1794,16 +1717,6 @@ function updateChartStatusForCode(code, statusEl) {
   el2.className = 'chart-status' + (inst.error ? ' has-error' : '');
 }
 
-function getPrevCloseForDate(items, date) {
-  if (!Array.isArray(items) || !date) return null;
-  for (let i = 0; i < items.length; i++) {
-    if (chartTimeToDate(items[i] && items[i].time) !== date) continue;
-    const prev = i > 0 ? Number(items[i - 1].close) : NaN;
-    return Number.isFinite(prev) && prev > 0 ? prev : null;
-  }
-  return null;
-}
-
 function isLatestKlineDate(inst, date) {
   if (!date) return false;
   if (isLimitUpDateToday(date)) return true;
@@ -2044,6 +1957,7 @@ async function ensureLimitUpTradingDate(
     if (requestSeq !== null && requestSeq !== state.limitUp.requestSeq) {
       return resolved;
     }
+    state.tradingDates = dates;
     state.limitUp.tradingDates = dates;
     state.limitUp.selectedDate = resolved;
     state.limitUp.latestTradingDate = adj.latest;
@@ -2534,225 +2448,20 @@ function _handleLimitUpForceReloadChart(code) {
 }
 
 function _destroyLimitUpChart(code) {
-  const ctl = limitUpChartCtlMap.get(code);
-  if (ctl) {
-    try { ctl.destroy(); } catch { /* ignore */ }
-    limitUpChartCtlMap.delete(code);
-  }
-  const intradayCtl = limitUpIntradayChartCtlMap.get(code);
-  if (intradayCtl) {
-    try { intradayCtl.destroy(); } catch { /* ignore */ }
-    limitUpIntradayChartCtlMap.delete(code);
-  }
+  limitUpChartMgr.destroyCharts(code);
 }
 
 function mountLimitUpChart(code) {
-  mountLimitUpIntradayChart(code);
-  if (limitUpChartCtlMap.has(code)) return;
-  const host = document.getElementById(`lu-chart-host-${code}`);
-  if (!host) return;
-  try {
-    const instForPeriod = state.limitUp.chartInstances.get(code);
-    const ctl = createKlineChart(host, { theme: getCurrentTheme(), height: 360, period: instForPeriod ? instForPeriod.period : DEFAULT_PERIOD });
-    ctl.onClick((time) => handleLimitUpKlineBarClick(code, time));
-    limitUpChartCtlMap.set(code, ctl);
-    const inst = state.limitUp.chartInstances.get(code);
-    if (inst && inst.klineData) {
-      applyLimitUpKlineToChart(code, inst.klineData);
-    }
-  } catch (err) {
-    const inst = state.limitUp.chartInstances.get(code);
-    if (inst) inst.error = err.message || String(err);
-  }
+  limitUpChartMgr.mountCharts(code);
 }
 
-function applyLimitUpKlineToChart(code, data) {
-  if (!code || !data) return;
-  let ctl = limitUpChartCtlMap.get(code);
-  if (!ctl) {
-    const host = document.getElementById(`lu-chart-host-${code}`);
-    if (!host) return;
-    const instForPeriod = state.limitUp.chartInstances.get(code);
-    ctl = createKlineChart(host, { theme: getCurrentTheme(), height: 360, period: instForPeriod ? instForPeriod.period : DEFAULT_PERIOD });
-    ctl.onClick((time) => handleLimitUpKlineBarClick(code, time));
-    limitUpChartCtlMap.set(code, ctl);
-  }
-  const inst = state.limitUp.chartInstances.get(code);
-  if (inst && typeof ctl.setPeriod === 'function') ctl.setPeriod(inst.period);
-  const candles = formatCandleColors(data.items, data.code, data.name);
-  ctl.setKline(candles);
-  ctl.setVolume(formatVolumeBars(data.items));
-  ctl.clearMA();
-  for (let i = 0; i < MA_PERIODS.length; i++) {
-    const n = MA_PERIODS[i];
-    const series = calcMA(data.items, n);
-    if (series.length) ctl.setMA(n, series, MA_COLORS[i] || '#888');
-  }
-  restoreRangeOrFit(ctl, inst && inst._visibleRange);
-  updateLimitUpChartStatusForCode(code);
-}
-
-function updateLimitUpChartStatusForCode(code) {
-  const inst = state.limitUp.chartInstances.get(code);
-  if (!inst) return;
-  const el2 = document.getElementById(`lu-chart-status-${code}`);
-  if (!el2) return;
-  const parts = [];
-  if (inst.loading) parts.push('图表加载中...');
-  if (inst.error) parts.push(`错误: ${inst.error}`);
-  if (inst.klineData && !inst.loading && !inst.error) {
-    parts.push(`${PERIOD_LABELS[inst.period] || inst.period} · ${inst.klineData.items.length} 根`);
-  }
-  el2.textContent = parts.join(' · ');
-  el2.className = 'chart-status' + (inst.error ? ' has-error' : '');
-}
-
-function mountLimitUpIntradayChart(code) {
-  if (limitUpIntradayChartCtlMap.has(code)) return;
-  const host = document.getElementById(`lu-intraday-chart-host-${code}`);
-  if (!host) return;
-  try {
-    const ctl = createIntradayChart(host, { theme: getCurrentTheme(), height: 360 });
-    limitUpIntradayChartCtlMap.set(code, ctl);
-    applyLimitUpIntradayToChart(code);
-  } catch (e) {
-    const inst = state.limitUp.chartInstances.get(code);
-    if (inst) inst.intradayError = e.message || String(e);
-  }
-}
-
-function updateLimitUpIntradayStatusForCode(code) {
-  const inst = state.limitUp.chartInstances.get(code);
-  if (!inst) return;
-  const el2 = document.getElementById(`lu-intraday-status-${code}`);
-  if (!el2) return;
-  el2.textContent = intradayStatusParts(inst).join(' · ');
-  el2.className = 'chart-status' + (inst.intradayError ? ' has-error' : '');
-}
-
-function applyLimitUpIntradayToChart(code) {
-  const ctl = limitUpIntradayChartCtlMap.get(code);
-  const inst = state.limitUp.chartInstances.get(code);
-  if (!ctl || !inst || !inst.intradayData) return;
-  ctl.setData(inst.intradayData.items);
-  restoreRangeOrFit(ctl, inst && inst._intradayVisibleRange);
-  updateLimitUpIntradayStatusForCode(code);
-}
-
-async function loadLimitUpIntraday(code, date) {
-  const inst = state.limitUp.chartInstances.get(code);
-  if (!inst || !date) return;
-  if (inst.intradayAbort) try { inst.intradayAbort.abort(); } catch { /* ignore */ }
-  inst.selectedTradeDate = date;
-  inst.intradayAbort = new AbortController();
-  inst.intradayLoading = true;
-  inst.intradayError = null;
-  updateLimitUpIntradayStatusForCode(code);
-  try {
-    const data = await fetchIntraday(code, {
-      date,
-      name: inst.klineData ? inst.klineData.name : code,
-      prevClose: getPrevCloseForDate(inst.klineData && inst.klineData.items, date),
-      allowLatestTickSource: isLatestKlineDate(inst, date),
-      sharedCache: true,
-      signal: inst.intradayAbort.signal
-    });
-    if (!data) throw new Error('未能获取分时数据');
-    if (!state.limitUp.expandedCodes.has(code)) return;
-    inst.intradayData = data;
-    inst.intradayLastFetchAt = Date.now();
-    inst.intradayLoading = false;
-    applyLimitUpIntradayToChart(code);
-  } catch (e) {
-    if (e.name !== 'AbortError') {
-      if (!state.limitUp.expandedCodes.has(code)) return;
-      inst.intradayError = e.message || String(e);
-    }
-    if (!state.limitUp.expandedCodes.has(code)) return;
-    inst.intradayLoading = false;
-    updateLimitUpIntradayStatusForCode(code);
-  } finally {
-    if (state.limitUp.expandedCodes.has(code)) {
-      state.limitUp.chartInstances.set(code, inst);
-      updateLimitUpIntradayStatusForCode(code);
-    }
-  }
-}
-
-function handleLimitUpKlineBarClick(code, time) {
-  const inst = state.limitUp.chartInstances.get(code);
-  if (!inst) return;
-  const date = chartTimeToDate(time);
-  if (!date || inst.selectedTradeDate === date) return;
-  loadLimitUpIntraday(code, date);
-}
 
 function applyLimitUpLiveTickToChart(code, quoteOrPrice) {
-  const ctl = limitUpChartCtlMap.get(code);
-  const inst = state.limitUp.chartInstances.get(code);
-  if (!ctl || !inst || !inst.klineData) return;
-  const livePrice = Number(
-    quoteOrPrice && typeof quoteOrPrice === 'object' ? quoteOrPrice.price : quoteOrPrice
-  );
-  if (!Number.isFinite(livePrice) || livePrice <= 0) return;
-  const updated = quoteOrPrice && typeof quoteOrPrice === 'object'
-    ? applyLiveQuoteToKline(inst.klineData.items, quoteOrPrice, inst.period)
-    : applyLiveTickToKline(inst.klineData.items, livePrice, inst.period);
-  if (updated === inst.klineData.items) return;
-  inst.klineData = { ...inst.klineData, items: updated };
-  const last = updated[updated.length - 1];
-  const formatted = formatCandleColors([last], inst.klineData.code, inst.klineData.name)[0];
-  if (formatted) ctl.updateKline(formatted);
-  const volBar = formatVolumeBars([last])[0];
-  if (volBar) ctl.updateVolume(volBar);
-  for (let i = 0; i < MA_PERIODS.length; i++) {
-    const n = MA_PERIODS[i];
-    const maSeries = calcMA(updated, n);
-    if (maSeries.length) ctl.updateMA(n, maSeries[maSeries.length - 1]);
-  }
+  limitUpChartMgr.applyLiveTick(code, quoteOrPrice);
 }
 
-async function loadLimitUpKline(code) {
-  const inst = state.limitUp.chartInstances.get(code);
-  if (!inst) return;
-  if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
-  inst.abort = new AbortController();
-  inst.loading = true;
-  inst.error = null;
-  rerenderLimitUpPage();
-  try {
-    const data = await fetchKline(code, {
-      period: inst.period,
-      sharedCache: true,
-      signal: inst.abort.signal
-    });
-    if (!data) throw new Error('未能获取 K 线数据');
-    if (!data.items.length) throw new Error('K 线数据为空');
-    if (!state.limitUp.expandedCodes.has(code)) return;
-    inst.klineData = data;
-    if (!inst.selectedTradeDate) {
-      const latestTradeDate = (state.limitUp.tradingDates || []).at(-1);
-      const isHistorical = state.limitUp.selectedDate && latestTradeDate && state.limitUp.selectedDate < latestTradeDate;
-      inst.selectedTradeDate = isHistorical
-        ? state.limitUp.selectedDate
-        : getLastKlineDate(data.items);
-    }
-    inst.loading = false;
-    applyLimitUpKlineToChart(code, data);
-    loadLimitUpIntraday(code, inst.selectedTradeDate);
-  } catch (e) {
-    if (e && e.name !== 'AbortError') {
-      if (!state.limitUp.expandedCodes.has(code)) return;
-      inst.error = e.message || String(e);
-    }
-    if (!state.limitUp.expandedCodes.has(code)) return;
-    inst.loading = false;
-  } finally {
-    if (state.limitUp.expandedCodes.has(code)) {
-      state.limitUp.chartInstances.set(code, inst);
-      rerenderLimitUpPage();
-    }
-  }
+function loadLimitUpKline(code) {
+  limitUpChartMgr.loadKline(code);
 }
 
 function handleToggleSubscribe(code, checked) {
@@ -2993,21 +2702,22 @@ function persistSubscribed() {
 async function warmTradeCalendar() {
   try {
     const dates = await fetchTradeCalendar();
+    state.tradingDates = dates;
     state.limitUp.tradingDates = dates;
     refreshLimitUpDateMeta();
     return dates;
   } catch {
-    return state.limitUp.tradingDates || [];
+    return state.tradingDates || state.limitUp.tradingDates || [];
   }
 }
 
 function getVoiceSession() {
-  const dates = state.limitUp.tradingDates || [];
+  const dates = state.tradingDates || state.limitUp.tradingDates || [];
   return getMarketSession(new Date(), dates);
 }
 
 function getDataRefreshSession() {
-  const dates = state.limitUp.tradingDates || [];
+  const dates = state.tradingDates || state.limitUp.tradingDates || [];
   return getMarketSession(new Date(), dates);
 }
 
@@ -3190,29 +2900,15 @@ export function openChart(code) {
 }
 
 export function closeChart(code) {
-  if (!code) return;
-  if (!state.expandedCodes.has(code)) return;
+  if (!code || !state.expandedCodes.has(code)) return;
   state.expandedCodes.delete(code);
-  const ctl = chartInstanceMap.get(code);
-  if (ctl) {
-    try { ctl.destroy(); } catch { /* ignore */ }
-    chartInstanceMap.delete(code);
-  }
   const inst = state.chartInstances.get(code);
   if (inst) {
-    if (inst.abort) {
-      try { inst.abort.abort(); } catch { /* ignore */ }
-    }
-    if (inst.intradayAbort) {
-      try { inst.intradayAbort.abort(); } catch { /* ignore */ }
-    }
+    if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
+    if (inst.intradayAbort) try { inst.intradayAbort.abort(); } catch { /* ignore */ }
     state.chartInstances.delete(code);
   }
-  const intradayCtl = intradayChartCtlMap.get(code);
-  if (intradayCtl) {
-    try { intradayCtl.destroy(); } catch { /* ignore */ }
-    intradayChartCtlMap.delete(code);
-  }
+  monitorChartMgr.destroyCharts(code);
   renderData();
 }
 
@@ -3222,219 +2918,31 @@ export function closeAllCharts() {
 
 // Phase 8: 强制从网络重新拉取 (跳过 klineCache + 30s in-memory)
 export function handleForceReloadChart(code) {
-  if (!code) return;
-  const inst = state.chartInstances.get(code);
-  if (!inst) return;
-  inst.klineData = null;
-  inst.loading = true;
-  inst.error = null;
-  inst.intradayError = null;
-  inst._visibleRange = null;
-  inst._intradayVisibleRange = null;
-  if (inst.abort) {
-    try { inst.abort.abort(); } catch { /* ignore */ }
-  }
-  loadKlineForCode(code);
-  renderData();
+  monitorChartMgr.loadKline(code, { force: true });
 }
 
 export function handlePeriodChange(p, code) {
-  if (!isValidPeriod(p)) return;
-  const inst = state.chartInstances.get(code);
-  if (!inst) return;
-  if (inst.period === p) return;
-  inst.period = p;
-  inst.klineData = null;
-  inst.loading = true;
-  inst.error = null;
-  inst.intradayData = null;
-  inst.intradayError = null;
-  inst._visibleRange = null;
-  inst._intradayVisibleRange = null;
-  if (inst.abort) {
-    try { inst.abort.abort(); } catch { /* ignore */ }
-  }
-  loadKlineForCode(code);
-  renderData();
+  monitorChartMgr.handlePeriodChange(p, code);
 }
 
 export async function loadKlineForCode(code) {
-  const inst = state.chartInstances.get(code);
-  if (!inst) return;
-  if (inst.abort) {
-    try { inst.abort.abort(); } catch { /* ignore */ }
-  }
-  inst.abort = new AbortController();
-  inst.loading = true;
-  inst.error = null;
-  updateChartStatusForCode(code);
-  try {
-    const data = await fetchKline(code, {
-      period: inst.period,
-      sharedCache: true,
-      signal: inst.abort.signal
-    });
-    if (!data) throw new Error('未能获取 K 线数据');
-    if (!data.items.length) throw new Error('K 线数据为空');
-    if (!state.expandedCodes.has(code)) return;
-    inst.klineData = data;
-    if (!inst.selectedTradeDate) inst.selectedTradeDate = getLastKlineDate(data.items);
-    inst.loading = false;
-    applyKlineToChartForCode(code);
-    loadIntradayForCode(code, inst.selectedTradeDate);
-  } catch (e) {
-    if (e.name !== 'AbortError') {
-      if (!state.expandedCodes.has(code)) return;
-      inst.error = e.message || String(e);
-    }
-    if (!state.expandedCodes.has(code)) return;
-    inst.loading = false;
-    updateChartStatusForCode(code);
-  } finally {
-    if (state.expandedCodes.has(code)) {
-      state.chartInstances.set(code, inst);
-      updateIntradayStatusForCode(code);
-    }
-  }
-}
-
-function applyKlineToChartForCode(code) {
-  const ctl = chartInstanceMap.get(code);
-  const inst = state.chartInstances.get(code);
-  if (!ctl || !inst || !inst.klineData) return;
-  if (typeof ctl.setPeriod === 'function') ctl.setPeriod(inst.period);
-  const candles = formatCandleColors(inst.klineData.items, inst.klineData.code, inst.klineData.name);
-  ctl.setKline(candles);
-  ctl.setVolume(formatVolumeBars(inst.klineData.items));
-  ctl.clearMA();
-  for (let i = 0; i < MA_PERIODS.length; i++) {
-    const n = MA_PERIODS[i];
-    const series = calcMA(inst.klineData.items, n);
-    if (series.length) ctl.setMA(n, series, MA_COLORS[i] || '#888');
-  }
-  restoreRangeOrFit(ctl, inst._visibleRange);
-  updateChartStatusForCode(code);
-}
-
-function mountIntradayChartForCode(code) {
-  if (intradayChartCtlMap.has(code)) return;
-  const host = document.getElementById(`intraday-chart-host-${code}`);
-  if (!host) return;
-  try {
-    const ctl = createIntradayChart(host, { theme: getCurrentTheme(), height: 360 });
-    intradayChartCtlMap.set(code, ctl);
-    applyIntradayToChartForCode(code);
-  } catch (e) {
-    const inst = state.chartInstances.get(code);
-    if (inst) inst.intradayError = e.message || String(e);
-  }
-}
-
-function applyIntradayToChartForCode(code) {
-  const ctl = intradayChartCtlMap.get(code);
-  const inst = state.chartInstances.get(code);
-  if (!ctl || !inst || !inst.intradayData) return;
-  ctl.setData(inst.intradayData.items);
-  restoreRangeOrFit(ctl, inst._intradayVisibleRange);
-  updateIntradayStatusForCode(code);
-}
-
-async function loadIntradayForCode(code, date) {
-  const inst = state.chartInstances.get(code);
-  if (!inst || !date) return;
-  if (inst.intradayAbort) {
-    try { inst.intradayAbort.abort(); } catch { /* ignore */ }
-  }
-  inst.selectedTradeDate = date;
-  inst.intradayAbort = new AbortController();
-  inst.intradayLoading = true;
-  inst.intradayError = null;
-  updateIntradayStatusForCode(code);
-  try {
-    const data = await fetchIntraday(code, {
-      date,
-      name: inst.klineData ? inst.klineData.name : code,
-      prevClose: getPrevCloseForDate(inst.klineData && inst.klineData.items, date),
-      allowLatestTickSource: isLatestKlineDate(inst, date),
-      sharedCache: true,
-      signal: inst.intradayAbort.signal
-    });
-    if (!data) throw new Error('未能获取分时数据');
-    if (!state.expandedCodes.has(code)) return;
-    inst.intradayData = data;
-    inst.intradayLastFetchAt = Date.now();
-    inst.intradayLoading = false;
-    applyIntradayToChartForCode(code);
-  } catch (e) {
-    if (e.name !== 'AbortError') {
-      if (!state.expandedCodes.has(code)) return;
-      inst.intradayError = e.message || String(e);
-    }
-    if (!state.expandedCodes.has(code)) return;
-    inst.intradayLoading = false;
-    updateIntradayStatusForCode(code);
-  } finally {
-    if (state.expandedCodes.has(code)) {
-      state.chartInstances.set(code, inst);
-      updateIntradayStatusForCode(code);
-    }
-  }
-}
-
-function handleKlineBarClick(code, time) {
-  const inst = state.chartInstances.get(code);
-  if (!inst) return;
-  const date = chartTimeToDate(time);
-  if (!date || inst.selectedTradeDate === date) return;
-  loadIntradayForCode(code, date);
+  return monitorChartMgr.loadKline(code);
 }
 
 // Live-tick update: only mutates the LAST bar via series.update(bar), which
 // preserves the user's zoom/pan on the time scale. No setData, no fitContent.
 export function applyLiveTickToChartForCode(code, quoteOrPrice) {
-  const ctl = chartInstanceMap.get(code);
-  const inst = state.chartInstances.get(code);
-  if (!ctl || !inst || !inst.klineData) return;
-  const livePrice = Number(
-    quoteOrPrice && typeof quoteOrPrice === 'object' ? quoteOrPrice.price : quoteOrPrice
-  );
-  if (!Number.isFinite(livePrice) || livePrice <= 0) return;
-  const updated = quoteOrPrice && typeof quoteOrPrice === 'object'
-    ? applyLiveQuoteToKline(inst.klineData.items, quoteOrPrice, inst.period)
-    : applyLiveTickToKline(inst.klineData.items, livePrice, inst.period);
-  if (updated === inst.klineData.items) return;
-  inst.klineData = { ...inst.klineData, items: updated };
-  const last = updated[updated.length - 1];
-  const formatted = formatCandleColors([last], inst.klineData.code, inst.klineData.name)[0];
-  if (formatted) ctl.updateKline(formatted);
-  const volBar = formatVolumeBars([last])[0];
-  if (volBar) ctl.updateVolume(volBar);
-  for (let i = 0; i < MA_PERIODS.length; i++) {
-    const n = MA_PERIODS[i];
-    const maSeries = calcMA(updated, n);
-    if (maSeries.length) ctl.updateMA(n, maSeries[maSeries.length - 1]);
-  }
-  updateChartStatusForCode(code);
+  monitorChartMgr.applyLiveTick(code, quoteOrPrice);
 }
 
 export function applyLiveQuoteToIntradayForCode(code, quote, isLimitUp = false, now = new Date()) {
-  const instances = isLimitUp ? state.limitUp.chartInstances : state.chartInstances;
-  const controllers = isLimitUp ? limitUpIntradayChartCtlMap : intradayChartCtlMap;
-  const inst = instances.get(code);
-  const ctl = controllers.get(code);
-  if (!inst || !ctl || !inst.intradayData || inst.selectedTradeDate !== getBeijingDate(now)) return;
-  const updated = applyLiveQuoteToIntraday(inst.intradayData.items, quote, now);
-  if (updated === inst.intradayData.items) return;
-  inst.intradayData = { ...inst.intradayData, items: updated };
-  ctl.setData(updated);
-  if (isLimitUp) updateLimitUpIntradayStatusForCode(code);
-  else updateIntradayStatusForCode(code);
+  if (isLimitUp) return limitUpChartMgr.applyLiveQuoteToIntraday(code, quote, now);
+  return monitorChartMgr.applyLiveQuoteToIntraday(code, quote, now);
 }
 
 async function refreshLiveIntradayForCode(code, isLimitUp = false) {
-  const instances = isLimitUp ? state.limitUp.chartInstances : state.chartInstances;
-  const expandedCodes = isLimitUp ? state.limitUp.expandedCodes : state.expandedCodes;
-  const inst = instances.get(code);
+  const mgr = isLimitUp ? limitUpChartMgr : monitorChartMgr;
+  const inst = mgr.getInst(code);
   if (
     !inst ||
     inst.intradayRefreshing ||
@@ -3450,11 +2958,15 @@ async function refreshLiveIntradayForCode(code, isLimitUp = false) {
       allowLatestTickSource: true,
       sharedCache: true
     });
-    if (!data || !expandedCodes.has(code)) return;
+    if (!data || !mgr.isExpanded(code)) return;
     inst.intradayData = data;
     inst.intradayLastFetchAt = Date.now();
-    if (isLimitUp) applyLimitUpIntradayToChart(code);
-    else applyIntradayToChartForCode(code);
+    const intradayCtl = mgr.intradayCtlMap.get(code);
+    if (intradayCtl) {
+      intradayCtl.setData(data.items);
+      restoreRangeOrFit(intradayCtl, inst._intradayVisibleRange);
+      mgr.updateIntradayStatus(code);
+    }
   } catch (e) {
     // Keep the latest live-quote point visible when a background backfill fails.
     if (console && console.warn) console.warn('intraday background refresh failed for', code, e);
@@ -3501,25 +3013,7 @@ export function updateChartLastTickMulti() {
 // Mount a chart instance for a code if its DOM host exists and no instance
 // has been mounted yet. Called from renderTable() after the table is appended.
 export function mountChartForCode(code) {
-  const host = document.getElementById(`chart-host-${code}`);
-  mountIntradayChartForCode(code);
-  if (!host) return;
-  if (chartInstanceMap.has(code)) return;
-  let ctl;
-  const instForPeriod = state.chartInstances.get(code);
-  try {
-    ctl = createKlineChart(host, { theme: getCurrentTheme(), height: 360, period: instForPeriod ? instForPeriod.period : DEFAULT_PERIOD });
-    ctl.onClick((time) => handleKlineBarClick(code, time));
-  } catch (e) {
-    const inst = state.chartInstances.get(code);
-    if (inst) inst.error = e.message || String(e);
-    return;
-  }
-  chartInstanceMap.set(code, ctl);
-  const inst = state.chartInstances.get(code);
-  if (inst && inst.klineData) {
-    applyKlineToChartForCode(code);
-  }
+  monitorChartMgr.mountCharts(code);
 }
 
 // Test helper: inject a fake chart ctl into the per-code map. Pass null to
@@ -3730,7 +3224,7 @@ function applyDataRefreshSchedule() {
   const prevMonitorPaused = state.autoRefreshPausedBySchedule;
   const prevLimitUpPaused = state.limitUp.autoRefreshPausedBySchedule;
 
-  if (state.autoRefreshEnabled) {
+  if (state.autoRefreshEnabled && !limitUpRootEl) {
     if (!allowed) {
       stopMonitorTimer();
       state.autoRefreshPausedBySchedule = true;
@@ -3744,23 +3238,23 @@ function applyDataRefreshSchedule() {
     }
   } else {
     stopMonitorTimer();
-    state.autoRefreshPausedBySchedule = false;
+    if (!limitUpRootEl) state.autoRefreshPausedBySchedule = false;
   }
 
-  if (state.limitUp.autoRefreshEnabled) {
+  if (state.limitUp.autoRefreshEnabled && limitUpRootEl) {
     if (!allowed) {
       stopLimitUpTimer({ abort: false });
       state.limitUp.autoRefreshPausedBySchedule = true;
     } else {
       const wasPaused = state.limitUp.autoRefreshPausedBySchedule;
       state.limitUp.autoRefreshPausedBySchedule = false;
-      if (limitUpRootEl && !state.limitUp.timer) {
+      if (!state.limitUp.timer) {
         startLimitUpTimer({ immediate: wasPaused });
       }
     }
   } else {
     stopLimitUpTimer({ abort: false });
-    state.limitUp.autoRefreshPausedBySchedule = false;
+    if (limitUpRootEl) state.limitUp.autoRefreshPausedBySchedule = false;
   }
 
   if (prevMonitorPaused !== state.autoRefreshPausedBySchedule) {
@@ -3781,18 +3275,17 @@ function startDataRefreshScheduleChecker() {
 }
 
 function _onKlineUpdated(code, period, data) {
-  // Phase 8: SWR revalidate 之后 同步更新展开的 chart
-  // 监控页
-  const monInst = state.chartInstances.get(code);
-  if (monInst && monInst.klineData && monInst.period === period) {
-    monInst.klineData = data;
-    applyKlineToChartForCode(code);
-  }
-  // 涨停页
-  const luInst = state.limitUp.chartInstances.get(code);
-  if (luInst && luInst.klineData && luInst.period === period) {
-    luInst.klineData = data;
-    applyLimitUpKlineToChart(code, data);
+  // Phase 8: SWR revalidate 之后 同步更新展开的 chart (涵盖监控、涨停、10日强势股)
+  for (const mgr of [monitorChartMgr, limitUpChartMgr, momentumChartMgr]) {
+    const inst = mgr.getInst(code);
+    if (inst && inst.klineData && inst.period === period && mgr.isExpanded(code)) {
+      inst.klineData = data;
+      const ctl = mgr.klineCtlMap.get(code);
+      if (ctl) {
+        applyKlineDataToChart(ctl, inst, data);
+        mgr.updateKlineStatus(code);
+      }
+    }
   }
 }
 
@@ -3832,8 +3325,11 @@ export function startApp(root) {
         // fetch's finally-block rerender is a no-op.
         limitUpRootEl = null;
         renderMonitorPage(r);
+        applyDataRefreshSchedule();
       },
       '#/limit-up': (r) => {
+        stopMonitorTimer();
+        closeAllCharts();
         limitUpRootEl = r;
         renderLimitUpPage(r, state.limitUp, {
           navigateTo: (path) => navigate(path),
@@ -3856,7 +3352,7 @@ export function startApp(root) {
           reloadKline: _handleLimitUpForceReloadChart
         });
         limitUpFetch();
-        startLimitUpTimer({ immediate: false });
+        applyDataRefreshSchedule();
       }
     },
     '#/',
