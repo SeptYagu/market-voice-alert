@@ -302,16 +302,72 @@ QUnit.module('storage.klineCache', (hooks) => {
 
   QUnit.test('isKlineCacheStale returns false for fresh entry (closed market)', (t) => {
     klineCacheSet('sh600519', '1d', makeKline('sh600519', '1d'));
-    // Set entry fetched at 2h ago
-    const cacheRaw = getRaw('kline-cache-v1');
-    const obj = JSON.parse(cacheRaw);
-    const key = 'sh600519|1d';
-    obj.entries[key].fetchedAt = Date.now() - 2 * 60 * 60 * 1000;
-    setRaw('kline-cache-v1', JSON.stringify(obj));
-    // Stale check uses real market state; in test env (jsdom) the date is real now.
-    // We just verify the function returns a boolean (true or false), not throw.
     const stale = isKlineCacheStale('sh600519', '1d');
     t.strictEqual(typeof stale, 'boolean');
+  });
+
+  QUnit.test('isKlineCacheStale accurately handles settlement nodes, trading hours, and weekends', (t) => {
+    klineCacheSet('sh600519', '1d', makeKline('sh600519', '1d'));
+    klineCacheSet('sh600519', '1m', makeKline('sh600519', '1m'));
+
+    const wed1000 = Date.UTC(2026, 8, 2, 2, 0, 0);   // Wed 10:00 BJ (trading)
+    const wed1005 = Date.UTC(2026, 8, 2, 2, 5, 0);   // Wed 10:05 BJ (trading)
+    const wed1115 = Date.UTC(2026, 8, 2, 3, 15, 0);  // Wed 11:15 BJ (trading, 1h15m later)
+    const wed1400 = Date.UTC(2026, 8, 2, 6, 0, 0);   // Wed 14:00 BJ (trading)
+    const wed1450 = Date.UTC(2026, 8, 2, 6, 50, 0);  // Wed 14:50 BJ (trading)
+    const wed1510 = Date.UTC(2026, 8, 2, 7, 10, 0);  // Wed 15:10 BJ (closed)
+    const wed1600 = Date.UTC(2026, 8, 2, 8, 0, 0);   // Wed 16:00 BJ (closed)
+    const wed2000 = Date.UTC(2026, 8, 2, 12, 0, 0);  // Wed 20:00 BJ (closed)
+    const thu0830 = Date.UTC(2026, 8, 3, 0, 30, 0);  // Thu 08:30 BJ (before open)
+    const thu0935 = Date.UTC(2026, 8, 3, 1, 35, 0);  // Thu 09:35 BJ (after open)
+    const fri1600 = Date.UTC(2026, 8, 4, 8, 0, 0);   // Fri 16:00 BJ (closed)
+    const sat1400 = Date.UTC(2026, 8, 5, 6, 0, 0);   // Sat 14:00 BJ (weekend)
+    const sun1800 = Date.UTC(2026, 8, 6, 10, 0, 0);  // Sun 18:00 BJ (weekend)
+    const mon0800 = Date.UTC(2026, 8, 7, 0, 0, 0);   // Mon 08:00 BJ (before open)
+    const mon0940 = Date.UTC(2026, 8, 7, 1, 40, 0);  // Mon 09:40 BJ (after open)
+
+    const setFetchedAt = (key, ts) => {
+      const obj = JSON.parse(getRaw('kline-cache-v1'));
+      obj.entries[key].fetchedAt = ts;
+      setRaw('kline-cache-v1', JSON.stringify(obj));
+    };
+
+    // 1. 盘中日K超过 1 小时过期
+    setFetchedAt('sh600519|1d', wed1000);
+    t.strictEqual(isKlineCacheStale('sh600519', '1d', wed1115), true, 'daily kline > 1h in trading is stale');
+
+    // 2. 盘中拉取在收盘后跨越 15:00 结算节点必须失效
+    setFetchedAt('sh600519|1d', wed1400);
+    t.strictEqual(isKlineCacheStale('sh600519', '1d', wed1600), true, 'intraday kline after 15:00 close is stale');
+
+    // 3. 盘后（>=15:00）拉取的日K在当晚持续新鲜
+    setFetchedAt('sh600519|1d', wed1600);
+    t.strictEqual(isKlineCacheStale('sh600519', '1d', wed2000), false, 'post-close kline in evening is fresh');
+
+    // 4. 工作日盘后日K在次日 09:30 开盘前保持有效
+    setFetchedAt('sh600519|1d', wed1600);
+    t.strictEqual(isKlineCacheStale('sh600519', '1d', thu0830), false, 'post-close kline before next open is fresh');
+
+    // 5. 工作日盘后日K在次日 09:30 开盘后过期
+    setFetchedAt('sh600519|1d', wed1600);
+    t.strictEqual(isKlineCacheStale('sh600519', '1d', thu0935), true, 'post-close kline after next open is stale');
+
+    // 6. 周五盘后日K在周末（周六/周日）及周一早盘 09:30 开盘前均保持有效
+    setFetchedAt('sh600519|1d', fri1600);
+    t.strictEqual(isKlineCacheStale('sh600519', '1d', sat1400), false, 'Friday post-close on Saturday is fresh');
+    t.strictEqual(isKlineCacheStale('sh600519', '1d', sun1800), false, 'Friday post-close on Sunday is fresh');
+    t.strictEqual(isKlineCacheStale('sh600519', '1d', mon0800), false, 'Friday post-close on Monday before open is fresh');
+
+    // 7. 周一 09:30 开盘后周五日K过期
+    t.strictEqual(isKlineCacheStale('sh600519', '1d', mon0940), true, 'Friday post-close on Monday after open is stale');
+
+    // 8. 分钟K线盘中超过 2 分钟过期
+    setFetchedAt('sh600519|1m', wed1000);
+    t.strictEqual(isKlineCacheStale('sh600519', '1m', wed1005), true, 'minute kline > 2m in trading is stale');
+
+    // 9. 分钟K线跨越 15:00 收盘节点失效
+    setFetchedAt('sh600519|1m', wed1450);
+    t.strictEqual(isKlineCacheStale('sh600519', '1m', wed1510), true, 'minute kline crossing close is stale');
   });
 
   QUnit.test('get updates lastAccessedAt (LRU tracking)', (t) => {

@@ -271,10 +271,73 @@ function _isMarketOpen(now = Date.now()) {
 
 export function isKlineCacheStale(code, period, now = Date.now()) {
   const entry = _readKlineCacheEntry(code, period);
-  if (!entry) return false;
-  if (!_isMarketOpen(now)) return false;
-  const ttlMs = MINUTE_PERIODS.has(period) ? KLINE_MINUTE_TTL_MS : KLINE_TTL_MS;
-  return now - entry.fetchedAt > ttlMs;
+  if (!entry || typeof entry.fetchedAt !== 'number') return false;
+
+  const fetchedAt = entry.fetchedAt;
+  const ageMs = now - fetchedAt;
+  if (ageMs < 0) return false;
+
+  const isMinute = MINUTE_PERIODS.has(period);
+  const marketOpen = _isMarketOpen(now);
+
+  // 1. 盘中交易时段：严格依据 TTL 判定
+  if (marketOpen) {
+    const ttlMs = isMinute ? KLINE_MINUTE_TTL_MS : KLINE_TTL_MS;
+    return ageMs > ttlMs;
+  }
+
+  const nowParts = getBeijingClockParts(new Date(now));
+  const fetchParts = getBeijingClockParts(new Date(fetchedAt));
+  const isSameDay = nowParts.year === fetchParts.year &&
+                    nowParts.month === fetchParts.month &&
+                    nowParts.day === fetchParts.day;
+  const fetchMinute = fetchParts.hour * 60 + fetchParts.minute;
+  const nowMinute = nowParts.hour * 60 + nowParts.minute;
+
+  // 2. 分钟级 K 线在非交易时段
+  if (isMinute) {
+    // 跨日、超过30分钟、或拉取于收盘前而当前已收盘（缺失尾盘数据）均视为过期
+    if (!isSameDay || ageMs > 30 * 60 * 1000) return true;
+    if (fetchMinute < 15 * 60 && nowMinute >= 15 * 60) return true;
+    return false;
+  }
+
+  // 3. 日/周/月 K 线在非交易时段
+  // 超过 7 天无条件过期
+  if (ageMs > 7 * 24 * 60 * 60 * 1000) return true;
+
+  if (isSameDay) {
+    // 同一天：若抓取时处于 15:00 盘中前，而当前已收盘（>=15:00），盘中未收盘日K已过时，需要抓取最终收盘K线
+    if (fetchMinute < 15 * 60 && nowMinute >= 15 * 60) {
+      return true;
+    }
+    // 同在上午/午盘前抓取（如午间休市）：遵循 1 小时 TTL
+    if (fetchMinute < 15 * 60 && nowMinute < 15 * 60) {
+      return ageMs > KLINE_TTL_MS;
+    }
+    // 15:00 盘后抓取的数据包含当日终盘数据，当晚一直有效
+    return false;
+  }
+
+  // 跨日情况：
+  // 若前一日抓取于 15:00 之前（属于盘中未完成日K），必须重新抓取
+  if (fetchMinute < 15 * 60) return true;
+
+  const nowDay = new Date(Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day)).getUTCDay();
+  const fetchDay = new Date(Date.UTC(fetchParts.year, fetchParts.month - 1, fetchParts.day)).getUTCDay();
+
+  // 周五盘后（>=15:00）拉取的数据在周六、周日以及周一早盘 09:30 开盘前均保持有效
+  if (fetchDay === 5 && (nowDay === 6 || nowDay === 0 || (nowDay === 1 && nowMinute < 9 * 60 + 30)) && ageMs <= 4 * 24 * 60 * 60 * 1000) {
+    return false;
+  }
+
+  // 工作日盘后（>=15:00）抓取的数据在次日早盘 09:30 开盘前保持有效
+  if (nowDay >= 1 && nowDay <= 5 && nowMinute < 9 * 60 + 30 && ageMs < 24 * 60 * 60 * 1000) {
+    return false;
+  }
+
+  // 工作日一旦已开盘（>=09:30），前日K线视为过期（需要合成或拉取新一日实时日K）
+  return true;
 }
 
 function _readKlineCacheEntry(code, period) {

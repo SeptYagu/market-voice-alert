@@ -83,7 +83,8 @@ export function getKlineTtlMs(period) {
 async function fetchKlineNetwork(code, period, signal) {
   const emUrl = buildEastmoneyKlineUrl(code, period);
   if (emUrl) {
-    if (Date.now() >= eastmoneyDisabledUntil) {
+    if (eastmoneyDisabledUntil > 0 && Date.now() >= eastmoneyDisabledUntil) {
+      eastmoneyDisabledUntil = 0;
       eastmoneyFailures = 0;
     }
     if (eastmoneyFailures < EASTMONEY_FAILURE_LIMIT) {
@@ -96,6 +97,7 @@ async function fetchKlineNetwork(code, period, signal) {
           const parsed = parseEastmoneyKline(json);
           if (parsed && parsed.items && parsed.items.length) {
             eastmoneyFailures = 0;
+            eastmoneyDisabledUntil = 0;
             return { ...parsed, upstreamSource: 'eastmoney' };
           }
         } catch (e) {
@@ -251,3 +253,18 @@ export async function getKlineDataForMomentum(code, signal, targetDate) {
       : (result.source === 'stale' ? 'stale-cache' : 'cache')
   };
 }
+
+export const _internal = {
+  getEastmoneyBreakerState: () => ({ failures: eastmoneyFailures, disabledUntil: eastmoneyDisabledUntil }),
+  recordEastmoneyFailure: () => {
+    eastmoneyFailures += 1;
+    if (eastmoneyFailures >= EASTMONEY_FAILURE_LIMIT) {
+      eastmoneyDisabledUntil = Date.now() + EASTMONEY_COOLDOWN_MS;
+    }
+  },
+  resetEastmoneyBreaker: () => {
+    eastmoneyFailures = 0;
+    eastmoneyDisabledUntil = 0;
+  }
+};
+

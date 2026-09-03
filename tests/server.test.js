@@ -8,7 +8,7 @@ import {
   writeCache
 } from '../server/cacheStore.js';
 import { createAppServer } from '../server/index.js';
-import { getKlineTtlMs, hasMomentumKlineCoverage } from '../server/klineService.js';
+import { getKlineTtlMs, hasMomentumKlineCoverage, _internal as klineInternal } from '../server/klineService.js';
 import {
   computeTenDayMomentum,
   mergeLiveQuoteIntoDailyKline,
@@ -183,4 +183,32 @@ QUnit.module('server cache and production routing', (hooks) => {
       await new Promise((resolve) => server.close(resolve));
     }
   });
+
+  QUnit.test('eastmoney circuit breaker accumulates failures and only resets when cooldown expires', (t) => {
+    klineInternal.resetEastmoneyBreaker();
+    let state = klineInternal.getEastmoneyBreakerState();
+    t.equal(state.failures, 0);
+    t.equal(state.disabledUntil, 0);
+
+    // Failures accumulate across requests
+    klineInternal.recordEastmoneyFailure();
+    state = klineInternal.getEastmoneyBreakerState();
+    t.equal(state.failures, 1, 'first failure recorded');
+    t.equal(state.disabledUntil, 0, 'breaker not yet tripped');
+
+    klineInternal.recordEastmoneyFailure();
+    state = klineInternal.getEastmoneyBreakerState();
+    t.equal(state.failures, 2, 'second failure recorded');
+    t.equal(state.disabledUntil, 0, 'breaker not yet tripped');
+
+    // 3rd failure reaches EASTMONEY_FAILURE_LIMIT (3), tripping the breaker
+    klineInternal.recordEastmoneyFailure();
+    state = klineInternal.getEastmoneyBreakerState();
+    t.equal(state.failures, 3, 'threshold reached');
+    t.ok(state.disabledUntil > Date.now(), 'breaker tripped with cooldown window');
+
+    // Clean up
+    klineInternal.resetEastmoneyBreaker();
+  });
 });
+
