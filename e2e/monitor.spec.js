@@ -70,4 +70,13 @@ test.describe('监控页', () => {
     await requestPromise;
     await expect(page.locator('.momentum-actions')).not.toContainText('错误:', { timeout: DEFAULT_TIMEOUT });
   });
+
+  test('输入期货代码（如 rb2510）→ 表格出现期货行并显示持仓量', async ({ page }) => {
+    await page.goto('http://127.0.0.1:5173/');
+    await page.fill('#code-input', 'rb2510');
+    await page.press('#code-input', 'Enter');
+    await expect(page.locator('tr[data-code="rb2510"]')).toBeVisible({ timeout: DEFAULT_TIMEOUT });
+    await expect(page.locator('tr[data-code="rb2510"] .name')).toContainText('螺纹钢2510', { timeout: DEFAULT_TIMEOUT });
+    await expect(page.locator('tr[data-code="rb2510"]')).toContainText('持仓', { timeout: DEFAULT_TIMEOUT });
+  });
 });

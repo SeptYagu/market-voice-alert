@@ -13,6 +13,9 @@ import {
 } from './momentumService.js';
 import { getCachedSpotLatest } from './spotService.js';
 import { handleProxyRequest } from './proxyService.js';
+import { getCachedFuturesQuotes } from './futures/futuresQuoteService.js';
+import { getCachedFuturesKline, getCachedFuturesIntraday } from './futures/futuresKlineService.js';
+import { getFuturesSession } from './futures/futuresSessionService.js';
 import { DEFAULT_PORT, errorEnvelope, jsonResponse, okEnvelope } from './utils.js';
 
 const distRoot = fileURLToPath(new URL('../dist/', import.meta.url));
@@ -136,6 +139,56 @@ export async function handleCacheRequest(req, res) {
         signal: undefined
       });
       jsonResponse(res, 200, okEnvelope(result));
+      return;
+    }
+
+    if (path === '/api/cache/futures/quote') {
+      const idsParam = url.searchParams.get('ids') || url.searchParams.get('id');
+      const ids = idsParam ? idsParam.split(',').map((s) => s.trim()).filter(Boolean) : [];
+      const result = await getCachedFuturesQuotes(ids);
+      jsonResponse(res, 200, okEnvelope({
+        source: 'server-futures-quote',
+        stale: false,
+        ttlMs: 3000,
+        data: result
+      }));
+      return;
+    }
+
+    if (path === '/api/cache/futures/kline') {
+      const id = url.searchParams.get('id') || url.searchParams.get('symbol');
+      const period = url.searchParams.get('period') || 'day';
+      const result = await getCachedFuturesKline(id, period);
+      jsonResponse(res, 200, okEnvelope({
+        source: 'server-futures-kline',
+        stale: false,
+        ttlMs: 10000,
+        data: result
+      }));
+      return;
+    }
+
+    if (path === '/api/cache/futures/intraday') {
+      const id = url.searchParams.get('id') || url.searchParams.get('symbol');
+      const result = await getCachedFuturesIntraday(id);
+      jsonResponse(res, 200, okEnvelope({
+        source: 'server-futures-intraday',
+        stale: false,
+        ttlMs: 10000,
+        data: result
+      }));
+      return;
+    }
+
+    if (path === '/api/cache/futures/session') {
+      const id = url.searchParams.get('id') || url.searchParams.get('symbol');
+      const result = getFuturesSession(id);
+      jsonResponse(res, 200, okEnvelope({
+        source: 'server-futures-session',
+        stale: false,
+        ttlMs: 10000,
+        data: result
+      }));
       return;
     }
 

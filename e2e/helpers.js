@@ -230,12 +230,84 @@ export async function setupApiMocks(page) {
     });
   });
 
-  // Sina 期货 (返回空 var)
+  await page.route('**/api/cache/futures/quote**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        data: {
+          data: [
+            {
+              code: 'rb2510',
+              instrumentId: 'future:shfe:RB2510',
+              type: 'future',
+              exchange: 'shfe',
+              product: 'RB',
+              symbol: 'RB2510',
+              name: '螺纹钢2510',
+              contractKind: 'specific',
+              price: 3350,
+              prevSettlement: 3300,
+              prevClose: 3310,
+              change: 50,
+              changePercent: 1.52,
+              volume: 120000,
+              openInterest: 1800000
+            }
+          ]
+        }
+      })
+    });
+  });
+
+  await page.route('**/api/cache/futures/intraday**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        data: {
+          data: {
+            symbol: 'RB2510',
+            source: 'mock-futures-intraday',
+            items: [
+              { time: 1788451200, close: 3350, open: 3340, high: 3355, low: 3338, volume: 100, percent: 0.5 },
+              { time: 1788451260, close: 3355, open: 3350, high: 3360, low: 3348, volume: 150, percent: 0.65 }
+            ]
+          }
+        }
+      })
+    });
+  });
+
+  await page.route('**/api/cache/futures/kline**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        data: {
+          data: {
+            symbol: 'RB2510',
+            period: 'day',
+            source: 'mock-futures-kline',
+            items: [
+              { time: 1788451200, open: 3300, high: 3360, low: 3290, close: 3350, volume: 120000, openInterest: 1800000 },
+              { time: 1788537600, open: 3350, high: 3380, low: 3340, close: 3370, volume: 130000, openInterest: 1820000 }
+            ]
+          }
+        }
+      })
+    });
+  });
+
+  // Sina 期货 (返回空 var 或 rb2510 模拟行)
   await page.route('**/api/sina**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/javascript',
-      body: ''
+      body: 'var hq_str_nf_rb2510="螺纹钢2510,145959,3320.00,3360.00,3310.00,3310.00,3349.00,3350.00,3350.00,3300.00,10,20,1800000,120000,上期所,螺纹钢,2026-09-03,0";'
     });
   });
 }

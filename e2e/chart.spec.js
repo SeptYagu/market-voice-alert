@@ -269,4 +269,15 @@ test.describe('K 线图展开', () => {
     await expect(page.locator('#lu-intraday-status-sh600519')).toContainText(/AKTools/, { timeout: DEFAULT_TIMEOUT });
     await expect(page.locator('#lu-chart-host-sh600519')).toBeVisible();
   });
+
+  test('监控页期货行点击 → 双图展开（左分时 + 右K线）', async ({ page }) => {
+    await page.goto('http://127.0.0.1:5173/');
+    await page.fill('#code-input', 'rb2510');
+    await page.press('#code-input', 'Enter');
+    await expect(page.locator('tr[data-code="rb2510"]')).toBeVisible({ timeout: DEFAULT_TIMEOUT });
+    await page.locator('tr[data-code="rb2510"] td.code').click();
+    await expect(page.locator('tr.chart-row[data-chart-for="rb2510"]')).toBeVisible({ timeout: DEFAULT_TIMEOUT });
+    await expect(page.locator('#chart-host-rb2510')).toBeVisible();
+    await expect(page.locator('#intraday-chart-host-rb2510')).toBeVisible();
+  });
 });

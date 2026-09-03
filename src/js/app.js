@@ -27,6 +27,7 @@ import {
 import { fetchQuotes, fetchKline, fetchIntraday, onKlineUpdated } from './api.js';
 import { fetchAktoolsSpotList } from './aktoolsApi.js';
 import { normalizeCode } from './parser.js';
+import { parseFutureInput, isFutureCode } from './futures/instrument.js';
 import {
   PERIODS,
   PERIOD_LABELS,
@@ -248,6 +249,8 @@ function normalizeFuture(input) {
   if (!input || typeof input !== 'string') return null;
   const raw = input.trim().toLowerCase();
   if (/^nf_?[a-z0-9]+$/.test(raw)) return raw;
+  const inst = parseFutureInput(input);
+  if (inst) return inst.symbol.toLowerCase();
   return null;
 }
 
@@ -1562,6 +1565,8 @@ function renderRow(code, isActive) {
       click: (e) => e.stopPropagation()
     }
   });
+  const isFuture = q.type === 'future' || isFutureCode(code);
+  const displayCode = isFuture ? code.toUpperCase() : code;
   return el(
     'tr',
     {
@@ -1572,13 +1577,13 @@ function renderRow(code, isActive) {
     },
     el('td', { class: 'col-check' }, checkbox),
     el('td', { class: 'col-sub' }, subCheckbox),
-    el('td', { class: 'code' }, code),
+    el('td', { class: 'code' }, displayCode),
     el('td', { class: 'name' }, q.name || '...'),
     el('td', { class: `num ${dir}` }, formatNumber(q.price)),
     el('td', { class: `num ${dir}` }, formatPercent(q.changePercent)),
     el('td', { class: 'num' }, formatPriceWithPercent(q.open, q.openChangePercent)),
-    el('td', { class: 'num' }, formatNumber(q.volumeRatio)),
-    el('td', { class: 'num' }, formatAmount(q.amount)),
+    el('td', { class: 'num' }, isFuture ? (q.volume ? `${Math.round(q.volume).toLocaleString('en-US')}` : '-') : formatNumber(q.volumeRatio)),
+    el('td', { class: 'num' }, isFuture ? (q.openInterest ? `持仓 ${Math.round(q.openInterest).toLocaleString('en-US')}` : '-') : formatAmount(q.amount)),
     el(
       'td',
       { class: 'col-op' },
@@ -3162,9 +3167,10 @@ function updateRowQuoteCells(code) {
   allCells[4].className = `num ${dir}`;
   allCells[5].textContent = formatPercent(q.changePercent);
   allCells[5].className = `num ${dir}`;
+  const isFuture = q.type === 'future' || isFutureCode(code);
   allCells[6].textContent = formatPriceWithPercent(q.open, q.openChangePercent);
-  allCells[7].textContent = formatNumber(q.volumeRatio);
-  allCells[8].textContent = formatAmount(q.amount);
+  allCells[7].textContent = isFuture ? (q.volume ? `${Math.round(q.volume).toLocaleString('en-US')}` : '-') : formatNumber(q.volumeRatio);
+  allCells[8].textContent = isFuture ? (q.openInterest ? `持仓 ${Math.round(q.openInterest).toLocaleString('en-US')}` : '-') : formatAmount(q.amount);
 }
 
 function mergeQuotesIntoMomentumItems() {

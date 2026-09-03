@@ -18,6 +18,8 @@ import {
 } from './aktoolsApi.js';
 import { klineCacheGet, klineCacheSet } from './storage.js';
 import { parseBeijingDateTimeToChartSeconds, chartSecondsToTime, chartTimeToDate } from './time.js';
+import { isFutureCode } from './futures/instrument.js';
+import { fetchFuturesQuotes, fetchFuturesIntraday, fetchFuturesKline } from './futures/futuresApi.js';
 
 const STOCK_RE = /^(sh|sz|bj)\d{6}$/i;
 const FUTURE_RE = /^nf[a-z0-9]+$/i;
@@ -71,7 +73,7 @@ export function splitCodes(codes) {
     (c) => typeof c === 'string' && c.length > 0
   );
   const stocks = list.filter((c) => STOCK_RE.test(c));
-  const futures = list.filter((c) => FUTURE_RE.test(c));
+  const futures = list.filter((c) => FUTURE_RE.test(c) || isFutureCode(c));
   return { stocks, futures };
 }
 
@@ -129,7 +131,11 @@ export async function fetchQuotes(codes, opts = {}) {
     );
   }
   if (futures.length) {
-    tasks.push(fetchSinaFuture(futures, opts).catch(() => []));
+    tasks.push(
+      fetchFuturesQuotes(futures, opts)
+        .then((arr) => (arr && arr.length ? arr : fetchSinaFuture(futures, opts)))
+        .catch(() => fetchSinaFuture(futures, opts).catch(() => []))
+    );
   }
 
   const results = await Promise.all(tasks);
@@ -254,6 +260,9 @@ function _decorateKlineIntraday(data, opts = {}) {
 }
 
 export async function fetchIntraday(code, opts = {}) {
+  if (isFutureCode(code)) {
+    return fetchFuturesIntraday(code, opts);
+  }
   let sharedCacheError = null;
   if (opts.sharedCache === true) {
     try {
@@ -355,6 +364,9 @@ async function _fetchIntradayFromSharedCache(code, opts = {}) {
 
 export function fetchKline(code, opts = {}) {
   const period = opts.period || '1d';
+  if (isFutureCode(code)) {
+    return fetchFuturesKline(code, period, opts);
+  }
   const key = `${code}|${period}`;
 
   // 1. In-flight dedup: same (code, period) concurrent calls share one promise

@@ -128,25 +128,56 @@ export function parseSinaFuture(text) {
     const f = payload.split(',');
     if (f.length < 10) continue;
 
-    const open = parseFloat(f[2]) || 0;
-    const high = parseFloat(f[3]) || 0;
-    const low = parseFloat(f[4]) || 0;
-    const prevClose = parseFloat(f[5]) || 0;
-    const price = parseFloat(f[8]) || parseFloat(f[6]) || 0;
+    const isFinancial = Number.isFinite(parseFloat(f[0])) && !isNaN(Number(f[0]));
+    let name = code;
+    let open = 0;
+    let high = 0;
+    let low = 0;
+    let prevClose = 0;
+    let prevSettlement = 0;
+    let price = 0;
+    let volume = 0;
+    let openInterest = 0;
+
+    if (isFinancial) {
+      open = parseFloat(f[0]) || 0;
+      high = parseFloat(f[1]) || 0;
+      low = parseFloat(f[2]) || 0;
+      price = parseFloat(f[3]) || 0;
+      volume = parseInt(f[4], 10) || 0;
+      openInterest = parseInt(f[6], 10) || 0;
+      prevSettlement = parseFloat(f[7]) || 0;
+      prevClose = parseFloat(f[14]) || prevSettlement;
+      name = f[37] || code;
+    } else {
+      name = f[0] || code;
+      open = parseFloat(f[2]) || 0;
+      high = parseFloat(f[3]) || 0;
+      low = parseFloat(f[4]) || 0;
+      prevClose = parseFloat(f[5]) || 0;
+      price = parseFloat(f[8]) || parseFloat(f[6]) || 0;
+      prevSettlement = parseFloat(f[9]) || 0;
+      openInterest = parseInt(f[12], 10) || 0;
+      volume = parseInt(f[14], 10) || parseInt(f[13], 10) || 0;
+    }
+
     if (!Number.isFinite(price) || price === 0) continue;
 
-    const change = price - prevClose;
-    const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
+    const basePrice = prevClose > 0 ? prevClose : (prevSettlement > 0 ? prevSettlement : price);
+    const change = price - basePrice;
+    const changePercent = basePrice > 0 ? ((change / basePrice) * 100) : 0;
 
     out.push({
       code,
-      name: f[0] || code,
+      name,
       price,
       prevClose,
+      prevSettlement: prevSettlement > 0 ? prevSettlement : null,
       open,
       high,
       low,
-      volume: parseInt(f[14], 10) || 0,
+      volume,
+      openInterest,
       amount: 0,
       volumeRatio: 0,
       openChangePercent: prevClose > 0 ? Number((((open - prevClose) / prevClose) * 100).toFixed(2)) : 0,
