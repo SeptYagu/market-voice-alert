@@ -19,7 +19,7 @@ export function getMarketSession(now = new Date(), tradingDates = []) {
   const date = getBeijingDate(now);
   if (!isTradingDate(date, tradingDates)) return 'closed';
   const t = _minutesInBeijing(now);
-  if (t >= 9 * 60 + 15 && t < 9 * 60 + 25) return 'opening-auction';
+  if (t >= 9 * 60 + 15 && t < 9 * 60 + 30) return 'opening-auction';
   if (t >= 9 * 60 + 30 && t < 11 * 60 + 30) return 'trading';
   if (t >= 11 * 60 + 30 && t < 13 * 60) return 'lunch';
   if (t >= 13 * 60 && t < 15 * 60) return 'trading';

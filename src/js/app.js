@@ -1805,8 +1805,10 @@ function getPrevCloseForDate(items, date) {
 }
 
 function isLatestKlineDate(inst, date) {
+  if (!date) return false;
+  if (isLimitUpDateToday(date)) return true;
   if (!inst || !inst.klineData || !Array.isArray(inst.klineData.items)) return false;
-  return !!date && getLastKlineDate(inst.klineData.items) === date;
+  return getLastKlineDate(inst.klineData.items) === date;
 }
 
 function intradaySourceLabel(source) {
@@ -2174,7 +2176,7 @@ async function limitUpFetch() {
     if (requestSeq !== state.limitUp.requestSeq || state.limitUp.selectedDate !== date) return;
     const forceRefresh = !!state.limitUp.forceRefreshOnce;
     state.limitUp.forceRefreshOnce = false;
-    const rawItems = await fetchLimitUpList({ signal: controller.signal, date, sharedCache: true, forceRefresh });
+    const rawItems = await fetchLimitUpList({ signal: controller.signal, date, sharedCache: true, includeBroken: true, forceRefresh });
     if (requestSeq !== state.limitUp.requestSeq || state.limitUp.selectedDate !== date) return;
     state.limitUp.lastUpdate = new Date();
     state.limitUp = applyLimitUpFetchResult(state.limitUp, rawItems);
@@ -2728,7 +2730,13 @@ async function loadLimitUpKline(code) {
     if (!data.items.length) throw new Error('K 线数据为空');
     if (!state.limitUp.expandedCodes.has(code)) return;
     inst.klineData = data;
-    if (!inst.selectedTradeDate) inst.selectedTradeDate = getLastKlineDate(data.items);
+    if (!inst.selectedTradeDate) {
+      const latestTradeDate = (state.limitUp.tradingDates || []).at(-1);
+      const isHistorical = state.limitUp.selectedDate && latestTradeDate && state.limitUp.selectedDate < latestTradeDate;
+      inst.selectedTradeDate = isHistorical
+        ? state.limitUp.selectedDate
+        : getLastKlineDate(data.items);
+    }
     inst.loading = false;
     applyLimitUpKlineToChart(code, data);
     loadLimitUpIntraday(code, inst.selectedTradeDate);
@@ -3645,10 +3653,16 @@ function mergeQuotesIntoMomentumItems() {
     const q = state.quotes.get(it.code);
     if (!q) return it;
     changed = true;
+    const price = Number.isFinite(Number(q.price)) ? Number(q.price) : it.price;
+    const startClose = Number(it.startClose);
+    const gainPercent = (Number.isFinite(price) && Number.isFinite(startClose) && startClose > 0)
+      ? Number((((price - startClose) / startClose) * 100).toFixed(2))
+      : it.gainPercent;
     return {
       ...it,
       name: q.name || it.name,
-      price: Number.isFinite(Number(q.price)) ? Number(q.price) : it.price,
+      price,
+      gainPercent,
       changePercent: Number.isFinite(Number(q.changePercent)) ? Number(q.changePercent) : it.changePercent,
       amount: Number.isFinite(Number(q.amount)) ? Number(q.amount) : it.amount,
       volumeRatio: Number.isFinite(Number(q.volumeRatio)) ? Number(q.volumeRatio) : it.volumeRatio,
@@ -3667,6 +3681,7 @@ function updateMomentumQuoteCells(code) {
   if (allCells.length < 11) return;
   const dir = priceDirection(Number(item.changePercent));
   allCells[4].textContent = item.name || '-';
+  allCells[5].textContent = formatPercent(item.gainPercent);
   allCells[6].textContent = formatNumber(item.price);
   allCells[7].textContent = formatPercent(item.changePercent);
   allCells[7].className = `num ${dir}`;

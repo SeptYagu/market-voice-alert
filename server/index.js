@@ -44,9 +44,18 @@ export async function handleCacheRequest(req, res) {
   if (req.method === 'POST' && path === '/api/cache/momentum/ten-day/scan') {
     const date = url.searchParams.get('date');
     const threshold = url.searchParams.get('threshold');
+    if (date && !/^\d{8}$/.test(date.trim()) && !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
+      jsonResponse(res, 400, errorEnvelope('Invalid date parameter; expected YYYYMMDD or YYYY-MM-DD'));
+      return;
+    }
     // Register the single-flight job before replying so an immediate GET poll
     // cannot observe the old empty cache between POST and task startup.
-    startTenDayMomentumScan({ date, threshold, reason: 'manual' });
+    const job = startTenDayMomentumScan({ date, threshold, reason: 'manual' });
+    if (job && job.promise && typeof job.promise.catch === 'function') {
+      job.promise.catch((err) => {
+        if (typeof console !== 'undefined' && console.error) console.error('background momentum scan job error:', err);
+      });
+    }
     jsonResponse(res, 202, okEnvelope({
       source: 'job',
       stale: false,

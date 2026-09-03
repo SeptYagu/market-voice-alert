@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -72,14 +73,18 @@ async function touchCacheAccess(parts, expectedGeneratedAt) {
 export async function writeCache(parts, payload, opts = {}) {
   const path = resolveCachePath(parts);
   await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const tmp = `${path}.${process.pid}.${Date.now()}.${randomUUID().slice(0, 8)}.tmp`;
   const out = {
     ...payload,
     generatedAt: payload && payload.generatedAt ? payload.generatedAt : nowMs(),
     lastAccessedAt: payload && payload.lastAccessedAt ? payload.lastAccessedAt : nowMs()
   };
-  await writeFile(tmp, JSON.stringify(out, null, 2), 'utf8');
-  await renameWithRetry(tmp, path);
+  try {
+    await writeFile(tmp, JSON.stringify(out, null, 2), 'utf8');
+    await renameWithRetry(tmp, path);
+  } finally {
+    await rm(tmp, { force: true }).catch(() => {});
+  }
   if (!opts.skipPrune) pruneCacheIfNeeded().catch(() => {});
   return out;
 }

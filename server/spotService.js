@@ -1,6 +1,6 @@
 import { readdir } from 'node:fs/promises';
 import { getOrRefresh, cachePath } from './cacheStore.js';
-import { fetchAktoolsSpot, fetchTencentSpot } from './marketData.js';
+import { fetchAktoolsSpot, fetchTencentSpot, isAStockCode } from './marketData.js';
 
 const SPOT_TTL_MS = 30 * 1000;
 
@@ -12,7 +12,7 @@ async function getKlineCacheUniverse() {
     return [];
   }
   return entries
-    .filter((entry) => entry.isDirectory() && /^(sh|sz|bj)\d{6}$/i.test(entry.name))
+    .filter((entry) => entry.isDirectory() && isAStockCode(entry.name))
     .map((entry) => ({ code: entry.name.toLowerCase(), name: '' }));
 }
 

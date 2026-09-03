@@ -230,7 +230,8 @@ export function createKlineChart(container, opts = {}) {
     try {
       candleSeries.update(bar);
     } catch {
-      candleSeries.setData([bar]);
+      // Ignore malformed tick to avoid wiping out full historical series
+      return;
     }
     const previous = klineDataMap.get(_timeKey(bar.time));
     klineDataMap.set(_timeKey(bar.time), { bar, prevClose: previous ? previous.prevClose : null });
@@ -242,7 +243,8 @@ export function createKlineChart(container, opts = {}) {
     try {
       volumeSeries.update(bar);
     } catch {
-      volumeSeries.setData([bar]);
+      // Ignore malformed tick to avoid wiping out full historical series
+      return;
     }
     volumeDataMap.set(_timeKey(bar.time), Number(bar.value));
   }

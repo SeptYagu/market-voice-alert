@@ -169,6 +169,7 @@ function buildRow(item, ctx) {
           const target = e && e.target;
           if (target && target.tagName === 'INPUT') return;
           if (target && target.tagName === 'BUTTON') return;
+          if (target && target.closest && (target.closest('.lu-check') || target.closest('.lu-pin'))) return;
           if (typeof ctx.cb.openKline === 'function') ctx.cb.openKline(item.code);
         }
       }

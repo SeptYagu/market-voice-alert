@@ -78,6 +78,16 @@ QUnit.module('parser.parseTencent', () => {
     t.equal(q.type, 'stock', 'type');
   });
 
+  QUnit.test('parses volumeRatio from fields[49] and handles open=0 before market open', (t) => {
+    // fields[49] has volumeRatio 2.34; fields[5] has open 0.00 (pre-open)
+    const quoteStr =
+      'v_sh600000="1~浦发银行~600000~10.00~10.00~0.00~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~~20240315091500~0.00~0.00~0.00~0.00~0/0/0~0~0~0.00~0.00~~0.00~0.00~0.00~0~0~0~0~0~2.34~0.00~0~~GP-A~~~~~~~~~~~~~~~~~~~~~~~~~~~~~";';
+    const list = parseTencent(quoteStr);
+    t.equal(list.length, 1);
+    t.equal(list[0].volumeRatio, 2.34, 'extracts volumeRatio from fields[49]');
+    t.equal(list[0].openChangePercent, 0, 'openChangePercent is 0 when open is 0, not -100%');
+  });
+
   QUnit.test('parses multiple quotes separated by semicolons', (t) => {
     const multi =
       moutaiQuote +

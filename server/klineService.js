@@ -82,29 +82,33 @@ export function getKlineTtlMs(period) {
 
 async function fetchKlineNetwork(code, period, signal) {
   const emUrl = buildEastmoneyKlineUrl(code, period);
-  if (emUrl && Date.now() >= eastmoneyDisabledUntil) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const json = await fetchJson(emUrl, signal, {
-          referer: 'https://quote.eastmoney.com/',
-          'user-agent': 'Mozilla/5.0'
-        });
-        const parsed = parseEastmoneyKline(json);
-        if (parsed && parsed.items && parsed.items.length) {
-          eastmoneyFailures = 0;
-          return { ...parsed, upstreamSource: 'eastmoney' };
-        }
-      } catch (e) {
-        if (e && e.name === 'AbortError') throw e;
-        eastmoneyFailures += 1;
-        if (eastmoneyFailures >= EASTMONEY_FAILURE_LIMIT) {
-          eastmoneyDisabledUntil = Date.now() + EASTMONEY_COOLDOWN_MS;
-          break;
+  if (emUrl) {
+    if (Date.now() >= eastmoneyDisabledUntil) {
+      eastmoneyFailures = 0;
+    }
+    if (eastmoneyFailures < EASTMONEY_FAILURE_LIMIT) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const json = await fetchJson(emUrl, signal, {
+            referer: 'https://quote.eastmoney.com/',
+            'user-agent': 'Mozilla/5.0'
+          });
+          const parsed = parseEastmoneyKline(json);
+          if (parsed && parsed.items && parsed.items.length) {
+            eastmoneyFailures = 0;
+            return { ...parsed, upstreamSource: 'eastmoney' };
+          }
+        } catch (e) {
+          if (e && e.name === 'AbortError') throw e;
+          eastmoneyFailures += 1;
+          if (eastmoneyFailures >= EASTMONEY_FAILURE_LIMIT) {
+            eastmoneyDisabledUntil = Date.now() + EASTMONEY_COOLDOWN_MS;
+            break;
+          }
         }
       }
     }
   }
-
 
   if (period === '1d') {
     const currentYear = Number(beijingDateKey().slice(0, 4));
@@ -119,6 +123,23 @@ async function fetchKlineNetwork(code, period, signal) {
         });
         const parsed = parseTencentKlineAssignment(text, period);
         if (!parsed || !parsed.items || !parsed.items.length) throw new Error('Empty Tencent modern kline response');
+        if (parsed.items.length < 60) {
+          try {
+            const prevYearUrl = buildTencentYearKlineUrl(code, currentYear - 1);
+            const prevText = await fetchText(prevYearUrl, signal, {
+              referer: 'https://gu.qq.com/',
+              'user-agent': 'Mozilla/5.0'
+            });
+            const prevParsed = parseTencentKlineAssignment(prevText, period);
+            if (prevParsed && Array.isArray(prevParsed.items) && prevParsed.items.length) {
+              const currentTimes = new Set(parsed.items.map((it) => it.time));
+              const olderItems = prevParsed.items.filter((it) => !currentTimes.has(it.time));
+              parsed.items = [...olderItems, ...parsed.items].sort((a, b) => (a.time < b.time ? -1 : 1));
+            }
+          } catch {
+            // Keep current year items if previous year cannot be reached
+          }
+        }
         return { ...parsed, upstreamSource: 'tencent-modern' };
       } catch (error) {
         if (error && error.name === 'AbortError') throw error;

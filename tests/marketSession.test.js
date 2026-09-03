@@ -10,6 +10,7 @@ QUnit.module('marketSession', () => {
 
   QUnit.test('detects A-share sessions in Beijing time', (t) => {
     t.equal(getMarketSession(new Date('2026-06-05T01:15:00Z'), tradingDates), 'opening-auction');
+    t.equal(getMarketSession(new Date('2026-06-05T01:26:00Z'), tradingDates), 'opening-auction', '09:26 is opening auction');
     t.equal(getMarketSession(new Date('2026-06-05T01:30:00Z'), tradingDates), 'trading');
     t.equal(getMarketSession(new Date('2026-06-05T03:30:00Z'), tradingDates), 'lunch');
     t.equal(getMarketSession(new Date('2026-06-05T05:00:00Z'), tradingDates), 'trading');

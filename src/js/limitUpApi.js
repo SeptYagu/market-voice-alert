@@ -71,10 +71,23 @@ export async function fetchLimitUpList(opts = {}) {
   if (opts.sharedCache === true) {
     try {
       const payload = await fetchSharedLimitUp(opts);
-      if (payload && Array.isArray(payload.limitUpItems)) return payload.limitUpItems;
+      if (payload && Array.isArray(payload.limitUpItems)) {
+        const broken = Array.isArray(payload.brokenItems) ? payload.brokenItems : [];
+        const map = new Map();
+        for (const it of payload.limitUpItems) if (it && it.code) map.set(it.code, it);
+        for (const it of broken) if (it && it.code && !map.has(it.code)) map.set(it.code, it);
+        return [...map.values()];
+      }
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;
     }
+  }
+  if (opts.includeBroken) {
+    const res = await fetchLimitUpAndBrokenList(opts);
+    const map = new Map();
+    for (const it of (res.limitUpItems || [])) if (it && it.code) map.set(it.code, it);
+    for (const it of (res.brokenItems || [])) if (it && it.code && !map.has(it.code)) map.set(it.code, it);
+    return [...map.values()];
   }
   return await fetchAktoolsLimitUpList({
     signal: opts.signal,
