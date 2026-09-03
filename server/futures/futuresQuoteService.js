@@ -63,6 +63,7 @@ async function fetchFromAktools(inst) {
   const askVol = Number(item.sell_vol ?? item['卖量']) || 0;
 
   const basePrice = prevSettlement > 0 ? prevSettlement : (prevClose > 0 ? prevClose : price);
+  const changeDecimals = inst.priceTick && inst.priceTick < 0.01 ? 3 : 2;
   const change = price - basePrice;
   const changePercent = basePrice > 0 ? ((change / basePrice) * 100) : 0;
   const openChangePercent = open > 0 && basePrice > 0 ? (((open - basePrice) / basePrice) * 100) : 0;
@@ -71,6 +72,7 @@ async function fetchFromAktools(inst) {
     code: inst.symbol.toLowerCase(),
     name: inst.name || item.symbol || inst.symbol,
     price,
+    priceTick: inst.priceTick,
     prevClose: prevClose > 0 ? prevClose : null,
     prevSettlement: prevSettlement > 0 ? prevSettlement : null,
     open: open > 0 ? open : null,
@@ -82,7 +84,7 @@ async function fetchFromAktools(inst) {
     askPrice: askPrice > 0 ? askPrice : null,
     bidVol: bidVol > 0 ? bidVol : null,
     askVol: askVol > 0 ? askVol : null,
-    change: Number(change.toFixed(2)),
+    change: Number(change.toFixed(changeDecimals)),
     changePercent: Number(changePercent.toFixed(2)),
     openChangePercent: Number(openChangePercent.toFixed(2)),
     type: 'future',
@@ -129,6 +131,7 @@ export async function getCachedFuturesQuote(symbolOrId, opts = {}) {
         tradingDay: session.tradingDay,
         timestamp: Date.now(),
         price: raw.price,
+        priceTick: inst.priceTick,
         prevSettlement: raw.prevSettlement,
         prevClose: raw.prevClose,
         open: raw.open,
