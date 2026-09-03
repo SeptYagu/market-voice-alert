@@ -5,8 +5,9 @@
 股票期货实时监控助手 v2 - 单页 Web 应用
 
 **新窗口速读入口**：
-- [`docs/handoff/2026-09-03-phase4-futures-full-pipeline-handoff.md`](docs/handoff/2026-09-03-phase4-futures-full-pipeline-handoff.md) — 2026-09-03 境内期货全链路支持与中低缺陷重构完成交接（最新）
-- [`docs/handoff/2026-09-03-code-review-bugs-architecture-handoff.md`](docs/handoff/2026-09-03-code-review-bugs-architecture-handoff.md) — 2026-09-03 项目代码审查、Bug 诊断与架构重构
+- [`docs/handoff/2026-09-03-futures-complete-defects-resolution-handoff.md`](docs/handoff/2026-09-03-futures-complete-defects-resolution-handoff.md) — 2026-09-03 境内期货全链路支持与全面代码审查缺陷闭环重构交接（最新）
+- [`docs/handoff/2026-09-03-gemini-implementation-code-review-handoff.md`](docs/handoff/2026-09-03-gemini-implementation-code-review-handoff.md) — 2026-09-03 第三方与 GPT 详细代码审查与缺陷诊断清单
+- [`docs/handoff/2026-09-03-phase4-futures-full-pipeline-handoff.md`](docs/handoff/2026-09-03-phase4-futures-full-pipeline-handoff.md) — 2026-09-03 境内期货全链路支持与中低缺陷重构初版交接
 - [`docs/handoff/2026-09-02-runtime-bugs-chart-benchmark-handoff.md`](docs/handoff/2026-09-02-runtime-bugs-chart-benchmark-handoff.md) — 10 日涨幅扫描、分时/K 线实时更新与国内行情图对照修复（2026-09-02）
 - [`docs/handoff/2026-06-05-phase8-chart-rerender-fix-handoff.md`](docs/handoff/2026-06-05-phase8-chart-rerender-fix-handoff.md) — 涨停页 chart 重新挂载修复（2026-06-06）
 - [`docs/handoff/2026-06-05-phase8-cache-preload-multi-chart-handoff.md`](docs/handoff/2026-06-05-phase8-cache-preload-multi-chart-handoff.md) — K线持久化 + 预拉 + 涨停页多 chart（2026-06-05）
