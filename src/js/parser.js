@@ -11,7 +11,7 @@ export function normalizeCode(input) {
   if (!/^\d{6}$/.test(raw)) return null;
   const first = raw[0];
   if (first === '6' || first === '5') return 'sh' + raw;
-  if (first === '0' || first === '3') return 'sz' + raw;
+  if (first === '0' || first === '3' || first === '1') return 'sz' + raw;
   if (first === '4' || first === '8' || first === '9') return 'bj' + raw;
   return null;
 }
@@ -78,49 +78,43 @@ export function parseTencent(text) {
   return out;
 }
 
-function div100(n) {
-  const v = Number(n);
-  return Number.isFinite(v) ? v / 100 : 0;
-}
+const div100 = (v) => (v !== undefined && v !== '-' && v !== null ? Number(v) / 100 : 0);
 
 export function parseEastmoney(json) {
-  if (!json || typeof json !== 'object') return null;
+  if (!json || typeof json !== 'object' || !json.data) return null;
   const d = json.data;
-  if (!d || typeof d !== 'object') return null;
-  if (d.f43 === undefined || d.f43 === null) return null;
-  if (!d.f57) return null;
-
+  if (d.f43 === undefined || d.f43 === null || !d.f57) return null;
   const price = div100(d.f43);
   const prevClose = div100(d.f60);
+  const open = div100(d.f46);
   const change = d.f169 !== undefined && d.f169 !== null && d.f169 !== '-'
     ? div100(d.f169)
     : (price - prevClose);
   const changePercent = d.f170 !== undefined && d.f170 !== null && d.f170 !== '-'
     ? div100(d.f170)
     : (prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0);
-
-  const code = normalizeCode(String(d.f57)) || String(d.f57);
-
+  const rawCode = String(d.f57).toLowerCase();
+  const fullCode = normalizeCode(rawCode) || ((d.f107 === 1 ? 'sh' : 'sz') + rawCode);
   return {
-    code,
-    name: d.f58 || code,
-    price,
-    prevClose,
-    open: div100(d.f46),
+    code: fullCode,
+    name: d.f58 || fullCode,
+    price: Number(price.toFixed(2)),
+    prevClose: Number(prevClose.toFixed(2)),
+    open: Number(open.toFixed(2)),
     high: div100(d.f44),
     low: div100(d.f45),
-      volume: Number(d.f47) || 0,
-      amount: Number(d.f48) || 0,
-      volumeRatio: div100(d.f50),
-      openChangePercent: prevClose > 0 ? Number((((div100(d.f46) - prevClose) / prevClose) * 100).toFixed(2)) : 0,
-      change: Number(change.toFixed(2)),
+    volume: Number(d.f47) || 0,
+    amount: Number(d.f48) || 0,
+    volumeRatio: div100(d.f50),
+    openChangePercent: (prevClose > 0 && open > 0) ? Number((((open - prevClose) / prevClose) * 100).toFixed(2)) : 0,
+    change: Number(change.toFixed(2)),
     changePercent: Number(changePercent.toFixed(2)),
     type: 'stock',
     source: 'eastmoney'
   };
 }
 
-const SINA_FUTURE_RE = /var\s+hq_str_(nf[a-z0-9]+)="([^"]*)"/gi;
+const SINA_FUTURE_RE = /(?:var\s+)?hq_str_(nf_?[a-z0-9]+)="([^"]*)"/gi;
 
 export function parseSinaFuture(text) {
   if (!text || typeof text !== 'string') return [];

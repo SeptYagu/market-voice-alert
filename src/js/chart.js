@@ -234,7 +234,18 @@ export function createKlineChart(container, opts = {}) {
       return;
     }
     const previous = klineDataMap.get(_timeKey(bar.time));
-    klineDataMap.set(_timeKey(bar.time), { bar, prevClose: previous ? previous.prevClose : null });
+    let prevClose = previous ? previous.prevClose : null;
+    if (prevClose === null || prevClose === undefined) {
+      const values = Array.from(klineDataMap.values());
+      for (let i = values.length - 1; i >= 0; i--) {
+        const entry = values[i];
+        if (entry && entry.bar && _timeKey(entry.bar.time) !== _timeKey(bar.time) && Number.isFinite(entry.bar.close)) {
+          prevClose = entry.bar.close;
+          break;
+        }
+      }
+    }
+    klineDataMap.set(_timeKey(bar.time), { bar, prevClose });
     renderDetail(bar.time);
   }
 
@@ -499,6 +510,15 @@ export function createIntradayChart(container, opts = {}) {
   function setData(items) {
     const arr = Array.isArray(items) ? items : [];
     intradayDataMap.clear();
+    if (!arr.length) {
+      currentPrevClose = null;
+      if (detailLegend) detailLegend.textContent = '';
+      if (priceSeries) priceSeries.setData([]);
+      if (averageSeries) averageSeries.setData([]);
+      if (percentSeries) percentSeries.setData([]);
+      if (volumeSeries) volumeSeries.setData([]);
+      return;
+    }
     for (const point of arr) intradayDataMap.set(_timeKey(point.time), point);
     const firstWithPreClose = arr.find((it) => Number.isFinite(Number(it.preClose)) && Number(it.preClose) > 0);
     currentPrevClose = firstWithPreClose
@@ -515,7 +535,7 @@ export function createIntradayChart(container, opts = {}) {
     const date = chartSecondsToDate(firstTime);
     const timeline = [];
     if (date) {
-      for (const [startHour, startMinute, endHour, endMinute] of [[9, 30, 11, 30], [13, 0, 15, 0]]) {
+      for (const [startHour, startMinute, endHour, endMinute] of [[9, 31, 11, 30], [13, 1, 15, 0]]) {
         const start = startHour * 60 + startMinute;
         const end = endHour * 60 + endMinute;
         for (let minute = start; minute <= end; minute++) {

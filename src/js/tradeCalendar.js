@@ -114,12 +114,21 @@ export function resolveLatestTradingDate(date, tradingDates) {
 }
 
 export function shiftTradingDate(date, delta, tradingDates) {
-  const dates = Array.isArray(tradingDates) && tradingDates.length ? tradingDates : _fallbackTradingDatesAround(date);
-  const current = resolveLatestTradingDate(date, dates);
-  const idx = dates.indexOf(current);
-  if (idx < 0) return current;
-  const nextIdx = Math.max(0, Math.min(dates.length - 1, idx + Number(delta || 0)));
-  return dates[nextIdx] || current;
+  const target = _toDateString(date) || getBeijingDate();
+  const dates = Array.isArray(tradingDates) && tradingDates.length ? tradingDates : _fallbackTradingDatesAround(target);
+  const isExactTradingDay = dates.includes(target);
+  const latestBefore = resolveLatestTradingDate(target, dates);
+  const numDelta = Number(delta || 0);
+
+  if (!isExactTradingDay && numDelta === -1) {
+    return latestBefore;
+  }
+
+  const idx = dates.indexOf(latestBefore);
+  if (idx < 0) return latestBefore;
+  const step = (!isExactTradingDay && numDelta < -1) ? (numDelta + 1) : numDelta;
+  const nextIdx = Math.max(0, Math.min(dates.length - 1, idx + step));
+  return dates[nextIdx] || latestBefore;
 }
 
 export function getAdjacentTradingDates(date, tradingDates, today = getBeijingDate()) {

@@ -194,13 +194,18 @@ export async function getCachedIntraday({
 
   const selectedDate = dateKeyToDash(dateKey);
   const allowLatest = allowLatestTickSource && !isHistoricalDate(dateKey);
-  const mode = allowLatest ? 'latest' : 'historical';
   const safePrevClose = prevCloseKey(prevClose);
   const safeName = sanitizeSegment(name) ? String(name) : code;
-  const parts = ['intraday', code, `${dateKey}-${mode}-${safePrevClose}.json`];
+  const parts = ['intraday', code, `${dateKey}-${safePrevClose}.json`];
 
   if (!allowLatest) {
-    const historical = await readHistoricalCache(parts, INTRADAY_TTL_MS);
+    let historical = await readHistoricalCache(parts, INTRADAY_TTL_MS);
+    if (!historical) {
+      historical = await readHistoricalCache(['intraday', code, `${dateKey}-historical-${safePrevClose}.json`], INTRADAY_TTL_MS);
+    }
+    if (!historical) {
+      historical = await readHistoricalCache(['intraday', code, `${dateKey}-latest-${safePrevClose}.json`], INTRADAY_TTL_MS);
+    }
     if (historical) {
       historical.data = { ...historical.data, name: name || historical.data.name || code };
       return historical;

@@ -22,8 +22,9 @@ export function createHashRouter(routes, defaultPath, rootArg) {
   function dispatch() {
     if (typeof location === 'undefined') return;
     const current = location.hash || defaultHash;
-    const handler = Object.prototype.hasOwnProperty.call(routes, current)
-      ? routes[current]
+    const path = current.split('?')[0];
+    const handler = Object.prototype.hasOwnProperty.call(routes, path)
+      ? routes[path]
       : null;
     if (handler) {
       try {
@@ -33,7 +34,7 @@ export function createHashRouter(routes, defaultPath, rootArg) {
       }
       return;
     }
-    if (current !== defaultHash) {
+    if (path !== defaultHash) {
       navigate(defaultHash);
     }
   }

@@ -182,9 +182,12 @@ export function getLimitUpComparator(sortKey = 'amount') {
 
 export function sortLimitUpGroupItems(items, sortKey = 'amount', direction = 'desc') {
   if (!Array.isArray(items)) return [];
-  const compare = getLimitUpComparator(sortKey);
-  const sorted = [...items].sort(compare);
-  return direction === 'asc' ? sorted.reverse() : sorted;
+  const baseCompare = getLimitUpComparator(sortKey);
+  const sign = direction === 'asc' ? -1 : 1;
+  return [...items].sort((a, b) => {
+    const res = baseCompare(a, b);
+    return res !== 0 ? res * sign : 0;
+  });
 }
 
 function _lookupLive(liveQuotes, code) {

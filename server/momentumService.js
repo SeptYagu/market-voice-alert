@@ -325,7 +325,11 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt }
             .slice()
             .sort((a, b) => (b.gainPercent || 0) - (a.gainPercent || 0))
         };
-        progressWrite = progressWrite.then(() => writeMomentumProgress(parts, progress));
+        progressWrite = progressWrite
+          .then(() => writeMomentumProgress(parts, progress))
+          .catch((e) => {
+            console.warn(`writeMomentumProgress failed: ${e && e.message ? e.message : e}`);
+          });
         await progressWrite;
       }
     }
@@ -334,8 +338,11 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt }
   const freshFound = found
     .filter((item) => item.marketDate === latestMarketDate)
     .sort((a, b) => (b.gainPercent || 0) - (a.gainPercent || 0));
+  const totalFailures = refreshFailures + universeRefreshFailures;
+  const failureRatio = universe.length > 0 ? totalFailures / universe.length : 1;
+  const isComplete = totalFailures === 0 || (failureRatio <= 0.03 && universe.length >= 100);
   return {
-    status: refreshFailures > 0 || universeRefreshFailures > 0 ? 'partial' : 'complete',
+    status: isComplete ? 'complete' : 'partial',
     date: dateKey,
     threshold,
     lookbackDays: LOOKBACK_DAYS,
@@ -417,65 +424,78 @@ export function startTenDayMomentumScan({ date, threshold: rawThreshold, reason 
   const threshold = parsePositiveNumber(rawThreshold, DEFAULT_THRESHOLD);
   const parts = cacheParts(dateKey, threshold);
   const jobKey = `${dateKey}|${threshold}`;
-  if (!JOBS.has(jobKey)) {
-    const controller = new AbortController();
-    const startedAt = nowMs();
-    const job = buildMomentum({
-      dateKey,
-      threshold,
-      parts,
-      signal: controller.signal,
-      jobStartedAt: startedAt
-    })
-      .then(async (data) => {
-        const completed = { ...data, reason };
-        await writeMomentumProgress(parts, completed);
-        if (completed.status === 'complete') {
-          await writeMomentumProgress(successCacheParts(dateKey, threshold), completed);
-        }
-        return data;
-      })
-      .catch(async (err) => {
-        const lastSuccess = await readCache(successCacheParts(dateKey, threshold), { skipTouch: true });
-        const prior = lastSuccess && lastSuccess.data
-          ? lastSuccess
-          : await readCache(parts, { skipTouch: true });
-        const data = {
-          status: 'error',
-          date: dateKey,
-          threshold,
-          lookbackDays: LOOKBACK_DAYS,
-          universeSize: prior && prior.data ? Number(prior.data.universeSize) || 0 : 0,
-          scanned: prior && prior.data ? Number(prior.data.scanned) || 0 : 0,
-          items: prior && prior.data && Array.isArray(prior.data.items) ? prior.data.items : [],
-          error: err && err.message ? err.message : String(err),
-          reason
-        };
-        await writeMomentumProgress(parts, data);
-        return data;
-      })
-      .finally(() => {
-        JOBS.delete(jobKey);
-      });
-    JOBS.set(jobKey, { promise: job, startedAt });
+  if (JOBS.has(jobKey)) {
+    const existing = JOBS.get(jobKey);
+    if (existing && existing.startedAt && (nowMs() - existing.startedAt > 10 * 60 * 1000)) {
+      JOBS.delete(jobKey);
+    } else if (existing && existing.promise) {
+      return existing.promise;
+    }
   }
+
+  const controller = new AbortController();
+  const startedAt = nowMs();
+  const job = buildMomentum({
+    dateKey,
+    threshold,
+    parts,
+    signal: controller.signal,
+    jobStartedAt: startedAt
+  })
+    .then(async (data) => {
+      const completed = { ...data, reason };
+      await writeMomentumProgress(parts, completed);
+      if (completed.status === 'complete' || (completed.status === 'partial' && (completed.scanned >= 100 && (completed.refreshFailures || 0) / completed.scanned <= 0.03))) {
+        await writeMomentumProgress(successCacheParts(dateKey, threshold), completed);
+      }
+      return data;
+    })
+    .catch(async (err) => {
+      const lastSuccess = await readCache(successCacheParts(dateKey, threshold), { skipTouch: true });
+      const prior = lastSuccess && lastSuccess.data
+        ? lastSuccess
+        : await readCache(parts, { skipTouch: true });
+      const data = {
+        status: 'error',
+        date: dateKey,
+        threshold,
+        lookbackDays: LOOKBACK_DAYS,
+        universeSize: prior && prior.data ? prior.data.universeSize : 0,
+        scanned: prior && prior.data ? prior.data.scanned : 0,
+        latestMarketDate: prior && prior.data ? prior.data.latestMarketDate : null,
+        items: prior && prior.data && Array.isArray(prior.data.items) ? prior.data.items : [],
+        error: err && err.message ? err.message : String(err)
+      };
+      await writeMomentumProgress(parts, data);
+      return data;
+    })
+    .finally(() => {
+      JOBS.delete(jobKey);
+    });
+  JOBS.set(jobKey, { promise: job, startedAt });
   return JOBS.get(jobKey).promise;
 }
 
-async function ensureStartupMomentumScan(logger) {
+function ensureStartupMomentumScan(logger) {
   const dateKey = beijingDateKey();
   const threshold = DEFAULT_THRESHOLD;
-  const cached = await readCache(cacheParts(dateKey, threshold), { skipTouch: true });
-  if (
-    cached &&
-    cached.data &&
-    cached.data.status === 'complete' &&
-    Number(cached.data.universeSize) > 0
-  ) return;
-  startTenDayMomentumScan({ date: dateKey, threshold, reason: 'startup' })
-    .catch((err) => {
-      if (logger && logger.warn) logger.warn(`momentum startup scan failed: ${err && err.message ? err.message : err}`);
-    });
+  const parts = ['momentum', 'ten-day', `${dateKey}-t${threshold}.json`];
+
+  return readCache(parts, { skipTouch: true }).then((cached) => {
+    if (cached && cached.data && Array.isArray(cached.data.items) && cached.data.items.length) {
+      if (logger && logger.info) {
+        logger.info(`momentum shared cache present for ${dateKey}, skipping startup scan`);
+      }
+      return null;
+    }
+    if (logger && logger.info) {
+      logger.info(`momentum shared cache missing for ${dateKey}, starting background startup scan`);
+    }
+    return startTenDayMomentumScan({ date: dateKey, threshold, reason: 'startup' })
+      .catch((err) => {
+        if (logger && logger.warn) logger.warn(`momentum startup scan failed: ${err && err.message ? err.message : err}`);
+      });
+  });
 }
 
 export function startMomentumScheduler({ logger = console } = {}) {
@@ -483,13 +503,17 @@ export function startMomentumScheduler({ logger = console } = {}) {
   schedulerStarted = true;
 
   const scheduleNext = () => {
+    if (!schedulerStarted) return;
     const next = nextScheduledScan();
     schedulerTimer = setTimeout(() => {
+      if (!schedulerStarted) return;
       startTenDayMomentumScan({ date: beijingDateKey(), threshold: DEFAULT_THRESHOLD, reason: next.label })
         .catch((err) => {
           if (logger && logger.warn) logger.warn(`momentum scheduled scan failed: ${err && err.message ? err.message : err}`);
         })
-        .finally(scheduleNext);
+        .finally(() => {
+          if (schedulerStarted) scheduleNext();
+        });
     }, Math.max(1000, next.delayMs));
   };
 

@@ -148,8 +148,8 @@ export function calcMA(items, n) {
   }
   out.push({ time: items[n - 1].time, value: _round4(sum / n) });
   for (let i = n; i < items.length; i++) {
-    const cIn = Number(items[i].close);
-    const cOut = Number(items[i - n].close);
+    const cIn = Number(items[i] && items[i].close);
+    const cOut = Number(items[i - n] && items[i - n].close);
     if (!Number.isFinite(cIn) || !Number.isFinite(cOut)) return [];
     sum += cIn - cOut;
     out.push({ time: items[i].time, value: _round4(sum / n) });
@@ -308,8 +308,8 @@ export function getPriceLimit(code, name) {
   const numeric = code.replace(/^(sh|sz)/i, '');
   // 创业板 300xxx
   if (numeric.startsWith('30')) return 20;
-  // 科创板 688xxx
-  if (numeric.startsWith('688')) return 20;
+  // 科创板 688xxx / 689xxx (CDR)
+  if (numeric.startsWith('688') || numeric.startsWith('689')) return 20;
   return 10;
 }
 

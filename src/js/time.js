@@ -12,6 +12,17 @@ export function formatDateForInput(d = new Date()) {
   return `${y}-${m}-${day}`;
 }
 
+export function formatDateTime(d = new Date()) {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = _pad2(d.getMonth() + 1);
+  const day = _pad2(d.getDate());
+  const h = _pad2(d.getHours());
+  const mi = _pad2(d.getMinutes());
+  const s = _pad2(d.getSeconds());
+  return `${y}-${m}-${day} ${h}:${mi}:${s}`;
+}
+
 export function getBeijingClockParts(now = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Shanghai',

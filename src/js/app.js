@@ -63,7 +63,7 @@ import {
   getAdjacentTradingDates,
   resolveLatestTradingDate
 } from './tradeCalendar.js';
-import { chartTimeToDate, getBeijingDate } from './time.js';
+import { chartTimeToDate, getBeijingDate, formatDateTime } from './time.js';
 import {
   DEFAULT_SMART_SCHEDULE,
   getMarketSession,
@@ -247,7 +247,7 @@ export function parseBatchInput(input) {
 function normalizeFuture(input) {
   if (!input || typeof input !== 'string') return null;
   const raw = input.trim().toLowerCase();
-  if (/^nf[a-z0-9]+$/.test(raw)) return raw;
+  if (/^nf_?[a-z0-9]+$/.test(raw)) return raw;
   return null;
 }
 
@@ -340,6 +340,7 @@ const state = {
   loading: false,
   lastUpdate: null,
   error: null,
+  info: null,
   expandedCodes: new Set(),
   chartInstances: new Map(),
   voice: { ...DEFAULT_VOICE_SETTINGS },
@@ -1694,8 +1695,9 @@ function renderStatus() {
   if (state.alert.enabled) parts.push(`🔔 ±${state.alert.threshold}%`);
   if (state.loading) parts.push('加载中...');
   if (state.lastUpdate) {
-    parts.push(`更新于 ${state.lastUpdate.toLocaleTimeString()}`);
+    parts.push(`更新于 ${formatDateTime(state.lastUpdate)}`);
   }
+  if (state.info) parts.push(state.info);
   if (state.error) parts.push(`错误: ${state.error}`);
   bar.textContent = parts.join(' · ');
 }
@@ -2097,9 +2099,23 @@ async function limitUpFetch() {
     rerenderLimitUpPage();
     if (isLimitUpDateToday(date)) {
       enrichLimitUpItemsWithQuotes(rawItems, controller.signal)
-        .then((items) => {
+        .then((quoteEnriched) => {
           if (requestSeq !== state.limitUp.requestSeq || state.limitUp.selectedDate !== date) return;
-          state.limitUp = applyLimitUpFetchResult(state.limitUp, items);
+          const quoteMap = new Map(quoteEnriched.map((it) => [it.code, it]));
+          state.limitUp.items = state.limitUp.items.map((it) => {
+            const q = quoteMap.get(it.code);
+            return q ? {
+              ...it,
+              price: q.price,
+              change: q.change,
+              changePercent: q.changePercent,
+              amount: q.amount,
+              open: q.open,
+              openChangePercent: q.openChangePercent,
+              volumeRatio: q.volumeRatio
+            } : it;
+          });
+          state.limitUp.groups = buildLimitUpGroupsForState();
           rerenderLimitUpPage();
         })
         .catch(() => { /* best-effort live quote enrichment */ });
@@ -2208,6 +2224,7 @@ function kickoffLimitUpReasonsFetch(date, forceRefresh = false, requestSeq = sta
 
 function handleLimitUpDateChange(newDate) {
   // YYYY-MM-DD string (HTML5 <input type="date">) or null = today
+  closeAllLimitUpCharts();
   clearLimitUpMetadataCache();
   state.limitUp.requestSeq += 1;
   if (state.limitUp.abort) {
@@ -2292,7 +2309,7 @@ function handleLimitUpAddAndNavigate(code) {
   const wasInList = state.watchList.includes(code);
   addToWatchList(code);
   state.watchList = getWatchList();
-  flashError(wasInList ? `已在监控列表：` : `已加入监控：${code}`);
+  flashInfo(wasInList ? `已在监控列表：${code}` : `已加入监控：${code}`);
   navigate('#/');
   refreshNow();
   renderData();
@@ -2346,12 +2363,11 @@ function handleLimitUpSelectNone() {
   rerenderLimitUpPage();
 }
 
-function handleLimitUpAddSelectedAndNavigate(codes) {
-  if (!Array.isArray(codes) || !codes.length) return;
-  const unique = [...new Set(codes.filter(Boolean))];
-  if (!unique.length) return;
+function handleLimitUpAddSelectedAndNavigate() {
+  const codes = state.limitUp.selectedCodes;
+  if (!codes || !codes.size) return;
   let added = 0;
-  for (const code of unique) {
+  for (const code of codes) {
     if (!state.watchList.includes(code)) {
       addToWatchList(code);
       added++;
@@ -2359,7 +2375,7 @@ function handleLimitUpAddSelectedAndNavigate(codes) {
   }
   state.watchList = getWatchList();
   state.limitUp.selectedCodes = new Set();
-  flashError(added > 0 ? `已加入监控 ${added} 只` : `已选标的已在监控列表`);
+  flashInfo(added > 0 ? `已加入监控 ${added} 只` : `已选标的已在监控列表`);
   navigate('#/');
   refreshNow();
   renderData();
@@ -2473,6 +2489,7 @@ function handleToggleSubscribe(code, checked) {
     }
   } else {
     state.subscribed.delete(code);
+    if (state.alertStates && state.alertStates[code]) delete state.alertStates[code];
   }
   persistSubscribed();
   if (checked) refreshNow();
@@ -2685,7 +2702,7 @@ function handleTestAlert() {
   if (isNotificationSupported() && state.notifPermission === 'granted') {
     showNotification('价格提醒（测试）', message);
   } else if (!isNotificationSupported() || state.notifPermission !== 'granted') {
-    flashError('已模拟语音提醒；如需桌面通知请先在下方授权');
+    flashInfo('已模拟语音提醒；如需桌面通知请先在下方授权');
   }
 }
 
@@ -3053,6 +3070,17 @@ function flashError(msg) {
   }, 3000);
 }
 
+function flashInfo(msg) {
+  state.info = msg;
+  renderStatus();
+  setTimeout(() => {
+    if (state.info === msg) {
+      state.info = null;
+      renderStatus();
+    }
+  }, 3000);
+}
+
 async function refreshNow() {
   const refreshCodes = getRefreshCodes();
   if (!refreshCodes.length || state.loading) return;
@@ -3121,7 +3149,7 @@ function getRefreshCodes() {
 // the chart-row below are left untouched — those only need rebuilding on
 // structural changes (add/remove/expand/period-change).
 function updateRowQuoteCells(code) {
-  const row = document.querySelector(`tr[data-code="${code}"]`);
+  const row = document.querySelector(`#watch-tbody tr[data-code="${code}"]`);
   if (!row) return;
   const q = state.quotes.get(code);
   if (!q) return;

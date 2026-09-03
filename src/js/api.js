@@ -272,7 +272,7 @@ export async function fetchIntraday(code, opts = {}) {
     prevClose: opts.prevClose,
     signal: opts.signal
   };
-  const errors = sharedCacheError ? [{ source: 'shared-cache', error: sharedCacheError }] : [];
+  const networkErrors = [];
 
   // The shared server already tried the AKTools tick/minute sources. When it
   // fails, do not repeat the same slow upstream waterfall in the browser.
@@ -283,7 +283,7 @@ export async function fetchIntraday(code, opts = {}) {
       if (_hasIntradayItems(filtered)) return filtered;
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;
-      errors.push({ source: 'aktools-stock_intraday_em', error: e });
+      networkErrors.push({ source: 'aktools-stock_intraday_em', error: e });
     }
   }
 
@@ -294,7 +294,7 @@ export async function fetchIntraday(code, opts = {}) {
       if (_hasIntradayItems(filtered)) return filtered;
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;
-      errors.push({ source: 'aktools-stock_zh_a_hist_min_em', error: e });
+      networkErrors.push({ source: 'aktools-stock_zh_a_hist_min_em', error: e });
     }
   }
 
@@ -305,7 +305,7 @@ export async function fetchIntraday(code, opts = {}) {
       if (_hasIntradayItems(filtered)) return filtered;
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;
-      errors.push({ source: 'eastmoney-trends2', error: e });
+      networkErrors.push({ source: 'eastmoney-trends2', error: e });
     }
   }
 
@@ -322,11 +322,14 @@ export async function fetchIntraday(code, opts = {}) {
     }
   } catch (e) {
     if (e && e.name === 'AbortError') throw e;
-    errors.push({ source: 'eastmoney-kline-1m', error: e });
+    networkErrors.push({ source: 'eastmoney-kline-1m', error: e });
   }
 
-  if (errors.length) {
-    const details = errors
+  if (networkErrors.length) {
+    const allErrors = sharedCacheError
+      ? [{ source: 'shared-cache', error: sharedCacheError }, ...networkErrors]
+      : networkErrors;
+    const details = allErrors
       .map(({ source, error }) => `${source}: ${error && error.message ? error.message : error}`)
       .join('; ');
     throw new Error(`分时数据源全部失败: ${details}`);
@@ -439,7 +442,6 @@ function _scheduleKlineRevalidate(code, period, opts = {}) {
   if (_revalidatingKline.has(key)) return;
   _revalidatingKline.add(key);
   setTimeout(() => {
-    _revalidatingKline.delete(key);
     const refresh = opts.sharedCache === true
       ? _fetchKlineFromSharedCache(code, period, null).catch(() => _fetchKlineFromNetwork(code, period, null))
       : _fetchKlineFromNetwork(code, period, null);
@@ -450,7 +452,10 @@ function _scheduleKlineRevalidate(code, period, opts = {}) {
           emitKlineUpdated(code, period, data);
         }
       })
-      .catch(() => { /* best-effort */ });
+      .catch(() => { /* best-effort */ })
+      .finally(() => {
+        _revalidatingKline.delete(key);
+      });
   }, 0);
 }
 

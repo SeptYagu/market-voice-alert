@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { setupApiMocks, clearLocalStorage, stubWebSpeech, stubNotification, DEFAULT_TIMEOUT } from './helpers.js';
 
 const EXPECTED_VERSION = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
-const EXPECTED_UPDATED = execFileSync('git', ['show', '-s', '--format=%cs', 'HEAD'], { encoding: 'utf8' }).trim();
+const EXPECTED_UPDATED = execFileSync('git', ['show', '-s', '--date=format:%Y-%m-%d %H:%M:%S', '--format=%cd', 'HEAD'], { encoding: 'utf8' }).trim();
 
 test.describe('路由切换', () => {
   test.beforeEach(async ({ page }) => {

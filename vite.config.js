@@ -17,7 +17,7 @@ function readGitValue(args, fallback) {
 export function getAppVersionMetadata(env = process.env) {
   return {
     version: env.APP_VERSION || readGitValue(['rev-parse', '--short', 'HEAD'], 'unknown'),
-    updated: env.APP_UPDATED_DATE || readGitValue(['show', '-s', '--format=%cs', 'HEAD'], 'unknown')
+    updated: env.APP_UPDATED_DATE || readGitValue(['show', '-s', '--date=format:%Y-%m-%d %H:%M:%S', '--format=%cd', 'HEAD'], 'unknown')
   };
 }
 
@@ -179,7 +179,7 @@ export default defineConfig({
     chunkSizeWarningLimit: 600,
     terserOptions: {
       compress: {
-        drop_console: true,
+        pure_funcs: ['console.log', 'console.debug', 'console.info'],
         drop_debugger: true
       },
       mangle: { toplevel: false }

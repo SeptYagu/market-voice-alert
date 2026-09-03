@@ -43,12 +43,13 @@ export function speak(text, userOpts = {}) {
   const opts = { ...getDefaultVoiceOpts(), ...userOpts };
   const utterance = _createUtterance(trimmed, opts);
   _queue.push(utterance);
-  // Drain on each utterance end so queue size mirrors actual pending work.
-  if (utterance && typeof utterance === 'object' && 'onend' in utterance) {
-    utterance.onend = () => {
-      const i = _queue.indexOf(utterance);
-      if (i >= 0) _queue.splice(i, 1);
-    };
+  const cleanup = () => {
+    const i = _queue.indexOf(utterance);
+    if (i >= 0) _queue.splice(i, 1);
+  };
+  if (utterance && typeof utterance === 'object') {
+    if ('onend' in utterance) utterance.onend = cleanup;
+    if ('onerror' in utterance) utterance.onerror = cleanup;
   }
   try {
     synth.speak(utterance);

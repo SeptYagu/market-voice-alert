@@ -290,7 +290,12 @@ function _readKlineCacheEntry(code, period) {
 }
 
 function _writeKlineCacheObject(obj) {
-  setRaw(KLINE_CACHE_KEY, JSON.stringify(obj));
+  const ok = setRaw(KLINE_CACHE_KEY, JSON.stringify(obj));
+  if (!ok) {
+    const err = new Error('QuotaExceeded');
+    err.name = 'QuotaExceededError';
+    throw err;
+  }
 }
 
 function _readKlineCacheObject() {
