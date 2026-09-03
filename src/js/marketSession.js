@@ -50,3 +50,50 @@ export function isAutoRefreshAllowedInSession(session, smartSchedule) {
   if (session === 'after-close') return !cfg.autoStopAfterClose;
   return false;
 }
+
+export function isFuturesMarketOpen(now = new Date(), tradingDates = []) {
+  const clock = getBeijingClockParts(now);
+  const timeMin = clock.hour * 60 + clock.minute;
+  const beijingToday = getBeijingDate(now);
+  const beijingDate = new Date(Date.UTC(clock.year, clock.month - 1, clock.day, 12, 0, 0));
+  const beijingDayOfWeek = beijingDate.getUTCDay();
+  const isWeekend = beijingDayOfWeek === 0 || beijingDayOfWeek === 6;
+  const hasCalendar = Array.isArray(tradingDates) && tradingDates.length > 0;
+  const isTradingDay = hasCalendar ? tradingDates.includes(beijingToday) : !isWeekend;
+
+  // 1. 日盘：08:55 - 11:30, 13:00 - 15:15
+  if (isTradingDay && ((timeMin >= 8 * 60 + 55 && timeMin <= 11 * 60 + 30) || (timeMin >= 13 * 60 && timeMin <= 15 * 60 + 15))) {
+    return true;
+  }
+
+  // 2. 当晚夜盘：20:55 - 24:00 (周一至周五工作日)
+  if (isTradingDay && beijingDayOfWeek >= 1 && beijingDayOfWeek <= 5 && timeMin >= 20 * 60 + 55 && timeMin < 24 * 60) {
+    return true;
+  }
+
+  // 3. 次日凌晨跨午夜夜盘：00:00 - 02:30 (周二至周六凌晨)
+  if (beijingDayOfWeek >= 2 && beijingDayOfWeek <= 6 && timeMin <= 2 * 60 + 30) {
+    return true;
+  }
+
+  return false;
+}
+
+export function isLiveTradeDate(selectedDate, isFuture = false, now = new Date(), _tradingDates = []) {
+  const beijingToday = getBeijingDate(now);
+  if (!selectedDate || selectedDate === beijingToday) return true;
+  if (isFuture) {
+    const clock = getBeijingClockParts(now);
+    const timeMin = clock.hour * 60 + clock.minute;
+    // 如果在夜盘时段 (20:55以后)，选中的日期等于下一个交易日，亦属于 live 会话
+    if (timeMin >= 20 * 60 + 50) {
+      const dt = new Date(Date.UTC(clock.year, clock.month - 1, clock.day, 12, 0, 0));
+      const dow = dt.getUTCDay();
+      const delta = dow === 5 ? 3 : 1;
+      dt.setUTCDate(dt.getUTCDate() + delta);
+      const nextDayStr = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+      if (selectedDate === nextDayStr) return true;
+    }
+  }
+  return false;
+}

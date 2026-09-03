@@ -99,6 +99,47 @@ QUnit.module('futures.sessionService', () => {
     t.equal(s.isTrading, false);
     t.equal(s.sessionStatus, 'closed');
   });
+
+  QUnit.test('Friday night session attributes to Monday', (t) => {
+    // 2026-09-04 21:30 (Friday night) -> belongs to Monday 2026-09-07
+    const d = new Date('2026-09-04T21:30:00+08:00');
+    const s = getFuturesSession('RB2510', d, ['2026-09-04', '2026-09-07']);
+    t.equal(s.isTrading, true);
+    t.equal(s.sessionKind, 'night');
+    t.equal(s.tradingDay, '2026-09-07');
+  });
+
+  QUnit.test('Saturday 01:30 night continuation attributes to Monday', (t) => {
+    // 2026-09-05 01:30 (Saturday morning for AU) -> belongs to Monday 2026-09-07
+    const d = new Date('2026-09-05T01:30:00+08:00');
+    const s = getFuturesSession('AU0', d, ['2026-09-04', '2026-09-07']);
+    t.equal(s.isTrading, true);
+    t.equal(s.sessionKind, 'night');
+    t.equal(s.tradingDay, '2026-09-07');
+  });
+
+  QUnit.test('Sunday & Monday early morning have no night session (closed)', (t) => {
+    // Sunday 01:30
+    const sun = new Date('2026-09-06T01:30:00+08:00');
+    const sSun = getFuturesSession('AU0', sun, ['2026-09-04', '2026-09-07']);
+    t.equal(sSun.isTrading, false);
+    t.equal(sSun.sessionStatus, 'closed');
+
+    // Monday 01:30
+    const mon = new Date('2026-09-07T01:30:00+08:00');
+    const sMon = getFuturesSession('AU0', mon, ['2026-09-04', '2026-09-07']);
+    t.equal(sMon.isTrading, false);
+    t.equal(sMon.sessionStatus, 'closed');
+  });
+
+  QUnit.test('Statutory holiday is closed even on weekdays', (t) => {
+    // 2026-10-01 10:00 (National Day Thursday)
+    const d = new Date('2026-10-01T10:00:00+08:00');
+    const s = getFuturesSession('RB2510', d, ['2026-09-30', '2026-10-08']);
+    t.equal(s.isTrading, false);
+    t.equal(s.sessionStatus, 'closed');
+    t.equal(s.tradingDay, '2026-09-30');
+  });
 });
 
 QUnit.module('futures.presenter', () => {
@@ -115,7 +156,14 @@ QUnit.module('futures.presenter', () => {
     t.equal(res.change, 10);
   });
 
-  QUnit.test('formats futures quote preserving fields', (t) => {
+  QUnit.test('supports 3-decimal precision for Treasury futures', (t) => {
+    // 10-year Treasury tick is 0.005
+    const res = calculateFuturesChange(106.425, 106.310, 106.300, 0.005);
+    t.equal(res.baseline, 106.310);
+    t.equal(res.change, 0.115);
+  });
+
+  QUnit.test('formats futures quote preserving fields, completing name and canonical code', (t) => {
     const q = formatFuturesQuote({
       code: 'nf_rb2510',
       price: 3300,
@@ -124,6 +172,8 @@ QUnit.module('futures.presenter', () => {
       openInterest: 1500000,
       volume: 45000
     });
+    t.equal(q.code, 'rb2510', 'code stripped of nf_');
+    t.equal(q.name, '螺纹钢2510', 'name auto-completed from catalog');
     t.equal(q.type, 'future');
     t.equal(q.change, 100);
     t.equal(q.changePercent, 3.13);

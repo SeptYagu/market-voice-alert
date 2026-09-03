@@ -520,10 +520,10 @@ export function createIntradayChart(container, opts = {}) {
       return;
     }
     for (const point of arr) intradayDataMap.set(_timeKey(point.time), point);
-    const firstWithPreClose = arr.find((it) => Number.isFinite(Number(it.preClose)) && Number(it.preClose) > 0);
+    const firstWithPreClose = arr.find((it) => Number.isFinite(Number(it.prevSettlement || it.preClose)) && Number(it.prevSettlement || it.preClose) > 0);
     currentPrevClose = firstWithPreClose
-      ? Number(firstWithPreClose.preClose)
-      : (Number.isFinite(Number(arr[0] && arr[0].prevClose)) ? Number(arr[0].prevClose) : currentPrevClose);
+      ? Number(firstWithPreClose.prevSettlement || firstWithPreClose.preClose)
+      : (Number.isFinite(Number(arr[0] && (arr[0].prevSettlement || arr[0].prevClose))) ? Number(arr[0].prevSettlement || arr[0].prevClose) : currentPrevClose);
     if (!currentPrevClose) {
       const firstPct = arr.find((it) => Number.isFinite(Number(it.percent)) && Number.isFinite(Number(it.close)));
       if (firstPct && Number(firstPct.percent) !== -100) {
@@ -533,8 +533,19 @@ export function createIntradayChart(container, opts = {}) {
     const byTime = new Map(arr.filter((it) => Number.isFinite(Number(it && it.time))).map((it) => [Number(it.time), it]));
     const firstTime = arr.find((it) => Number.isFinite(Number(it && it.time)))?.time;
     const date = chartSecondsToDate(firstTime);
+
+    const hasNonStockHours = arr.some((it) => {
+      if (!it || !Number.isFinite(Number(it.time))) return false;
+      const hhmm = chartSecondsToTime(it.time);
+      if (!hhmm) return false;
+      const [h, m] = hhmm.split(':').map(Number);
+      const min = h * 60 + m;
+      return (min < 9 * 60 + 30 && min >= 9 * 60) || min >= 15 * 60 + 5 || min < 9 * 60;
+    });
+
+    const isFutureTimeline = opts.isFuture || hasNonStockHours;
     const timeline = [];
-    if (date) {
+    if (date && !isFutureTimeline) {
       for (const [startHour, startMinute, endHour, endMinute] of [[9, 31, 11, 30], [13, 1, 15, 0]]) {
         const start = startHour * 60 + startMinute;
         const end = endHour * 60 + endMinute;
@@ -546,7 +557,7 @@ export function createIntradayChart(container, opts = {}) {
         }
       }
     }
-    const displayTimes = timeline.length ? timeline : [...byTime.keys()].sort((a, b) => a - b);
+    const displayTimes = (!isFutureTimeline && timeline.length) ? timeline : [...byTime.keys()].sort((a, b) => a - b);
     const averageByTime = new Map();
     for (const it of arr) {
       const explicitAverage = Number(it && it.avgPrice);
@@ -579,13 +590,19 @@ export function createIntradayChart(container, opts = {}) {
         return {
           time,
           value,
-          color: Number.isFinite(close) && Number.isFinite(open) && close < open ? colors.down : colors.up
+          color: close >= open ? colors.up : colors.down
         };
       });
-    if (currentPrevClose > 0) {
-      const prices = arr.map((it) => Number(it && it.close)).filter(Number.isFinite);
-      const maxDeviation = prices.reduce((max, price) => Math.max(max, Math.abs(price - currentPrevClose)), currentPrevClose * 0.002);
-      const padded = maxDeviation * 1.08;
+
+    const validPrices = priceData.map((d) => d.value).filter(Number.isFinite);
+    if (currentPrevClose > 0 && validPrices.length) {
+      let maxDiff = 0;
+      for (const p of validPrices) {
+        const diff = Math.abs(p - currentPrevClose);
+        if (diff > maxDiff) maxDiff = diff;
+      }
+      const minPadding = currentPrevClose * 0.005;
+      const padded = Math.max(maxDiff * 1.05, minPadding);
       symmetricPriceRange = { minValue: currentPrevClose - padded, maxValue: currentPrevClose + padded };
       const maxPercent = (padded / currentPrevClose) * 100;
       symmetricPercentRange = { minValue: -maxPercent, maxValue: maxPercent };
@@ -608,10 +625,36 @@ export function createIntradayChart(container, opts = {}) {
         lineWidth: 1,
         lineStyle: LineStyle.Dotted,
         axisLabelVisible: false,
-        title: '昨收'
+        title: isFutureTimeline ? '昨结' : '昨收'
       });
     }
     if (arr.length) renderIntradayDetail(arr[arr.length - 1].time);
+  }
+
+  function updatePoint(point) {
+    if (!point || !Number.isFinite(Number(point.time))) return;
+    const time = Number(point.time);
+    const close = Number(point.close);
+    if (!Number.isFinite(close)) return;
+
+    intradayDataMap.set(_timeKey(time), point);
+    priceSeries.update({ time, value: close });
+    if (Number.isFinite(Number(point.avgPrice)) && Number(point.avgPrice) > 0) {
+      averageSeries.update({ time, value: Number(point.avgPrice) });
+    }
+    if (currentPrevClose > 0) {
+      const pct = (close / currentPrevClose - 1) * 100;
+      percentSeries.update({ time, value: pct });
+    }
+    if (Number.isFinite(Number(point.volume))) {
+      const isUp = Number(point.close) >= Number(point.open || point.close);
+      volumeSeries.update({
+        time,
+        value: Number(point.volume),
+        color: isUp ? colors.up : colors.down
+      });
+    }
+    renderIntradayDetail(time);
   }
 
   function applyTheme(nextTheme) {
@@ -669,5 +712,5 @@ export function createIntradayChart(container, opts = {}) {
     if (detailLegend) detailLegend.remove();
   }
 
-  return { setData, applyTheme, resize, fitContent, getVisibleRange, setVisibleRange, destroy };
+  return { setData, updatePoint, applyTheme, resize, fitContent, getVisibleRange, setVisibleRange, destroy };
 }

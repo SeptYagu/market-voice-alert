@@ -70,7 +70,9 @@ import {
   getMarketSession,
   isAutoRefreshAllowedInSession,
   isVoiceAllowedInSession,
-  normalizeSmartSchedule
+  normalizeSmartSchedule,
+  isFuturesMarketOpen,
+  isLiveTradeDate
 } from './marketSession.js';
 
 export const REFRESH_OPTIONS = [
@@ -2744,12 +2746,23 @@ function getDataRefreshSession() {
 }
 
 function isDataAutoRefreshAllowedNow() {
+  const dates = state.tradingDates || state.limitUp.tradingDates || [];
+  const hasFutures = (state.watchList || []).some(isFutureCode) ||
+    (state.chartRowManager && [...state.chartRowManager.rows.values()].some((r) => isFutureCode(r.code)));
+  if (hasFutures && isFuturesMarketOpen(new Date(), dates)) {
+    return true;
+  }
   const session = getDataRefreshSession();
   state.dataLastSession = session;
   return isAutoRefreshAllowedInSession(session, DATA_REFRESH_SCHEDULE);
 }
 
 function isVoiceAllowedNow() {
+  const dates = state.tradingDates || state.limitUp.tradingDates || [];
+  const hasSubscribedFutures = [...(state.subscribed || [])].some(isFutureCode);
+  if (hasSubscribedFutures && isFuturesMarketOpen(new Date(), dates)) {
+    return true;
+  }
   const smart = state.voice.smartSchedule || DEFAULT_SMART_SCHEDULE;
   const session = getVoiceSession();
   return isVoiceAllowedInSession(session, smart);
@@ -2968,7 +2981,7 @@ async function refreshLiveIntradayForCode(code, isLimitUp = false) {
   if (
     !inst ||
     inst.intradayRefreshing ||
-    inst.selectedTradeDate !== getBeijingDate() ||
+    !isLiveTradeDate(inst.selectedTradeDate, isFutureCode(code)) ||
     Date.now() - inst.intradayLastFetchAt < 10000
   ) return;
   inst.intradayRefreshing = true;

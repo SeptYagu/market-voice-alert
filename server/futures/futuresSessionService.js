@@ -14,9 +14,15 @@ export function getFuturesSession(instrument, now = new Date(), tradingDates = [
     ? instrument
     : parseFutureInput(instrument);
 
+  const clock = getBeijingClockParts(now);
+  const timeMin = clock.hour * 60 + clock.minute;
   const beijingToday = getBeijingDate(now);
+  const beijingDate = new Date(Date.UTC(clock.year, clock.month - 1, clock.day, 12, 0, 0));
+  const beijingDayOfWeek = beijingDate.getUTCDay(); // 0: Sun, 1: Mon, ..., 5: Fri, 6: Sat
+  const hasCalendar = Array.isArray(tradingDates) && tradingDates.length > 0;
+  const isWeekend = beijingDayOfWeek === 0 || beijingDayOfWeek === 6;
+  const isTradingDay = hasCalendar ? tradingDates.includes(beijingToday) : !isWeekend;
   const latestTradingDay = resolveLatestTradingDate(beijingToday, tradingDates);
-  const isWeekend = now.getDay() === 0 || now.getDay() === 6;
 
   if (!inst) {
     return {
@@ -27,12 +33,9 @@ export function getFuturesSession(instrument, now = new Date(), tradingDates = [
     };
   }
 
-  const clock = getBeijingClockParts(now);
-  const timeMin = clock.hour * 60 + clock.minute;
-
   // 1. 中金所金融期货 (CFFEX)
   if (inst.isFinancial) {
-    if (isWeekend) {
+    if (!isTradingDay) {
       return { isTrading: false, sessionKind: 'none', sessionStatus: 'closed', tradingDay: latestTradingDay };
     }
     const isTreasury = !!inst.isTreasury;
@@ -52,9 +55,9 @@ export function getFuturesSession(instrument, now = new Date(), tradingDates = [
     return { isTrading: false, sessionKind: 'none', sessionStatus: 'closed', tradingDay: latestTradingDay };
   }
 
-  // 2. 商品期货 (SHFE, INE, DCE, CZCE, GFEX)
+  // 2. 商品期货日盘 (SHFE, INE, DCE, CZCE, GFEX)
   // 日盘: 09:00 - 10:15, 10:30 - 11:30, 13:30 - 15:00
-  if (!isWeekend) {
+  if (isTradingDay) {
     if (timeMin >= 8 * 60 + 55 && timeMin < 9 * 60) {
       return { isTrading: false, sessionKind: 'day', sessionStatus: 'auction', tradingDay: beijingToday };
     }
@@ -73,33 +76,35 @@ export function getFuturesSession(instrument, now = new Date(), tradingDates = [
   // 3. 夜盘判断
   const nightEnd = inst.nightSessionEnd;
   if (nightEnd) {
-    // 夜盘归属下一个交易日 (例如周四晚 21:00 属于周五交易日)
-    const nextTradingDay = shiftTradingDate(beijingToday, 1, tradingDates);
-
-    // 解析 nightEnd 分钟数 (23:00 -> 23*60, 01:00 -> 25*60, 02:30 -> 26*60 + 30)
     let endMin = 23 * 60;
     if (nightEnd === '01:00') endMin = 25 * 60;
     else if (nightEnd === '02:30') endMin = 26 * 60 + 30;
 
-    // A. 当晚 20:55 - 24:00 (通常周五晚不休夜盘，但节假日前无夜盘；一般工作日一至五均有夜盘)
-    // 周五晚通常也有夜盘（属于下周一交易日）
-    const isFridayNight = now.getDay() === 5;
-    const isSaturdayOrSunday = now.getDay() === 0 || (now.getDay() === 6 && timeMin >= 3 * 60);
-
-    if (!isSaturdayOrSunday) {
+    // A. 当晚 20:55 - 24:00: 仅在周一至周五的交易日开市
+    if (isTradingDay && beijingDayOfWeek >= 1 && beijingDayOfWeek <= 5) {
+      const nightTradingDay = shiftTradingDate(beijingToday, 1, tradingDates);
       if (timeMin >= 20 * 60 + 55 && timeMin < 21 * 60) {
-        return { isTrading: false, sessionKind: 'night', sessionStatus: 'auction', tradingDay: isFridayNight ? shiftTradingDate(beijingToday, 1, tradingDates) : nextTradingDay };
+        return { isTrading: false, sessionKind: 'night', sessionStatus: 'auction', tradingDay: nightTradingDay };
       }
       if (timeMin >= 21 * 60 && timeMin < 24 * 60) {
-        return { isTrading: true, sessionKind: 'night', sessionStatus: 'trading', tradingDay: isFridayNight ? shiftTradingDate(beijingToday, 1, tradingDates) : nextTradingDay };
+        return { isTrading: true, sessionKind: 'night', sessionStatus: 'trading', tradingDay: nightTradingDay };
       }
     }
 
-    // B. 次日凌晨 00:00 - 02:30 (跨午夜夜盘续段，属于当前自然日作为交易日)
+    // B. 次日凌晨 00:00 - 02:30 (跨午夜续段)
     if (timeMin < 3 * 60) {
       const currentMinAcross = 24 * 60 + timeMin;
       if (currentMinAcross <= endMin) {
-        return { isTrading: true, sessionKind: 'night', sessionStatus: 'trading', tradingDay: beijingToday };
+        // 周二至周五凌晨：周一至周四夜盘续段，归属当天
+        if (beijingDayOfWeek >= 2 && beijingDayOfWeek <= 5) {
+          return { isTrading: true, sessionKind: 'night', sessionStatus: 'trading', tradingDay: beijingToday };
+        }
+        // 周六凌晨：周五夜盘续段，归属下周一（下一个交易日）
+        if (beijingDayOfWeek === 6) {
+          const satNextTradingDay = shiftTradingDate(beijingToday, 1, tradingDates);
+          return { isTrading: true, sessionKind: 'night', sessionStatus: 'trading', tradingDay: satNextTradingDay };
+        }
+        // 周日、周一凌晨：前一晚无夜盘，均为休市
       }
     }
   }

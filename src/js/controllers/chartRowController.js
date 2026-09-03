@@ -16,7 +16,9 @@ import {
   MA_COLORS
 } from '../chart.js';
 import { fetchKline, fetchIntraday } from '../api.js';
-import { chartTimeToDate, getBeijingDate } from '../time.js';
+import { chartTimeToDate } from '../time.js';
+import { isFutureCode } from '../futures/instrument.js';
+import { isLiveTradeDate } from '../marketSession.js';
 
 export const MA_PERIODS = [5, 10, 20, 60];
 
@@ -107,11 +109,17 @@ export function applyLiveTickToKlineChart(ctl, inst, quoteOrPrice) {
 }
 
 export function applyLiveQuoteToIntradayChart(ctl, inst, quote, now = new Date()) {
-  if (!inst || !ctl || !inst.intradayData || inst.selectedTradeDate !== getBeijingDate(now)) return false;
+  if (!inst || !ctl || !inst.intradayData) return false;
+  const isFuture = isFutureCode(inst.code);
+  if (!isLiveTradeDate(inst.selectedTradeDate, isFuture, now)) return false;
   const updated = applyLiveQuoteToIntraday(inst.intradayData.items, quote, now);
   if (updated === inst.intradayData.items) return false;
   inst.intradayData = { ...inst.intradayData, items: updated };
-  ctl.setData(updated);
+  if (typeof ctl.updatePoint === 'function' && updated.length > 0) {
+    ctl.updatePoint(updated[updated.length - 1]);
+  } else {
+    ctl.setData(updated);
+  }
   return true;
 }
 
