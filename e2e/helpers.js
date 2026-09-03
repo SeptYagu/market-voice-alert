@@ -231,6 +231,33 @@ export async function setupApiMocks(page) {
   });
 
   await page.route('**/api/cache/futures/quote**', async (route) => {
+    const url = new URL(route.request().url());
+    const ids = (url.searchParams.get('ids') || url.searchParams.get('id') || 'rb2510').split(',').filter(Boolean);
+    const data = ids.map((rawId) => {
+      const id = rawId.trim();
+      const isCffex = id.toUpperCase().startsWith('IF');
+      const isContinuous = /^[A-Za-z]+0$/.test(id);
+      const symbol = id.toUpperCase();
+      const code = id.toLowerCase();
+      return {
+        code,
+        instrumentId: `future:${isCffex ? 'cffex' : 'shfe'}:${symbol}`,
+        type: 'future',
+        exchange: isCffex ? 'cffex' : 'shfe',
+        product: isCffex ? 'IF' : 'RB',
+        symbol,
+        name: isCffex ? (isContinuous ? '沪深300连续' : `沪深300${symbol.slice(2)}`) : (isContinuous ? '螺纹钢连续' : `螺纹钢${symbol.slice(2)}`),
+        contractKind: isContinuous ? 'continuous' : 'specific',
+        price: isCffex ? 4536.8 : 3350,
+        prevSettlement: isCffex ? 4510.0 : 3300,
+        prevClose: isCffex ? 4512.0 : 3310,
+        baseline: isCffex ? 4510.0 : 3300,
+        change: isCffex ? 26.8 : 50,
+        changePercent: isCffex ? 0.59 : 1.52,
+        volume: isCffex ? 59047 : 120000,
+        openInterest: isCffex ? 131612 : 1800000
+      };
+    });
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -238,30 +265,14 @@ export async function setupApiMocks(page) {
         ok: true,
         source: 'mock-futures-quote',
         stale: false,
-        data: [
-          {
-            code: 'rb2510',
-            instrumentId: 'future:shfe:RB2510',
-            type: 'future',
-            exchange: 'shfe',
-            product: 'RB',
-            symbol: 'RB2510',
-            name: '螺纹钢2510',
-            contractKind: 'specific',
-            price: 3350,
-            prevSettlement: 3300,
-            prevClose: 3310,
-            change: 50,
-            changePercent: 1.52,
-            volume: 120000,
-            openInterest: 1800000
-          }
-        ]
+        data
       })
     });
   });
 
   await page.route('**/api/cache/futures/intraday**', async (route) => {
+    const url = new URL(route.request().url());
+    const symbol = (url.searchParams.get('id') || url.searchParams.get('symbol') || 'RB2510').toUpperCase();
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -270,7 +281,7 @@ export async function setupApiMocks(page) {
         source: 'mock-futures-intraday',
         stale: false,
         data: {
-          symbol: 'RB2510',
+          symbol,
           prevSettlement: 3300,
           source: 'mock-futures-intraday',
           items: [
@@ -283,6 +294,9 @@ export async function setupApiMocks(page) {
   });
 
   await page.route('**/api/cache/futures/kline**', async (route) => {
+    const url = new URL(route.request().url());
+    const symbol = (url.searchParams.get('id') || url.searchParams.get('symbol') || 'RB2510').toUpperCase();
+    const period = url.searchParams.get('period') || 'day';
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -291,13 +305,29 @@ export async function setupApiMocks(page) {
         source: 'mock-futures-kline',
         stale: false,
         data: {
-          symbol: 'RB2510',
-          period: 'day',
+          symbol,
+          period,
           source: 'mock-futures-kline',
           items: [
             { time: 1788451200, open: 3300, high: 3360, low: 3290, close: 3350, volume: 120000, openInterest: 1800000 },
             { time: 1788537600, open: 3350, high: 3380, low: 3340, close: 3370, volume: 130000, openInterest: 1820000 }
           ]
+        }
+      })
+    });
+  });
+
+  await page.route('**/api/cache/futures/session**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        data: {
+          isTrading: true,
+          sessionKind: 'day',
+          sessionStatus: 'trading',
+          tradingDay: '2026-09-04'
         }
       })
     });
