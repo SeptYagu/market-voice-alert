@@ -1,6 +1,6 @@
 import { readdir } from 'node:fs/promises';
 import { getOrRefresh, cachePath } from './cacheStore.js';
-import { fetchAktoolsSpot } from './marketData.js';
+import { fetchAktoolsSpot, fetchTencentSpot } from './marketData.js';
 
 const SPOT_TTL_MS = 30 * 1000;
 
@@ -17,36 +17,35 @@ async function getKlineCacheUniverse() {
 }
 
 export async function getCachedSpotLatest({ signal } = {}) {
-  let result;
-  try {
-    result = await getOrRefresh(
+  const result = await getOrRefresh(
       ['spot', 'latest.json'],
       SPOT_TTL_MS,
       async () => {
-        const items = await fetchAktoolsSpot(signal);
-        if (!Array.isArray(items) || items.length === 0) {
-          throw new Error('Empty A-share spot snapshot');
+        try {
+          const items = await fetchAktoolsSpot(signal);
+          if (!Array.isArray(items) || items.length === 0) throw new Error('Empty A-share spot snapshot');
+          return {
+            items,
+            count: items.length,
+            source: 'aktools-stock_zh_a_spot_em'
+          };
+        } catch (aktoolsError) {
+          if (aktoolsError && aktoolsError.name === 'AbortError') throw aktoolsError;
+          const seeds = await getKlineCacheUniverse();
+          if (!seeds.length) throw aktoolsError;
+          const snapshot = await fetchTencentSpot(seeds.map((item) => item.code), signal);
+          if (!snapshot.items.length) throw aktoolsError;
+          return {
+            items: snapshot.items,
+            count: snapshot.items.length,
+            source: 'tencent-batch-quotes',
+            universeStats: snapshot.stats,
+            upstreamError: aktoolsError && aktoolsError.message ? aktoolsError.message : String(aktoolsError)
+          };
         }
-        return {
-          items,
-          count: items.length,
-          source: 'aktools-stock_zh_a_spot_em'
-        };
       },
       { skipPrune: true }
     );
-  } catch (error) {
-    const items = await getKlineCacheUniverse();
-    if (!items.length) throw error;
-    return {
-      source: 'kline-universe-cache',
-      stale: true,
-      generatedAt: Date.now(),
-      ttlMs: SPOT_TTL_MS,
-      upstreamError: error && error.message ? error.message : String(error),
-      data: { items, count: items.length, source: 'kline-universe-cache' }
-    };
-  }
   if (!result.data || !Array.isArray(result.data.items) || result.data.items.length === 0) {
     throw new Error('Empty A-share spot snapshot');
   }

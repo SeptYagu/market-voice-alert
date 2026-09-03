@@ -1,6 +1,7 @@
 import { readCache, writeCache } from './cacheStore.js';
 import { getKlineDataForMomentum } from './klineService.js';
 import { getCachedSpotLatest } from './spotService.js';
+import { getCachedTradeCalendar } from './calendarService.js';
 import { isFresh, normalizeDateKey, nowMs, parsePositiveNumber } from './utils.js';
 
 const MOMENTUM_TTL_MS = 5 * 60 * 1000;
@@ -9,7 +10,7 @@ const LOOKBACK_DAYS = 10;
 const CONCURRENCY = 32;
 const SCHEDULED_SCAN_TIMES = Object.freeze([
   Object.freeze({ hour: 8, minute: 0, label: 'pre-open' }),
-  Object.freeze({ hour: 15, minute: 1, label: 'after-close' })
+  Object.freeze({ hour: 15, minute: 5, label: 'after-close' })
 ]);
 const JOBS = new Map();
 let schedulerTimer = null;
@@ -18,6 +19,76 @@ let schedulerStarted = false;
 function klineDateKey(value) {
   const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
   return match ? `${match[1]}${match[2]}${match[3]}` : '';
+}
+
+function dashDate(dateKey) {
+  return /^\d{8}$/.test(String(dateKey || ''))
+    ? `${dateKey.slice(0, 4)}-${dateKey.slice(4, 6)}-${dateKey.slice(6, 8)}`
+    : '';
+}
+
+function previousWeekday(dateKey) {
+  if (!/^\d{8}$/.test(String(dateKey || ''))) return '';
+  const date = new Date(Date.UTC(
+    Number(dateKey.slice(0, 4)),
+    Number(dateKey.slice(4, 6)) - 1,
+    Number(dateKey.slice(6, 8))
+  ));
+  do {
+    date.setUTCDate(date.getUTCDate() - 1);
+  } while (date.getUTCDay() === 0 || date.getUTCDay() === 6);
+  return date.toISOString().slice(0, 10).replace(/-/g, '');
+}
+
+function beijingMinuteOfDay(now = new Date()) {
+  const parts = beijingParts(now);
+  return parts.hour * 60 + parts.minute;
+}
+
+export function resolveMomentumScanDates(dateKey, tradeDates, todayKey = beijingDateKey(), now = new Date()) {
+  const normalizedDates = (Array.isArray(tradeDates) ? tradeDates : [])
+    .map((date) => normalizeDateKey(date))
+    .filter(Boolean)
+    .sort();
+  const eligible = normalizedDates.filter((date) => date <= dateKey);
+  const marketDate = eligible[eligible.length - 1] || dateKey;
+  const isLiveTradingDay = dateKey === todayKey && marketDate === todayKey;
+  if (!isLiveTradingDay) {
+    return { marketDate, historyTargetDate: marketDate, liveDate: '' };
+  }
+  if (beijingMinuteOfDay(now) >= 15 * 60 + 5) {
+    return { marketDate, historyTargetDate: marketDate, liveDate: '' };
+  }
+  const prior = normalizedDates.filter((date) => date < marketDate).at(-1) || previousWeekday(marketDate);
+  return { marketDate, historyTargetDate: prior, liveDate: marketDate };
+}
+
+export function mergeLiveQuoteIntoDailyKline(data, quote, liveDateKey) {
+  const sourceItems = data && Array.isArray(data.items) ? data.items : [];
+  const price = Number(quote && quote.price);
+  const open = Number(quote && quote.open);
+  const volume = Number(quote && quote.volume);
+  if (!liveDateKey || !Number.isFinite(price) || price <= 0 || (!(open > 0) && !(volume > 0))) return data;
+  const time = dashDate(liveDateKey);
+  if (!time) return data;
+  const high = Math.max(price, Number(quote.high) || 0, open || 0);
+  const positiveLows = [price, Number(quote.low), open].filter((value) => Number.isFinite(value) && value > 0);
+  const bar = {
+    time,
+    open: open > 0 ? open : price,
+    close: price,
+    high,
+    low: positiveLows.length ? Math.min(...positiveLows) : price,
+    volume: volume > 0 ? volume : 0,
+    amount: Math.max(0, Number(quote.amount) || 0),
+    changePercent: Number(quote.changePercent) || 0
+  };
+  const items = sourceItems.slice();
+  const lastDate = klineDateKey(items.at(-1) && items.at(-1).time);
+  if (lastDate === liveDateKey) items[items.length - 1] = { ...items.at(-1), ...bar };
+  else if (!lastDate || lastDate < liveDateKey) items.push(bar);
+  else return data;
+  return { ...(data || {}), items };
 }
 
 export function computeTenDayMomentum(klineData, lookbackDays = LOOKBACK_DAYS, cutoffDate = '') {
@@ -156,6 +227,25 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt }
   const endDateCounts = new Map();
   let latestMarketDate = '';
   let refreshFailures = 0;
+  const sourceStats = {};
+  const failureReasons = {};
+  const failureSamples = [];
+  let tradeDates = [];
+  try {
+    const calendar = await getCachedTradeCalendar({ signal });
+    tradeDates = calendar && calendar.data && Array.isArray(calendar.data.dates) ? calendar.data.dates : [];
+  } catch {
+    // Weekday fallback in resolveMomentumScanDates keeps scans usable if the calendar source is down.
+  }
+  const scanDates = resolveMomentumScanDates(dateKey, tradeDates);
+  const universeStats = spotResult && spotResult.data && spotResult.data.universeStats
+    ? spotResult.data.universeStats
+    : {};
+  const batchUniverseFailures = Array.isArray(universeStats.failedBatches)
+    ? universeStats.failedBatches.reduce((sum, batch) => sum + (Number(batch.count) || 0), 0)
+    : 0;
+  const universeRefreshFailures = batchUniverseFailures + (spotResult && spotResult.stale ? universe.length : 0);
+  const liveDate = spotResult && spotResult.stale ? '' : scanDates.liveDate;
   const scanned = { count: 0 };
   let progressWrite = Promise.resolve();
   await writeMomentumProgress(parts, {
@@ -171,9 +261,17 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt }
   await mapLimit(universe, CONCURRENCY, async (candidate) => {
     if (!candidate || !/^(sh|sz|bj)\d{6}$/i.test(candidate.code)) return null;
     try {
-      const klineResult = await getKlineDataForMomentum(candidate.code, signal, dateKey);
-      const data = klineResult && klineResult.data;
-      if (klineResult && klineResult.source === 'stale' && !klineResult.fresh) refreshFailures += 1;
+      const klineResult = await getKlineDataForMomentum(candidate.code, signal, scanDates.historyTargetDate);
+      const source = klineResult && klineResult.upstreamSource ? klineResult.upstreamSource : 'unknown';
+      sourceStats[source] = (sourceStats[source] || 0) + 1;
+      if (!klineResult || !klineResult.fresh) {
+        refreshFailures += 1;
+        const reason = klineResult && klineResult.upstreamError ? klineResult.upstreamError : 'stale-kline';
+        failureReasons[reason] = (failureReasons[reason] || 0) + 1;
+        if (failureSamples.length < 20) failureSamples.push({ code: candidate.code, reason });
+        return null;
+      }
+      const data = mergeLiveQuoteIntoDailyKline(klineResult && klineResult.data, candidate, liveDate);
       const stats = computeTenDayMomentum(data, LOOKBACK_DAYS, dateKey);
       if (stats && stats.endDateKey) {
         latestMarketDate = latestMarketDate > stats.endDateKey ? latestMarketDate : stats.endDateKey;
@@ -200,6 +298,10 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt }
       return item;
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;
+      refreshFailures += 1;
+      const reason = e && e.message ? e.message : String(e);
+      failureReasons[reason] = (failureReasons[reason] || 0) + 1;
+      if (failureSamples.length < 20) failureSamples.push({ code: candidate && candidate.code, reason });
       return null;
     } finally {
       scanned.count += 1;
@@ -215,6 +317,9 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt }
           latestMarketDate,
           freshUniverseSize: endDateCounts.get(latestMarketDate) || 0,
           refreshFailures,
+          sourceStats,
+          failureReasons,
+          failureSamples,
           items: found
             .filter((item) => item.marketDate === latestMarketDate)
             .slice()
@@ -230,7 +335,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt }
     .filter((item) => item.marketDate === latestMarketDate)
     .sort((a, b) => (b.gainPercent || 0) - (a.gainPercent || 0));
   return {
-    status: refreshFailures > 0 ? 'partial' : 'complete',
+    status: refreshFailures > 0 || universeRefreshFailures > 0 ? 'partial' : 'complete',
     date: dateKey,
     threshold,
     lookbackDays: LOOKBACK_DAYS,
@@ -240,8 +345,15 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt }
     latestMarketDate,
     freshUniverseSize: endDateCounts.get(latestMarketDate) || 0,
     refreshFailures,
-    message: refreshFailures > 0
-      ? `${refreshFailures} 只股票的日 K 刷新失败；最新交易日覆盖 ${endDateCounts.get(latestMarketDate) || 0}/${universe.length}，仅展示有效结果`
+    universeRefreshFailures,
+    spotSource: spotResult && spotResult.data ? spotResult.data.source : '',
+    universeStats,
+    sourceStats,
+    failureReasons,
+    failureSamples,
+    historyTargetDate: scanDates.historyTargetDate,
+    message: refreshFailures > 0 || universeRefreshFailures > 0
+      ? `${refreshFailures} 只股票的日 K 刷新失败，${universeRefreshFailures} 只股票的实时快照缺失；最新交易日覆盖 ${endDateCounts.get(latestMarketDate) || 0}/${universe.length}，仅展示有效结果`
       : '',
     items: freshFound
   };

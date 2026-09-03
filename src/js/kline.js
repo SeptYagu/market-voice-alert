@@ -203,6 +203,30 @@ export function buildTencentKlineUrl(code, opts = {}) {
   return `/api/qq-kline/appstock/app/fqkline/get?param=${norm},${type},,,${lmt},qfq`;
 }
 
+export function buildTencentYearKlineUrl(code, year = new Date().getFullYear()) {
+  if (!code || typeof code !== 'string' || !STOCK_CODE_RE.test(code)) return null;
+  const safeYear = Number(year);
+  if (!Number.isInteger(safeYear) || safeYear < 1990 || safeYear > 2100) return null;
+  const norm = code.toLowerCase();
+  const variable = `kline_dayqfq${safeYear}`;
+  const url = new URL('https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get');
+  url.searchParams.set('_var', variable);
+  url.searchParams.set('param', `${norm},day,${safeYear - 1}-01-01,${safeYear}-12-31,640,qfq`);
+  return url.toString();
+}
+
+export function parseTencentKlineAssignment(text, period = '1d') {
+  if (typeof text !== 'string') return null;
+  const equalsAt = text.indexOf('=');
+  if (equalsAt < 0) return null;
+  try {
+    const payload = text.slice(equalsAt + 1).trim().replace(/;$/, '');
+    return parseTencentKline(JSON.parse(payload), period);
+  } catch {
+    return null;
+  }
+}
+
 const TENCENT_MINUTE_TIME_RE = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})$/;
 
 function _parseTencentMinuteTime(raw) {

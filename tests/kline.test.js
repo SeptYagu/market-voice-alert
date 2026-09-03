@@ -5,8 +5,10 @@ import {
   isValidPeriod,
   buildKlineUrl,
   buildTencentKlineUrl,
+  buildTencentYearKlineUrl,
   parseEastmoneyKline,
   parseTencentKline,
+  parseTencentKlineAssignment,
   calcMA,
   formatVolumeBars,
   formatCandleColors,
@@ -307,6 +309,26 @@ QUnit.module('kline.buildTencentKlineUrl', () => {
   });
   QUnit.test('rejects unknown period', (t) => {
     t.equal(buildTencentKlineUrl('sh600519', { period: 'bogus' }), null);
+  });
+});
+
+QUnit.module('kline Tencent modern daily endpoint', () => {
+  QUnit.test('builds the documented year endpoint for all stock markets', (t) => {
+    const url = buildTencentYearKlineUrl('BJ920001', 2026);
+    t.ok(url.startsWith('https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get?'));
+    t.ok(url.includes('_var=kline_dayqfq2026'));
+    t.ok(url.includes('param=bj920001%2Cday%2C2025-01-01%2C2026-12-31%2C640%2Cqfq'));
+    t.equal(buildTencentYearKlineUrl('invalid', 2026), null);
+    t.equal(buildTencentYearKlineUrl('sh600519', 1989), null);
+  });
+
+  QUnit.test('parses JavaScript assignment response', (t) => {
+    const text = 'kline_dayqfq2026={"code":0,"data":{"sh603533":{"qfqday":[["2026-09-02","24.85","24.15","25.80","24.15","850997.00"]]}}};';
+    const out = parseTencentKlineAssignment(text, '1d');
+    t.equal(out.code, 'sh603533');
+    t.equal(out.items.length, 1);
+    t.equal(out.items[0].close, 24.15);
+    t.equal(parseTencentKlineAssignment('not-json', '1d'), null);
   });
 });
 

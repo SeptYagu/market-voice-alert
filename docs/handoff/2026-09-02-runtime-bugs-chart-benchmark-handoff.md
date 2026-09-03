@@ -375,3 +375,60 @@ items: 9
 ```
 
 视觉上确认：蓝色分时价格线、昨收 0% 中轴、左右价格/百分比轴、完整半日时间框架、K 线与多条 MA 均已呈现；当本次备用源没有真实均价时，页面正确标明“均价不可用”。
+
+## 2026-09-03：4,015 只刷新失败修复
+
+### 根因修正
+
+此前的 4,015 并不等同于 4,015 只股票都没有可用历史数据，而是三个问题叠加：
+
+1. 盘中扫描日期为 2026-09-03，但正常日 K 上游当时只发布到 2026-09-02；旧逻辑把所有“尚未生成今日收盘柱”的股票误判成刷新失败。
+2. AKTools 全市场快照失败后直接把 5,864 个历史缓存目录当作当前股票全集，混入退市、停牌和非股票证券。
+3. 日 K 的旧腾讯 `fqkline` 端点在高频补齐时触发 HTTP 501；AKShare 当前 `stock_zh_a_hist_tx` 使用的 `newfqkline` 端点没有接入项目。
+
+修复后：
+
+- 用腾讯 `qt.gtimg.cn` 每批 100 只、4 并发拉取当前快照，GBK 解码后根据状态和证券类型过滤，并把成功 fallback 写入共享 spot 缓存。
+- 交易中的当日扫描先通过交易日历确定上一已收盘交易日；历史 K 线只需补齐到该日，再用当前报价合成今天的 open/high/low/close/volume/amount。
+- 日 K 新增 `proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get` 备用，保留旧端点为最后 fallback。
+- modern/legacy 两个腾讯域名使用独立 WAF 冷却，modern 失败不会提前截断 legacy；modern 请求范围跨上年到当年，覆盖一月份 10 日窗口。
+- 快照种子使用纯 A 股号段白名单，排除指数、ETF 和北交所转债；15:05 后的盘后任务直接拉取官方当日收盘 K 线。
+- 当前上游成功返回但末日缺失可代表个股停牌；只有上游响应是本小时新获取且历史至少 11 根时才接受该缺口。`sz300472` 在 9 月 2 日停牌、9 月 3 日复牌，是本轮实际覆盖的边界样本。
+- 任何真正陈旧或抛异常的代码均计入 `refreshFailures`，写入聚合 `failureReasons` 和最多 20 个 `failureSamples`，并从有效覆盖和结果中排除。
+
+### 真实数据验证
+
+腾讯批量快照：
+
+```text
+seedCount: 5864
+receivedCount: 5862
+eligibleCount: 5516
+deletedCount: 338
+suspendedCount: 6
+excludedNonStockCount: 2
+failedBatches: 0
+duration: 4.34s
+```
+
+第一次冷补齐扫描用时约 12 分 13 秒，把 4,110 只旧缓存补到上一收盘日；修正停牌缺口统计后再次复扫用时约 26 秒，最终结果：
+
+```text
+status: complete
+scanned: 5516/5516
+latestMarketDate: 20260903
+historyTargetDate: 20260902
+freshUniverseSize: 5516
+refreshFailures: 0
+universeRefreshFailures: 0
+sourceStats: tencent-modern=4114, cache=1402
+items: 20
+```
+
+这次结果中的今日收盘价是交易时段实时价，并非伪装成已收盘数据；重新扫描会随批量快照变化重新计算今日柱和 10 日涨幅。运行时缓存位于 `data/cache/`，不提交到 Git。
+
+### 页面终验补充
+
+第一次从实际页面点击“扫描”时，20 条结果已经可见，但 Windows 恰好在进度缓存原子替换时返回一次 `EPERM rename`，页面因此仍显示错误。`cacheStore.writeCache()` 已增加对 `EPERM/EACCES/EBUSY` 的指数退避重试，保持原子替换，不改为先删除目标文件。
+
+重启 Vite 后再次在浏览器点击“扫描”，约 32 秒后页面显示 20 行结果和正常更新时间，无错误元素、无 4,015 失败提示；服务端接口同期保持 `complete`、5,516/5,516、两个失败计数均为 0。

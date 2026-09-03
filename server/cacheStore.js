@@ -10,6 +10,21 @@ const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 let lastPruneAt = 0;
 const inflightRefreshes = new Map();
 
+async function renameWithRetry(source, target) {
+  const retryable = new Set(['EPERM', 'EACCES', 'EBUSY']);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(source, target);
+      return;
+    } catch (error) {
+      if (!retryable.has(error && error.code) || attempt >= 6) throw error;
+      // Windows can briefly lock the destination while a poll request or
+      // antivirus scanner is reading it. Preserve atomic replacement and retry.
+      await new Promise((resolve) => setTimeout(resolve, 25 * (2 ** attempt)));
+    }
+  }
+}
+
 function resolveCachePath(parts) {
   const clean = [];
   for (const part of parts) {
@@ -64,7 +79,7 @@ export async function writeCache(parts, payload, opts = {}) {
     lastAccessedAt: payload && payload.lastAccessedAt ? payload.lastAccessedAt : nowMs()
   };
   await writeFile(tmp, JSON.stringify(out, null, 2), 'utf8');
-  await rename(tmp, path);
+  await renameWithRetry(tmp, path);
   if (!opts.skipPrune) pruneCacheIfNeeded().catch(() => {});
   return out;
 }

@@ -72,6 +72,9 @@ QUnit.module('parser.parseTencent', () => {
     t.equal(q.changePercent, 2.35, 'changePercent');
     t.equal(q.high, 1860.00, 'high');
     t.equal(q.low, 1800.00, 'low');
+    t.equal(q.updateTime, '20240315150100', 'update timestamp');
+    t.equal(q.quoteDate, '20240315', 'quote date');
+    t.equal(q.marketStatus, '', 'raw Tencent market status field is exposed');
     t.equal(q.type, 'stock', 'type');
   });
 

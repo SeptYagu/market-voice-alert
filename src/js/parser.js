@@ -53,6 +53,7 @@ export function parseTencent(text) {
     const change = parseFloat(fields[31]) || 0;
     const changePercent = parseFloat(fields[32]) || 0;
     const openChangePercent = prevClose > 0 ? ((open - prevClose) / prevClose) * 100 : 0;
+    const updateTime = /^\d{14}$/.test(String(fields[30] || '')) ? String(fields[30]) : '';
     out.push({
       code,
       name: fields[1] || code,
@@ -67,6 +68,9 @@ export function parseTencent(text) {
       changePercent,
       high: parseFloat(fields[33]) || 0,
       low: parseFloat(fields[34]) || 0,
+      updateTime,
+      quoteDate: updateTime ? updateTime.slice(0, 8) : '',
+      marketStatus: String(fields[40] || '').trim().toUpperCase(),
       type: 'stock',
       source: 'tencent'
     });

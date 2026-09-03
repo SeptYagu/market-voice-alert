@@ -2,7 +2,7 @@
 
 > **新窗口从这里开始**：本文件记录了完整的重做计划、决策、当前阶段和下一步任务。无需阅读历史对话。
 >
-> **新窗口交接文档**：[`docs/handoff/2026-09-02-runtime-bugs-chart-benchmark-handoff.md`](docs/handoff/2026-09-02-runtime-bugs-chart-benchmark-handoff.md) — 10 日涨幅扫描、分时/K 线实时更新与国内行情图对照修复。历史 Phase 5 记录仍见 [`docs/handoff/2026-06-05-phase5-bugfixes-handoff.md`](docs/handoff/2026-06-05-phase5-bugfixes-handoff.md)。
+> **新窗口交接文档**：[`docs/handoff/2026-09-03-code-review-bugs-architecture-handoff.md`](docs/handoff/2026-09-03-code-review-bugs-architecture-handoff.md) — 项目代码审查、Bug 诊断与架构重构交接文档（2026-09-03）。历史图表修复记录见 [`docs/handoff/2026-09-02-runtime-bugs-chart-benchmark-handoff.md`](docs/handoff/2026-09-02-runtime-bugs-chart-benchmark-handoff.md)。
 
 ## 项目定位
 
@@ -20,8 +20,12 @@
 - ✅ 分时数据源 waterfall 收敛到服务端，东财 trends2 实测 241 点约 3.15 秒成功；前端不再重复 AKTools 失败链。
 - ✅ 10 日涨幅按钮改为 POST 启动 single-flight 后台任务、GET 轮询；进度可见，Windows 缓存写入竞态已修复，最后成功结果独立保留。
 - ✅ 10 日算法按目标日期截断，并只展示全体数据中最新交易日结果，杜绝退市/陈旧缓存被当作当前 10 日涨幅。
-- ⚠️ 本机真实全量扫描遍历 5,863 个缓存代码；因东财断连、腾讯 WAF 501，终态为 `partial`：最新交易日覆盖 1,404/5,863，9 个有效结果，4,015 个刷新失败。UI 明确显示覆盖与失败数，不再假报完成。
-- ✅ `npm run ci` 通过：562 单测、51 E2E、lint、生产构建全部成功。
+- ✅ 2026-09-03 已修复 4,015 只刷新失败：腾讯批量报价在约 4.3 秒内从 5,864 个缓存代码识别出 5,516 只有效股票，并剔除 338 个退市、6 个停牌、2 个非股票转债；59 个批次零失败。
+- ✅ 日 K 新增 AKShare 当前采用的腾讯 `newfqkline` 备用端点；首轮真实全量补齐 4,110 只旧缓存，随后复扫达到 `complete`：5,516/5,516、日 K 失败 0、实时快照失败 0，盘中命中 20 只。
+- ✅ 盘中扫描只要求历史 K 线补齐到上一已收盘交易日，再用批量实时报价合成今日 OHLCV；停牌缺口仅在当前上游响应且至少 11 根历史时接受，陈旧数据仍会被拒绝。
+- ✅ 扫描结果新增 universe/source/failure 诊断统计及最多 20 个失败代码样本；异常不再被吞掉或错误计入最新交易日覆盖。
+- ✅ 腾讯 modern/legacy WAF 冷却已解耦；跨年请求、纯 A 股号段过滤、15:05 盘后官方 K 线和 Windows 缓存替换重试均已补齐。
+- ✅ `npm run ci` 通过：569 单测、51 E2E、lint、生产构建全部成功。
 
 ## 备份
 
