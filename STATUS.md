@@ -27,6 +27,13 @@
 - ✅ 腾讯 modern/legacy WAF 冷却已解耦；跨年请求、纯 A 股号段过滤、15:05 盘后官方 K 线和 Windows 缓存替换重试均已补齐。
 - ✅ `npm run ci` 通过：569 单测、51 E2E、lint、生产构建全部成功。
 
+## 2026-09-03 核心缺陷闭环与境内期货全链路支持状态
+
+- ✅ **全部 18 项缺陷 100% 修复入库**：分 3 批（`8ac0057`、`6b62078`、`fd70619`）彻底解决 P0/P1/HIGH 级缺陷，包括新浪 JSONP 正则及字段错位、周六凌晨会话判定、境内期货分时放行、法定节假日日历单例注入、周/月 K 聚合（解除 HTTP 400）、4 项图表生命周期竞态、昨结对齐与国债 3 位小数、合约年月校验、single-flight AbortSignal 隔离、读缓存写放大消除等。
+- ✅ **单测补齐至 622 项通过**：补齐服务端期货报价与 K 线服务真实单测、新浪真实抓取报文测试、科创板 CDR 689xxx 20% 限额测试、localStorage QuotaExceeded 50% LRU 淘汰测试。
+- ✅ **构建与代码规范**：ESLint 0 错误 0 警告，生产打包顺利构建。
+- 详见最新交接文档：[`docs/handoff/2026-09-03-remaining-defects-and-remediation-handoff.md`](docs/handoff/2026-09-03-remaining-defects-and-remediation-handoff.md)。
+
 ## 备份
 
 `backups/` 目录：
