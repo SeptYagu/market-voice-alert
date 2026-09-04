@@ -2,7 +2,9 @@ import {
   parseTradeCalendar,
   resolveLatestTradingDate,
   shiftTradingDate,
-  getAdjacentTradingDates
+  getAdjacentTradingDates,
+  fetchTradeCalendar,
+  clearTradeCalendarCache
 } from '../src/js/tradeCalendar.js';
 
 QUnit.module('tradeCalendar', () => {
@@ -34,5 +36,30 @@ QUnit.module('tradeCalendar', () => {
     t.equal(adj.latest, '2026-06-05');
     t.equal(adj.previous, '2026-06-04');
     t.equal(adj.next, null);
+  });
+
+  QUnit.test('fetchTradeCalendar rethrows AbortError without poisoning cache with fallback', async (t) => {
+    clearTradeCalendarCache();
+    const origFetch = globalThis.fetch;
+    const controller = new AbortController();
+    controller.abort();
+
+    globalThis.fetch = async () => {
+      const err = new Error('The operation was aborted');
+      err.name = 'AbortError';
+      throw err;
+    };
+
+    let caught = null;
+    try {
+      await fetchTradeCalendar({ signal: controller.signal });
+    } catch (e) {
+      caught = e;
+    } finally {
+      globalThis.fetch = origFetch;
+      clearTradeCalendarCache();
+    }
+
+    t.ok(caught && caught.name === 'AbortError', 'rethrows AbortError cleanly');
   });
 });

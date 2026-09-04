@@ -473,6 +473,36 @@ QUnit.module('api.fetchKline (Phase 8 cache + dedup + SWR)', (hooks) => {
     t.equal(calls, 3, '3 unique fetches (same code+period deduped)');
   });
 
+  QUnit.test('in-flight dedup: caller signal abort does not cancel underlying fetch for others', async (t) => {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 50));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => makeKlineResponse(30)
+      };
+    };
+    const controller = new AbortController();
+    const p1 = fetchKline('sh600519', { period: '1d', signal: controller.signal });
+    const p2 = fetchKline('sh600519', { period: '1d' });
+
+    controller.abort();
+
+    let p1Error = null;
+    try {
+      await p1;
+    } catch (e) {
+      p1Error = e;
+    }
+    t.ok(p1Error && p1Error.name === 'AbortError', 'caller 1 receives AbortError');
+
+    const result2 = await p2;
+    t.ok(result2 && result2.items.length === 30, 'caller 2 succeeds with data');
+    t.equal(calls, 1, 'underlying fetch executed once and succeeded');
+  });
+
   QUnit.test('cache hit: second call uses cache, no new fetch', async (t) => {
     let calls = 0;
     globalThis.fetch = async () => {

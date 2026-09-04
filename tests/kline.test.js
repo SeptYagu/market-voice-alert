@@ -452,9 +452,10 @@ QUnit.module('kline.getPriceLimit', () => {
     t.equal(getPriceLimit('sz300750', '宁德时代'), 20);
     t.equal(getPriceLimit('sz300059', '东方财富'), 20);
   });
-  QUnit.test('STAR market (sh 688x) returns 20', (t) => {
+  QUnit.test('STAR market (sh 688x and CDR 689x) returns 20', (t) => {
     t.equal(getPriceLimit('sh688981', '中芯国际'), 20);
     t.equal(getPriceLimit('sh688036', '传音控股'), 20);
+    t.equal(getPriceLimit('sh689009', '九号公司-WD'), 20, 'CDR 689xxx has 20% limit');
   });
   QUnit.test('Beijing exchange (bj) returns 30', (t) => {
     t.equal(getPriceLimit('bj830799', '艾融软件'), 30);

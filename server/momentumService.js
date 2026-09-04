@@ -339,8 +339,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt }
     .filter((item) => item.marketDate === latestMarketDate)
     .sort((a, b) => (b.gainPercent || 0) - (a.gainPercent || 0));
   const totalFailures = refreshFailures + universeRefreshFailures;
-  const failureRatio = universe.length > 0 ? totalFailures / universe.length : 1;
-  const isComplete = totalFailures === 0 || (failureRatio <= 0.03 && universe.length >= 100);
+  const isComplete = totalFailures === 0;
   return {
     status: isComplete ? 'complete' : 'partial',
     date: dateKey,

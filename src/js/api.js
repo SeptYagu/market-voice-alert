@@ -371,15 +371,46 @@ async function _fetchIntradayFromSharedCache(code, opts = {}) {
   return json.data;
 }
 
+function _attachCallerSignal(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    const err = new Error('The operation was aborted');
+    err.name = 'AbortError';
+    return Promise.reject(err);
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener('abort', onAbort);
+      const err = new Error('The operation was aborted');
+      err.name = 'AbortError';
+      reject(err);
+    };
+    signal.addEventListener('abort', onAbort);
+    promise.then(
+      (val) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(val);
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      }
+    );
+  });
+}
+
 export function fetchKline(code, opts = {}) {
+  if (!code) return Promise.reject(new Error('code is required'));
   const period = opts.period || '1d';
   if (isFutureCode(code)) {
     return fetchFuturesKline(code, period, opts);
   }
   const key = `${code}|${period}`;
 
-  // 1. In-flight dedup: same (code, period) concurrent calls share one promise
-  if (inflightKline.has(key)) return inflightKline.get(key);
+  // 1. In-flight dedup: same (code, period) concurrent calls share one promise decoupled from caller signal
+  if (inflightKline.has(key)) {
+    return _attachCallerSignal(inflightKline.get(key), opts.signal);
+  }
 
   // 2. klineCache hit (SWR): return immediately, revalidate in background
   if (!opts.noCache) {
@@ -390,15 +421,15 @@ export function fetchKline(code, opts = {}) {
     }
   }
 
-  // 3. Cache miss: create promise + register immediately to dedup concurrent calls
+  // 3. Cache miss: create shared promise with independent lifecycle
   const p = (async () => {
     try {
       const data = opts.sharedCache === true && !opts.noCache
-        ? await _fetchKlineFromSharedCache(code, period, opts.signal).catch((e) => {
+        ? await _fetchKlineFromSharedCache(code, period, undefined).catch((e) => {
           if (e && e.name === 'AbortError') throw e;
-          return _fetchKlineFromNetwork(code, period, opts.signal);
+          return _fetchKlineFromNetwork(code, period, undefined);
         })
-        : await _fetchKlineFromNetwork(code, period, opts.signal);
+        : await _fetchKlineFromNetwork(code, period, undefined);
       if (data && !opts.noCache) {
         klineCacheSet(code, period, data);
         emitKlineUpdated(code, period, data);
@@ -409,7 +440,7 @@ export function fetchKline(code, opts = {}) {
     }
   })();
   inflightKline.set(key, p);
-  return p;
+  return _attachCallerSignal(p, opts.signal);
 }
 
 async function _fetchKlineFromSharedCache(code, period, signal) {

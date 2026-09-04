@@ -61,7 +61,8 @@ export async function fetchTradeCalendar(opts = {}) {
       cachedDates = dates.length ? dates : _fallbackTradingDatesAround();
       return cachedDates;
     })
-    .catch(() => {
+    .catch((e) => {
+      if (e && e.name === 'AbortError') throw e;
       cachedDates = _fallbackTradingDatesAround();
       return cachedDates;
     })

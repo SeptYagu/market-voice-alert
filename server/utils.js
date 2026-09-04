@@ -35,30 +35,23 @@ export async function fetchWithTimeout(url, options = {}) {
     ? Math.max(1, Number(options.timeoutMs))
     : DEFAULT_UPSTREAM_TIMEOUT_MS;
   const upstreamSignal = options.signal;
-  const controller = new AbortController();
-  let timedOut = false;
-  const abortFromUpstream = () => controller.abort(upstreamSignal && upstreamSignal.reason);
-  if (upstreamSignal) {
-    if (upstreamSignal.aborted) abortFromUpstream();
-    else upstreamSignal.addEventListener('abort', abortFromUpstream, { once: true });
-  }
-  const timer = setTimeout(() => {
-    timedOut = true;
-    controller.abort(new Error(`Upstream timeout after ${timeoutMs}ms`));
-  }, timeoutMs);
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signals = [timeoutSignal];
+  if (upstreamSignal) signals.push(upstreamSignal);
+  const signal = typeof AbortSignal.any === 'function'
+    ? AbortSignal.any(signals)
+    : timeoutSignal;
+
+  const { timeoutMs: _timeoutMs, signal: _signal, ...fetchOptions } = options;
   try {
-    const { timeoutMs: _timeoutMs, signal: _signal, ...fetchOptions } = options;
-    return await fetch(url, { ...fetchOptions, signal: controller.signal });
+    return await fetch(url, { ...fetchOptions, signal });
   } catch (err) {
-    if (timedOut) {
+    if (err && (err.name === 'TimeoutError' || (signal && signal.reason && signal.reason.name === 'TimeoutError'))) {
       const timeoutError = new Error(`Upstream timeout after ${timeoutMs}ms`);
       timeoutError.name = 'TimeoutError';
       throw timeoutError;
     }
     throw err;
-  } finally {
-    clearTimeout(timer);
-    if (upstreamSignal) upstreamSignal.removeEventListener('abort', abortFromUpstream);
   }
 }
 

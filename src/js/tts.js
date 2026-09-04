@@ -34,12 +34,17 @@ function _createUtterance(text, opts) {
   return { text, lang: opts.lang, rate: opts.rate, pitch: opts.pitch, volume: opts.volume };
 }
 
+export const MAX_QUEUE_SIZE = 50;
+
 export function speak(text, userOpts = {}) {
   if (typeof text !== 'string') return;
   const trimmed = text.trim();
   if (!trimmed) return;
   const synth = _synth();
   if (!synth) return;
+  while (_queue.length >= MAX_QUEUE_SIZE) {
+    _queue.shift();
+  }
   const opts = { ...getDefaultVoiceOpts(), ...userOpts };
   const utterance = _createUtterance(trimmed, opts);
   _queue.push(utterance);

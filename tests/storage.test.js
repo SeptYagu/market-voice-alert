@@ -407,4 +407,36 @@ QUnit.module('storage.klineCache', (hooks) => {
     const got = klineCacheGet('sh600519', '1d');
     t.equal(got.items.length, 60, 'overwritten with 60 items');
   });
+
+  QUnit.test('klineCacheSet evicts 50% oldest entries on QuotaExceededError and retries', (t) => {
+    klineCacheSet('stock1', '1d', makeKline('stock1', '1d', 10));
+    klineCacheSet('stock2', '1d', makeKline('stock2', '1d', 10));
+    klineCacheSet('stock3', '1d', makeKline('stock3', '1d', 10));
+    klineCacheSet('stock4', '1d', makeKline('stock4', '1d', 10));
+
+    const raw = JSON.parse(getRaw('kline-cache-v1'));
+    raw.entries['stock1|1d'].lastAccessedAt = 1000;
+    raw.entries['stock2|1d'].lastAccessedAt = 2000;
+    raw.entries['stock3|1d'].lastAccessedAt = 3000;
+    raw.entries['stock4|1d'].lastAccessedAt = 4000;
+    setRaw('kline-cache-v1', JSON.stringify(raw));
+
+    let attempts = 0;
+    const origSetItem = mock.setItem;
+    mock.setItem = (k, v) => {
+      attempts++;
+      if (attempts === 1) {
+        throw new Error('Quota exceeded mock');
+      }
+      origSetItem(k, v);
+    };
+
+    klineCacheSet('stock5', '1d', makeKline('stock5', '1d', 10));
+
+    t.strictEqual(klineCacheHas('stock1', '1d'), false, 'oldest stock1 evicted');
+    t.strictEqual(klineCacheHas('stock2', '1d'), false, 'second oldest stock2 evicted');
+    t.strictEqual(klineCacheHas('stock3', '1d'), true, 'stock3 preserved');
+    t.strictEqual(klineCacheHas('stock4', '1d'), true, 'stock4 preserved');
+    t.strictEqual(klineCacheHas('stock5', '1d'), true, 'new stock5 saved on retry');
+  });
 });

@@ -49,6 +49,19 @@ function cacheApiPlugin() {
   };
 }
 
+function attachProxyErrorHandler(proxy) {
+  proxy.on('error', (err, _req, res) => {
+    if (res && !res.headersSent) {
+      if (typeof res.writeHead === 'function') {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+      }
+      if (typeof res.end === 'function') {
+        res.end(JSON.stringify({ error: 'Proxy upstream unavailable', message: err && err.message }));
+      }
+    }
+  });
+}
+
 export default defineConfig({
   plugins: [appVersionPlugin(), cacheApiPlugin()],
   server: {
@@ -64,6 +77,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/tencent/, ''),
         configure: (proxy) => {
+          attachProxyErrorHandler(proxy);
           proxy.on('proxyReq', (proxyReq) => {
             proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
           });
@@ -77,6 +91,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/eastmoney-kline/, '/api'),
         configure: (proxy) => {
+          attachProxyErrorHandler(proxy);
           proxy.on('proxyReq', (proxyReq) => {
             proxyReq.setHeader('Referer', 'https://quote.eastmoney.com/');
             proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
@@ -88,6 +103,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/eastmoney/, '/api'),
         configure: (proxy) => {
+          attachProxyErrorHandler(proxy);
           proxy.on('proxyReq', (proxyReq) => {
             proxyReq.setHeader('Referer', 'https://quote.eastmoney.com/');
             proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
@@ -102,6 +118,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/limit-up/, '/api'),
         configure: (proxy) => {
+          attachProxyErrorHandler(proxy);
           proxy.on('proxyReq', (proxyReq) => {
             proxyReq.setHeader('Referer', 'https://quote.eastmoney.com/');
             proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
@@ -116,6 +133,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/limit-up-stock/, '/api'),
         configure: (proxy) => {
+          attachProxyErrorHandler(proxy);
           proxy.on('proxyReq', (proxyReq) => {
             proxyReq.setHeader('Referer', 'https://quote.eastmoney.com/');
             proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
@@ -132,13 +150,17 @@ export default defineConfig({
       '/api/aktools': {
         target: 'http://127.0.0.1:8888',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/aktools/, '')
+        rewrite: (path) => path.replace(/^\/api\/aktools/, ''),
+        configure: (proxy) => {
+          attachProxyErrorHandler(proxy);
+        }
       },
       '/api/sina': {
         target: 'https://hq.sinajs.cn',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/sina/, ''),
         configure: (proxy) => {
+          attachProxyErrorHandler(proxy);
           proxy.on('proxyReq', (proxyReq) => {
             proxyReq.setHeader('Referer', 'https://finance.sina.com.cn/');
             proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
@@ -152,6 +174,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/qq-kline-min/, ''),
         configure: (proxy) => {
+          attachProxyErrorHandler(proxy);
           proxy.on('proxyReq', (proxyReq) => {
             proxyReq.setHeader('Referer', 'https://gu.qq.com/');
             proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
@@ -163,6 +186,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/qq-kline/, ''),
         configure: (proxy) => {
+          attachProxyErrorHandler(proxy);
           proxy.on('proxyReq', (proxyReq) => {
             proxyReq.setHeader('Referer', 'https://gu.qq.com/');
             proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');

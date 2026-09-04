@@ -5,6 +5,7 @@ import {
   setSpeechAdapter,
   speak,
   cancel,
+  MAX_QUEUE_SIZE,
   _internal
 } from '../src/js/tts.js';
 
@@ -283,6 +284,15 @@ QUnit.module('tts.speak/cancel', (hooks) => {
     speak('first');
     speak('second');
     t.equal(_internal().queue.length, 2);
+  });
+
+  QUnit.test('queue does not exceed MAX_QUEUE_SIZE under heavy load', (t) => {
+    cancel();
+    for (let i = 0; i < 70; i++) {
+      speak(`utterance-${i}`);
+    }
+    t.equal(_internal().queue.length, MAX_QUEUE_SIZE);
+    t.equal(_internal().queue[_internal().queue.length - 1].text, 'utterance-69');
   });
 });
 
