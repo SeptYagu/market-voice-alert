@@ -161,6 +161,41 @@ QUnit.module('ChartRowManager', () => {
     t.notOk(mgr.intradayCtlMap.has('sh600519'), 'intradayCtl deleted from map');
   });
 
+  QUnit.test('destroyCharts with { abort: false } cleans up ctls without aborting in-flight requests', (t) => {
+    const instances = new Map();
+    const mgr = new ChartRowManager({
+      prefix: 'test-',
+      hasIntraday: true,
+      getChartInstances: () => instances,
+      isExpanded: (code) => instances.has(code)
+    });
+
+    let klineAborted = false;
+    let intradayAborted = false;
+    let klineDestroyed = false;
+
+    const inst = createChartState('1d');
+    inst.abort = {
+      abort: () => { klineAborted = true; }
+    };
+    inst.intradayAbort = {
+      abort: () => { intradayAborted = true; }
+    };
+    instances.set('sh600519', inst);
+
+    mgr.klineCtlMap.set('sh600519', {
+      destroy: () => { klineDestroyed = true; }
+    });
+
+    mgr.destroyCharts('sh600519', { abort: false });
+
+    t.notOk(klineAborted, 'inst.abort was NOT aborted');
+    t.notOk(intradayAborted, 'inst.intradayAbort was NOT aborted');
+    t.ok(inst.abort !== null, 'inst.abort retained');
+    t.ok(inst.intradayAbort !== null, 'inst.intradayAbort retained');
+    t.ok(klineDestroyed, 'klineCtl destroyed for remount');
+  });
+
   QUnit.test('getPrevCloseForDate accurately finds prior day close across daily and minute bars', (t) => {
     // Daily bars
     const daily = [

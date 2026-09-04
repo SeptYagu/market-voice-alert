@@ -2473,7 +2473,7 @@ function _handleLimitUpForceReloadChart(code) {
 }
 
 function _destroyLimitUpChart(code) {
-  limitUpChartMgr.destroyCharts(code);
+  limitUpChartMgr.destroyCharts(code, { abort: false });
 }
 
 function mountLimitUpChart(code) {

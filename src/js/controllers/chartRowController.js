@@ -279,16 +279,18 @@ export class ChartRowManager {
     if (this.hasIntraday) this.mountIntradayChart(code);
   }
 
-  destroyCharts(code) {
-    const inst = this.getInst(code);
-    if (inst) {
-      if (inst.abort) {
-        try { inst.abort.abort(); } catch { /* ignore */ }
-        inst.abort = null;
-      }
-      if (inst.intradayAbort) {
-        try { inst.intradayAbort.abort(); } catch { /* ignore */ }
-        inst.intradayAbort = null;
+  destroyCharts(code, { abort = true } = {}) {
+    if (abort) {
+      const inst = this.getInst(code);
+      if (inst) {
+        if (inst.abort) {
+          try { inst.abort.abort(); } catch { /* ignore */ }
+          inst.abort = null;
+        }
+        if (inst.intradayAbort) {
+          try { inst.intradayAbort.abort(); } catch { /* ignore */ }
+          inst.intradayAbort = null;
+        }
       }
     }
     const klineCtl = this.klineCtlMap.get(code);
