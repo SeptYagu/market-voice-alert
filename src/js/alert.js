@@ -85,7 +85,8 @@ export function formatAlertMessage(quote, direction) {
   if (!name) return '';
   const label = direction === 'down' ? '跌幅' : '涨幅';
   const unit = quote.type === 'future' ? '' : ' 元';
-  return `${name} ${label} ${Math.abs(pct).toFixed(2)}%，现价 ${price.toFixed(2)}${unit}`;
+  const decimals = quote.type === 'future' && quote.priceTick && quote.priceTick < 0.01 ? 3 : 2;
+  return `${name} ${label} ${Math.abs(pct).toFixed(2)}%，现价 ${price.toFixed(decimals)}${unit}`;
 }
 
 export function evaluateAlerts(quotes, subscribedCodes, threshold, statesIn) {

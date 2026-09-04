@@ -461,12 +461,16 @@ QUnit.module('kline.getPriceLimit', () => {
     t.equal(getPriceLimit('bj830799', '艾融软件'), 30);
     t.equal(getPriceLimit('bj872925', 'Some Co'), 30);
   });
-  QUnit.test('ST overrides board (returns 5)', (t) => {
+  QUnit.test('Main board ST returns 5', (t) => {
     t.equal(getPriceLimit('sh600519', 'ST茅台'), 5);
     t.equal(getPriceLimit('sz000001', '*ST银行'), 5);
-    t.equal(getPriceLimit('sz300750', 'ST宁德'), 5);
   });
-  QUnit.test('ST detection case-insensitive', (t) => {
+  QUnit.test('ChiNext, STAR, and BSE ST stocks keep their board price limits (20% and 30%)', (t) => {
+    t.equal(getPriceLimit('sz300750', 'ST宁德'), 20, 'ChiNext ST stock has 20% limit');
+    t.equal(getPriceLimit('sh688981', '*ST中芯'), 20, 'STAR ST stock has 20% limit');
+    t.equal(getPriceLimit('bj830799', 'ST艾融'), 30, 'BSE stock has 30% limit');
+  });
+  QUnit.test('ST detection case-insensitive for main board', (t) => {
     t.equal(getPriceLimit('sh600519', 'st 茅台'), 5);
     t.equal(getPriceLimit('sh600519', '*st 茅台'), 5);
   });

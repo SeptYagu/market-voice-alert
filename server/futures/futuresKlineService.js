@@ -32,15 +32,20 @@ async function fetchFuturesMinute(inst, period = '1') {
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length) {
-        const items = data.map((row) => ({
-          time: parseBeijingDateTimeToChartSeconds(row.datetime || row.time),
-          open: Number(row.open),
-          high: Number(row.high),
-          low: Number(row.low),
-          close: Number(row.close),
-          volume: Number(row.volume) || 0,
-          openInterest: Number(row.hold ?? row.position ?? row.open_interest) || 0
-        })).filter((item) => Number.isFinite(item.time) && Number.isFinite(item.close));
+        const items = data.map((row) => {
+          const p = Number(row.close);
+          const avg = Number(row.avg_price ?? row.average ?? row.avgPrice ?? row.均价);
+          return {
+            time: parseBeijingDateTimeToChartSeconds(row.datetime || row.time),
+            open: Number(row.open),
+            high: Number(row.high),
+            low: Number(row.low),
+            close: p,
+            avgPrice: Number.isFinite(avg) && avg > 0 ? avg : null,
+            volume: Number(row.volume) || 0,
+            openInterest: Number(row.hold ?? row.position ?? row.open_interest) || 0
+          };
+        }).filter((item) => Number.isFinite(item.time) && Number.isFinite(item.close));
 
         if (items.length) {
           return {
@@ -77,12 +82,14 @@ async function fetchFuturesMinute(inst, period = '1') {
               time = parseBeijingDateTimeToChartSeconds(`${baseDate} ${timeStr}`);
             }
             const p = Number(row[1]);
+            const avg = Number(row[2]);
             return {
               time,
               open: p,
               high: p,
               low: p,
               close: p,
+              avgPrice: Number.isFinite(avg) && avg > 0 ? avg : null,
               volume: Number(row[3]) || 0,
               openInterest: Number(row[4]) || 0
             };
@@ -403,9 +410,28 @@ export async function getCachedFuturesIntraday(symbolOrId, opts = {}) {
         prevSettlement = itemsToUse[0].open;
       }
 
+      let cumVol = 0;
+      let cumAmount = 0;
+      const decimals = inst.priceTick && inst.priceTick < 0.01 ? 3 : 2;
+
       const intradayItems = itemsToUse.map((it) => {
         const pc = prevSettlement || it.close;
         const percent = pc > 0 ? ((it.close - pc) / pc) * 100 : 0;
+
+        let avgPrice = null;
+        if (Number.isFinite(it.avgPrice) && it.avgPrice > 0) {
+          avgPrice = Number(it.avgPrice.toFixed(decimals));
+        } else {
+          const vol = Number(it.volume) || 0;
+          cumVol += vol;
+          cumAmount += (it.close * vol);
+          if (cumVol > 0) {
+            avgPrice = Number((cumAmount / cumVol).toFixed(decimals));
+          } else {
+            avgPrice = Number(it.close.toFixed(decimals));
+          }
+        }
+
         return {
           time: it.time,
           price: it.close,
@@ -413,6 +439,7 @@ export async function getCachedFuturesIntraday(symbolOrId, opts = {}) {
           high: it.high,
           low: it.low,
           close: it.close,
+          avgPrice,
           volume: it.volume,
           openInterest: it.openInterest,
           percent: Number(percent.toFixed(2))
@@ -434,6 +461,19 @@ export async function getCachedFuturesIntraday(symbolOrId, opts = {}) {
 
   if (result && result.data) {
     result.data.stale = !!result.stale;
+    if (Array.isArray(result.data.items)) {
+      let cumV = 0;
+      let cumA = 0;
+      const dec = inst.priceTick && inst.priceTick < 0.01 ? 3 : 2;
+      for (const it of result.data.items) {
+        if (!Number.isFinite(it.avgPrice) || it.avgPrice <= 0) {
+          const v = Number(it.volume) || 0;
+          cumV += v;
+          cumA += (it.close * v);
+          it.avgPrice = cumV > 0 ? Number((cumA / cumV).toFixed(dec)) : Number(it.close.toFixed(dec));
+        }
+      }
+    }
   }
   return result ? result.data : null;
 }

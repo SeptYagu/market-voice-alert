@@ -137,6 +137,16 @@ QUnit.module('alert.formatAlertMessage', () => {
     );
   });
 
+  QUnit.test('uses 3 decimals for treasury bond futures when priceTick < 0.01', (t) => {
+    t.equal(
+      formatAlertMessage(
+        { code: 't2412', name: '十年国债2412', price: 104.355, changePercent: 0.15, type: 'future', priceTick: 0.005 },
+        'up'
+      ),
+      '十年国债2412 涨幅 0.15%，现价 104.355'
+    );
+  });
+
   QUnit.test('returns empty string for invalid input', (t) => {
     t.equal(formatAlertMessage(null, 'up'), '');
     t.equal(formatAlertMessage({}, 'up'), '');

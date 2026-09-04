@@ -4,7 +4,7 @@ import {
   formatAmount,
   formatPercent,
   LIMIT_UP_REFRESH_OPTIONS
-} from './app.js';
+} from './format.js';
 import { PERIODS, PERIOD_LABELS } from './kline.js';
 import { sortLimitUpGroupItems } from './limitUp.js';
 import { getBeijingDate, shiftCalendarDate } from './time.js';
@@ -164,6 +164,9 @@ function buildRow(item, ctx) {
     {
       class: rowClasses.join(' '),
       'data-code': item.code,
+      role: 'button',
+      tabindex: '0',
+      'aria-expanded': isActive ? 'true' : 'false',
       on: {
         click: (e) => {
           const target = e && e.target;
@@ -171,6 +174,16 @@ function buildRow(item, ctx) {
           if (target && target.tagName === 'BUTTON') return;
           if (target && target.closest && (target.closest('.lu-check') || target.closest('.lu-pin'))) return;
           if (typeof ctx.cb.openKline === 'function') ctx.cb.openKline(item.code);
+        },
+        keydown: (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            const target = e && e.target;
+            if (target && target.tagName === 'INPUT') return;
+            if (target && target.tagName === 'BUTTON') return;
+            if (target && target.closest && (target.closest('.lu-check') || target.closest('.lu-pin'))) return;
+            e.preventDefault();
+            if (typeof ctx.cb.openKline === 'function') ctx.cb.openKline(item.code);
+          }
         }
       }
     },

@@ -52,9 +52,10 @@ QUnit.test('getCachedFuturesIntraday returns filtered intraday bars', async (ass
   assert.ok(intraday.items.length > 0, `contains bars: ${intraday.items.length}`);
   // Should not be bloated to 1023 bars if filtered
   assert.ok(intraday.items.length <= 400, `single-day intraday count is reasonable (<= 400): ${intraday.items.length}`);
+  assert.ok(intraday.items.some((it) => Number.isFinite(it.avgPrice) && it.avgPrice > 0), 'intraday bars contain valid positive avgPrice');
 });
 
-QUnit.test('Sina minute JSONP parsing correctly extracts baseDate and maps volume & openInterest', (assert) => {
+QUnit.test('Sina minute JSONP parsing correctly extracts baseDate and maps volume, openInterest & avgPrice', (assert) => {
   const fixture = `/*<script>location.href='//sina.com';</script>*/\nvar _RB0=([["21:00","3144.000","3144.406","15805","1466859","3142.000","2026-09-04"],["21:01","3138.000","3143.011","12003","1466996"]]);`;
   const match = fixture.match(/var\s+[^=]+=\s*\(?\s*(\[[\s\S]*\])/);
   assert.ok(match, 'regex matches var _RB0=([ ... ])');
@@ -66,16 +67,19 @@ QUnit.test('Sina minute JSONP parsing correctly extracts baseDate and maps volum
 
   const row0 = arr[0];
   const p = Number(row0[1]);
+  const avg = Number(row0[2]);
   const bar0 = {
     open: p,
     high: p,
     low: p,
     close: p,
+    avgPrice: Number.isFinite(avg) && avg > 0 ? avg : null,
     volume: Number(row0[3]) || 0,
     openInterest: Number(row0[4]) || 0
   };
   assert.equal(bar0.close, 3144, 'close is 3144 (not openInterest)');
   assert.equal(bar0.low, 3144, 'low is 3144 (not volume)');
+  assert.equal(bar0.avgPrice, 3144.406, 'avgPrice is row[2]');
   assert.equal(bar0.volume, 15805, 'volume is row[3]');
   assert.equal(bar0.openInterest, 1466859, 'openInterest is row[4]');
 });

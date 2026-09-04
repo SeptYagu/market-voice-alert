@@ -373,19 +373,28 @@ function _readKlineCacheObject() {
   }
 }
 
+const _klineAccessTimes = new Map();
+
+export function klineCacheGetAccessTime(code, period) {
+  if (!code || !period) return 0;
+  const key = `${code}|${period}`;
+  if (_klineAccessTimes.has(key)) return _klineAccessTimes.get(key);
+  const entry = _readKlineCacheEntry(code, period);
+  return entry ? (entry.lastAccessedAt || entry.fetchedAt || 0) : 0;
+}
+
+function _getEntryLastAccessed(entry, key) {
+  if (_klineAccessTimes.has(key)) return _klineAccessTimes.get(key);
+  return (entry && (entry.lastAccessedAt || entry.fetchedAt)) || 0;
+}
+
 export function klineCacheGet(code, period) {
   if (!code || !period) return null;
   const entry = _readKlineCacheEntry(code, period);
   if (!entry) return null;
   if (entry && isKlineCacheStale(code, period)) return null;
-  // Update lastAccessedAt
-  try {
-    const obj = _readKlineCacheObject();
-    if (obj.entries[`${code}|${period}`]) {
-      obj.entries[`${code}|${period}`].lastAccessedAt = Date.now();
-      _writeKlineCacheObject(obj);
-    }
-  } catch { /* ignore */ }
+  // Update in-memory LRU timestamp without synchronously serializing and writing to localStorage
+  _klineAccessTimes.set(`${code}|${period}`, Date.now());
   return entry.data;
 }
 
@@ -399,6 +408,7 @@ export function klineCacheSet(code, period, data) {
   if (!data || typeof data !== 'object' || !Array.isArray(data.items)) return;
   const key = `${code}|${period}`;
   const now = Date.now();
+  _klineAccessTimes.set(key, now);
   let obj;
   try {
     obj = _readKlineCacheObject();
@@ -416,9 +426,12 @@ export function klineCacheSet(code, period, data) {
   // LRU 容量
   const entries = Object.entries(obj.entries);
   if (entries.length > KLINE_MAX_ENTRIES) {
-    entries.sort((a, b) => a[1].lastAccessedAt - b[1].lastAccessedAt);
+    entries.sort((a, b) => _getEntryLastAccessed(a[1], a[0]) - _getEntryLastAccessed(b[1], b[0]));
     const toRemove = entries.slice(0, entries.length - KLINE_MAX_ENTRIES);
-    for (const [k] of toRemove) delete obj.entries[k];
+    for (const [k] of toRemove) {
+      delete obj.entries[k];
+      _klineAccessTimes.delete(k);
+    }
   }
   try {
     _writeKlineCacheObject(obj);
@@ -426,9 +439,13 @@ export function klineCacheSet(code, period, data) {
     // QuotaExceeded → 删 50% + 重试
     try {
       const retry = Object.entries(obj.entries);
-      retry.sort((a, b) => a[1].lastAccessedAt - b[1].lastAccessedAt);
+      retry.sort((a, b) => _getEntryLastAccessed(a[1], a[0]) - _getEntryLastAccessed(b[1], b[0]));
       const removeCount = Math.floor(retry.length / 2);
-      for (let i = 0; i < removeCount; i++) delete obj.entries[retry[i][0]];
+      for (let i = 0; i < removeCount; i++) {
+        const k = retry[i][0];
+        delete obj.entries[k];
+        _klineAccessTimes.delete(k);
+      }
       _writeKlineCacheObject(obj);
     } catch { /* give up */ }
   }
@@ -442,6 +459,7 @@ export function klineCachePrune() {
     for (const [k, e] of Object.entries(obj.entries)) {
       if (e && typeof e.fetchedAt === 'number' && isKlineCacheStale(e.code, e.period, now)) {
         delete obj.entries[k];
+        _klineAccessTimes.delete(k);
         removed++;
       }
     }
@@ -450,5 +468,6 @@ export function klineCachePrune() {
 }
 
 export function klineCacheClear() {
+  _klineAccessTimes.clear();
   try { remove(KLINE_CACHE_KEY); } catch { /* ignore */ }
 }

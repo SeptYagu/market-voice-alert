@@ -7,6 +7,8 @@ import {
   stripPrefix,
   makeExportFilename,
   buildExportText,
+  buildExportCsv,
+  stopApp,
   REFRESH_OPTIONS,
   DEFAULT_REFRESH,
   DEFAULT_VOICE_SETTINGS,
@@ -171,6 +173,37 @@ QUnit.module('app.buildExportText', () => {
   });
   QUnit.test('empty list returns empty string', (t) => {
     t.equal(buildExportText([]), '');
+  });
+});
+
+QUnit.module('app.buildExportCsv', () => {
+  QUnit.test('builds standard CSV with BOM, headers, and quote metadata', (t) => {
+    const quotes = new Map([
+      ['sh600519', { code: 'sh600519', name: '贵州茅台', price: 1800, changePercent: 2.5, open: 1780, volume: 10000, amount: 18000000, type: 'stock' }],
+      ['t2412', { code: 't2412', name: '十年国债2412', price: 104.355, changePercent: 0.12, open: 104.2, volume: 5000, amount: 500000, type: 'future', priceTick: 0.005 }]
+    ]);
+    const csv = buildExportCsv(['sh600519', 't2412'], quotes);
+    t.ok(csv.startsWith('\uFEFF'), 'starts with UTF-8 BOM');
+    t.ok(csv.includes('代码,名称,现价,涨跌幅(%),开盘价,成交量,成交额/持仓量,类型'), 'contains header');
+    t.ok(csv.includes('600519,"贵州茅台",1800.00,2.50,1780.00,10000,18000000,股票'), 'contains formatted stock row');
+    t.ok(csv.includes('T2412,"十年国债2412",104.355,0.12,104.200,5000,500000,期货'), 'contains 3-decimal future row');
+  });
+
+  QUnit.test('handles empty codes gracefully', (t) => {
+    const csv = buildExportCsv([], new Map());
+    t.ok(csv.startsWith('\uFEFF代码,名称'), 'outputs header even when empty');
+  });
+});
+
+QUnit.module('app.stopApp', () => {
+  QUnit.test('stopApp runs without error when idle', (t) => {
+    t.expect(1);
+    try {
+      stopApp();
+      t.ok(true, 'stopApp completed without throwing');
+    } catch (e) {
+      t.notOk(e, 'stopApp threw: ' + e);
+    }
   });
 });
 

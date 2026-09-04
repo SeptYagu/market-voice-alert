@@ -2,7 +2,7 @@
 
 > **新窗口从这里开始**：本文件记录了完整的重做计划、决策、当前阶段和下一步任务。无需阅读历史对话。
 >
-> **新窗口交接文档**：[`docs/handoff/2026-09-03-remaining-defects-and-remediation-handoff.md`](docs/handoff/2026-09-03-remaining-defects-and-remediation-handoff.md) — 2026-09-03 核心缺陷闭环差距分析与剩余未完成缺陷交接文档（最新）。详见前序 [`docs/handoff/2026-09-03-futures-complete-defects-resolution-handoff.md`](docs/handoff/2026-09-03-futures-complete-defects-resolution-handoff.md) 与原审查清单 [`docs/handoff/2026-09-03-gemini-implementation-code-review-handoff.md`](docs/handoff/2026-09-03-gemini-implementation-code-review-handoff.md)。
+> **新窗口交接文档**：[`docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md`](docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md) — 2026-09-04 全面代码审查结论、缺陷清单与架构重构实施交接文档（最新）。详见前序 [`docs/handoff/2026-09-03-remaining-defects-and-remediation-handoff.md`](docs/handoff/2026-09-03-remaining-defects-and-remediation-handoff.md) 与 [`docs/handoff/2026-09-03-futures-complete-defects-resolution-handoff.md`](docs/handoff/2026-09-03-futures-complete-defects-resolution-handoff.md)。
 
 ## 项目定位
 
@@ -32,7 +32,23 @@
 - ✅ **全部 18 项缺陷 100% 修复入库**：分 3 批（`8ac0057`、`6b62078`、`fd70619`）彻底解决 P0/P1/HIGH 级缺陷，包括新浪 JSONP 正则及字段错位、周六凌晨会话判定、境内期货分时放行、法定节假日日历单例注入、周/月 K 聚合（解除 HTTP 400）、4 项图表生命周期竞态、昨结对齐与国债 3 位小数、合约年月校验、single-flight AbortSignal 隔离、读缓存写放大消除等。
 - ✅ **单测补齐至 622 项通过**：补齐服务端期货报价与 K 线服务真实单测、新浪真实抓取报文测试、科创板 CDR 689xxx 20% 限额测试、localStorage QuotaExceeded 50% LRU 淘汰测试。
 - ✅ **构建与代码规范**：ESLint 0 错误 0 警告，生产打包顺利构建。
-- 详见最新交接文档：[`docs/handoff/2026-09-03-remaining-defects-and-remediation-handoff.md`](docs/handoff/2026-09-03-remaining-defects-and-remediation-handoff.md)。
+- 详见前序交接文档：[`docs/handoff/2026-09-03-remaining-defects-and-remediation-handoff.md`](docs/handoff/2026-09-03-remaining-defects-and-remediation-handoff.md)。
+
+## 2026-09-04 全面代码审查缺陷核验与修复状态
+
+- ✅ **核验与修复 10 项缺陷/坏味道**：
+  1. **Bug 2.1 (双创板/北交所 ST 涨跌幅)**：修正 `kline.js` 中科创/创业板（含 ST）20% 规则及北交所 30% 规则，纠正测试用例历史错误断言。
+  2. **Bug 2.2 (消除 K 线缓存读取写放大)**：`storage.js` 改为模块级纯内存 `_klineAccessTimes` 记录访问时间，消除查询读操作同步调用 `localStorage.setItem`，补齐 0 写盘单测。
+  3. **Bug 2.3 (期货分时 VWAP 均价线补齐)**：`server/futures/futuresKlineService.js` 解析新浪第 3 列均价或成交量加权 VWAP，并对旧缓存补齐向前兼容。
+  4. **Bug 2.4 (`refreshNow` 竞态加固)**：引入 `seq` 单调自增序列号，消除前置请求 Abort 导致并发互斥锁被过早释放。
+  5. **Bug 2.5 (涨停看板周期轮询就地 Patch)**：实现 `patchLimitUpQuoteCells()` 和 `updateLimitUpStatusBar()`，避免周期刷新全量摧毁重建 DOM 及图表重新挂载白屏。
+  6. **Bug 2.6 (`onKlineUpdated` 注销闭包与生命周期)**：保存注销闭包，导出 `stopApp()` 统一清理 Worker 心跳、定时轮询与事件监听。
+  7. **Bug 2.7 (国债期货 3 位小数与语义化选择器)**：`alert.js` 和 `app.js` 统一支持变动价位 `< 0.01` 的 3 位小数播报与展示，改用 `data-field` 语义化选择器替代下标。
+  8. **Bug 2.8 (标的导出 CSV 标准化)**：新增 `buildExportCsv()` 导出含 UTF-8 BOM 和完整行情的标准 CSV 文件，保留纯文本向后兼容。
+  9. **架构 4.1.2 (解除模块循环依赖)**：下沉通用格式化工具至 `src/js/format.js`，解除 `app.js` 与 `limitUpView.js` 相互引用。
+  10. **UI/UX 与 A11y 体验增强**：Toast 浮动提示与输入框振动反馈、行展开键盘无障碍 (`role="button"`, `aria-expanded`, Enter/Space) 及移动端小屏响应式适配。
+- ✅ **测试与质量**：单元测试扩充至 628 项全部 PASS；Playwright 端到端测试 56/56 项 100% 通过；ESLint 0 错误 0 警告；Vite 生产构建成功。
+- 详见交接文档：[`docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md`](docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md)。
 
 ## 备份
 

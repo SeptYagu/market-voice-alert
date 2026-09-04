@@ -1131,6 +1131,21 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   .lu-toolbar-row {
     gap: 0.5rem;
   }
+  .lu-group-table-wrap,
+  .momentum-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .lu-table th:nth-child(8), .lu-table td:nth-child(8),
+  .lu-table th:nth-child(9), .lu-table td:nth-child(9),
+  .lu-table th:nth-child(12), .lu-table td:nth-child(12),
+  .lu-table th:nth-child(13), .lu-table td:nth-child(13) {
+    display: none;
+  }
+  .momentum-table th:nth-child(7), .momentum-table td:nth-child(7),
+  .momentum-table th:nth-child(8), .momentum-table td:nth-child(8) {
+    display: none;
+  }
 }
 
 .lu-sort-wrap {
@@ -1266,5 +1281,44 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .lu-table .lu-chart-row .chart-status.has-error {
   color: var(--danger-color);
+}
+
+/* Floating Toast & Input Feedback */
+.app-toast {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  display: none;
+  animation: toast-in 0.25s ease-out;
+  pointer-events: none;
+}
+.app-toast-error {
+  background: var(--up-color, #e74c3c);
+  color: #fff;
+}
+.app-toast-info {
+  background: var(--accent-color, #3498db);
+  color: #fff;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, -10px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@keyframes input-shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-4px); }
+  40%, 80% { transform: translateX(4px); }
+}
+.input-shake {
+  animation: input-shake 0.3s ease-in-out;
+  border-color: var(--up-color, #e74c3c) !important;
 }
 

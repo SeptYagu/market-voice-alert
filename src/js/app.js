@@ -75,6 +75,28 @@ import {
   isLiveTradeDate
 } from './marketSession.js';
 
+import {
+  LIMIT_UP_REFRESH_OPTIONS,
+  formatNumber,
+  priceDirection,
+  formatPercent,
+  formatAmount,
+  formatPriceWithPercent,
+  stripPrefix,
+  makeExportFilename
+} from './format.js';
+export {
+  LIMIT_UP_REFRESH_OPTIONS,
+  formatNumber,
+  priceDirection,
+  formatChange,
+  formatPercent,
+  formatAmount,
+  formatPriceWithPercent,
+  stripPrefix,
+  makeExportFilename
+} from './format.js';
+
 export const REFRESH_OPTIONS = [
   { value: 3000, label: '3 秒' },
   { value: 10000, label: '10 秒' },
@@ -82,12 +104,6 @@ export const REFRESH_OPTIONS = [
   { value: 60000, label: '60 秒' }
 ];
 export const DEFAULT_REFRESH = 10000;
-
-export const LIMIT_UP_REFRESH_OPTIONS = [
-  { value: 10000, label: '10 秒' },
-  { value: 30000, label: '30 秒' },
-  { value: 60000, label: '60 秒' }
-];
 
 export const DEFAULT_VOICE_SETTINGS = Object.freeze({
   enabled: false,
@@ -256,71 +272,37 @@ function normalizeFuture(input) {
   return null;
 }
 
-export function formatNumber(n, decimals = 2) {
-  if (n === null || n === undefined || !Number.isFinite(Number(n))) return '-';
-  return Number(n).toFixed(decimals);
-}
 
-export function priceDirection(change) {
-  if (!Number.isFinite(change)) return 'flat';
-  if (change > 0) return 'up';
-  if (change < 0) return 'down';
-  return 'flat';
-}
-
-export function formatChange(change) {
-  if (!Number.isFinite(change)) return '-';
-  const sign = change > 0 ? '+' : '';
-  return `${sign}${formatNumber(change)}`;
-}
-
-export function formatPercent(p) {
-  if (!Number.isFinite(p)) return '-';
-  const sign = p > 0 ? '+' : '';
-  return `${sign}${formatNumber(p)}%`;
-}
-
-export function formatAmount(n) {
-  const v = Number(n);
-  if (!Number.isFinite(v) || v <= 0) return '-';
-  if (v >= 100000000) return `${(v / 100000000).toFixed(2)}亿`;
-  if (v >= 10000) return `${(v / 10000).toFixed(2)}万`;
-  return v.toFixed(0);
-}
-
-function formatPriceWithPercent(price, pct) {
-  const priceText = formatNumber(price);
-  const pctNum = Number(pct);
-  if (!Number.isFinite(pctNum)) return priceText;
-  return `${priceText} (${formatPercent(pctNum)})`;
-}
-
-export function stripPrefix(code) {
-  if (!code) return '';
-  const m = /^(?:sh|sz|bj|nf_?)?(.+)$/i.exec(String(code).trim());
-  return m ? m[1] : '';
-}
-
-export function makeExportFilename(prefix = 'stocks', now = new Date()) {
-  const pad = (n) => String(n).padStart(2, '0');
-  const stamp =
-    now.getFullYear().toString() +
-    pad(now.getMonth() + 1) +
-    pad(now.getDate()) +
-    '_' +
-    pad(now.getHours()) +
-    pad(now.getMinutes()) +
-    pad(now.getSeconds());
-  return `${prefix}_${stamp}.txt`;
-}
 
 export function buildExportText(codes) {
   return codes.map(stripPrefix).filter(Boolean).join('\n');
 }
 
+export function buildExportCsv(codes, quotesMap) {
+  const header = ['代码', '名称', '现价', '涨跌幅(%)', '开盘价', '成交量', '成交额/持仓量', '类型'];
+  const rows = [header.join(',')];
+  for (const code of codes || []) {
+    if (!code) continue;
+    const q = quotesMap && typeof quotesMap.get === 'function' ? quotesMap.get(code) : null;
+    const isFuture = q ? (q.type === 'future' || isFutureCode(code)) : isFutureCode(code);
+    const displayCode = isFuture ? code.toUpperCase() : stripPrefix(code);
+    const name = (q && q.name) ? `"${String(q.name).replace(/"/g, '""')}"` : `"${displayCode}"`;
+    const decimals = isFuture && q && q.priceTick && q.priceTick < 0.01 ? 3 : 2;
+    const price = q && Number.isFinite(Number(q.price)) ? Number(q.price).toFixed(decimals) : '';
+    const pct = q && Number.isFinite(Number(q.changePercent)) ? Number(q.changePercent).toFixed(2) : '';
+    const open = q && Number.isFinite(Number(q.open)) ? Number(q.open).toFixed(decimals) : '';
+    const vol = q && Number.isFinite(Number(q.volume)) ? Math.round(Number(q.volume)) : '';
+    const amount = q && Number.isFinite(Number(q.amount)) ? Number(q.amount) : '';
+    const type = isFuture ? '期货' : '股票';
+    rows.push([displayCode, name, price, pct, open, vol, amount, type].join(','));
+  }
+  return '\uFEFF' + rows.join('\r\n');
+}
+
 function downloadText(text, filename) {
   if (typeof document === 'undefined' || typeof URL === 'undefined') return;
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const mime = filename.endsWith('.csv') ? 'text/csv;charset=utf-8;' : 'text/plain;charset=utf-8';
+  const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -337,6 +319,8 @@ const state = {
   selected: new Set(),
   subscribed: new Set(),
   refreshInterval: DEFAULT_REFRESH,
+  refreshSeq: 0,
+  unsubKlineUpdated: null,
   timer: null,
   autoRefreshEnabled: true,
   autoRefreshPausedBySchedule: false,
@@ -1577,20 +1561,32 @@ function renderRow(code, isActive) {
       'data-code': code,
       class: isActive ? 'active' : null,
       title: isActive ? '点击关闭 K 线' : '点击查看 K 线',
-      on: { click: (e) => handleRowClick(code, e) }
+      role: 'button',
+      tabindex: '0',
+      'aria-expanded': isActive ? 'true' : 'false',
+      on: {
+        click: (e) => handleRowClick(code, e),
+        keydown: (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON')) return;
+            e.preventDefault();
+            handleRowClick(code, e);
+          }
+        }
+      }
     },
-    el('td', { class: 'col-check' }, checkbox),
-    el('td', { class: 'col-sub' }, subCheckbox),
-    el('td', { class: 'code' }, displayCode),
-    el('td', { class: 'name' }, q.name || '...'),
-    el('td', { class: `num ${dir}` }, formatNumber(q.price, priceDecimals)),
-    el('td', { class: `num ${dir}` }, formatPercent(q.changePercent)),
-    el('td', { class: 'num' }, formatPriceWithPercent(q.open, q.openChangePercent)),
-    el('td', { class: 'num', title: isFuture ? '成交量' : '量比' }, isFuture ? (q.volume ? `${Math.round(q.volume).toLocaleString('en-US')}` : '-') : formatNumber(q.volumeRatio)),
-    el('td', { class: 'num', title: isFuture ? '持仓量' : '成交额' }, isFuture ? (q.openInterest ? `持仓 ${Math.round(q.openInterest).toLocaleString('en-US')}` : '-') : formatAmount(q.amount)),
+    el('td', { class: 'col-check', 'data-field': 'check' }, checkbox),
+    el('td', { class: 'col-sub', 'data-field': 'sub' }, subCheckbox),
+    el('td', { class: 'code', 'data-field': 'code' }, displayCode),
+    el('td', { class: 'name', 'data-field': 'name' }, q.name || '...'),
+    el('td', { class: `num ${dir}`, 'data-field': 'price' }, formatNumber(q.price, priceDecimals)),
+    el('td', { class: `num ${dir}`, 'data-field': 'percent' }, formatPercent(q.changePercent)),
+    el('td', { class: 'num', 'data-field': 'open' }, formatPriceWithPercent(q.open, q.openChangePercent)),
+    el('td', { class: 'num', 'data-field': 'volume', title: isFuture ? '成交量' : '量比' }, isFuture ? (q.volume ? `${Math.round(q.volume).toLocaleString('en-US')}` : '-') : formatNumber(q.volumeRatio)),
+    el('td', { class: 'num', 'data-field': 'amount', title: isFuture ? '持仓量' : '成交额' }, isFuture ? (q.openInterest ? `持仓 ${Math.round(q.openInterest).toLocaleString('en-US')}` : '-') : formatAmount(q.amount)),
     el(
       'td',
-      { class: 'col-op' },
+      { class: 'col-op', 'data-field': 'op' },
       el(
         'button',
         {
@@ -1939,8 +1935,8 @@ function handleExport(scope) {
     flashError(scope === 'selected' ? '请先选中标的' : '列表为空');
     return;
   }
-  const text = buildExportText(codes);
-  downloadText(text, makeExportFilename());
+  const csv = buildExportCsv(codes, state.quotes);
+  downloadText(csv, makeExportFilename('stocks', new Date(), 'csv'));
 }
 
 function handleRefreshNow() {
@@ -1997,6 +1993,73 @@ function refreshLimitUpDateMeta() {
 
 function isLimitUpDateToday(date = state.limitUp.selectedDate) {
   return date === getBeijingDate();
+}
+
+function updateLimitUpStatusBar() {
+  if (!limitUpRootEl) return;
+  const statusEl = limitUpRootEl.querySelector('#lu-status');
+  if (!statusEl) return;
+  const parts = [];
+  const total = (state.limitUp.groups || []).reduce((s, g) => s + (g.items ? g.items.length : 0), 0);
+  parts.push(`共 ${total} 只涨停`);
+  if (state.limitUp.loading) parts.push('加载中...');
+  if (state.limitUp.error) parts.push(`错误: ${state.limitUp.error}`);
+  if (state.limitUp.consecutiveEmptyFetches > 0 && state.limitUp.lastNonEmptyAt) {
+    const ts = state.limitUp.lastNonEmptyAt.toLocaleTimeString();
+    parts.push(`缓存自 ${ts} · 已空 ${state.limitUp.consecutiveEmptyFetches} 次`);
+  } else if (state.limitUp.lastUpdate) {
+    parts.push(`更新于 ${state.limitUp.lastUpdate.toLocaleTimeString()}`);
+  }
+  statusEl.textContent = parts.join(' · ');
+}
+
+function patchLimitUpQuoteCells() {
+  if (!limitUpRootEl) return false;
+  const groupsSection = limitUpRootEl.querySelector('#lu-groups');
+  if (!groupsSection) return false;
+
+  const items = state.limitUp.items || [];
+  const existingRows = groupsSection.querySelectorAll('tr[data-code]');
+  if (existingRows.length !== items.length) {
+    return false;
+  }
+  if (!items.length) {
+    updateLimitUpStatusBar();
+    return true;
+  }
+
+  const itemMap = new Map(items.map((it) => [it.code, it]));
+  for (const [code, item] of itemMap) {
+    const row = groupsSection.querySelector(`tr[data-code="${code}"]`);
+    if (!row) return false;
+    const dir = priceDirection(Number(item.changePercent));
+    const pCell = row.querySelector('.lu-price');
+    if (pCell) pCell.textContent = formatNumber(item.price);
+    const pctCell = row.querySelector('.lu-pct');
+    if (pctCell) {
+      pctCell.textContent = formatPercent(item.changePercent);
+      pctCell.className = `lu-pct num ${dir}`;
+    }
+    const openCell = row.querySelector('.lu-open');
+    if (openCell) openCell.textContent = formatNumber(item.open);
+    const ratioCell = row.querySelector('.lu-ratio');
+    if (ratioCell) ratioCell.textContent = formatNumber(item.volumeRatio);
+    const amtCell = row.querySelector('.lu-amount');
+    if (amtCell) amtCell.textContent = formatAmount(item.amount);
+    const countCell = row.querySelector('.lu-count');
+    if (countCell && item.limitUpCount !== undefined) countCell.textContent = `${item.limitUpCount} 板`;
+    const finalCell = row.querySelector('.lu-final');
+    if (finalCell && item.lastLimitTime) finalCell.textContent = item.lastLimitTime;
+    const breakCell = row.querySelector('.lu-break');
+    if (breakCell && item.breakCount !== undefined) breakCell.textContent = String(item.breakCount);
+    const reasonCell = row.querySelector('.lu-reason');
+    if (reasonCell && item.reason) {
+      reasonCell.textContent = item.reason;
+      if (item.interpretation) reasonCell.title = item.interpretation;
+    }
+  }
+  updateLimitUpStatusBar();
+  return true;
 }
 
 function rerenderLimitUpPage() {
@@ -2105,7 +2168,9 @@ async function limitUpFetch() {
     if (requestSeq !== state.limitUp.requestSeq || state.limitUp.selectedDate !== date) return;
     state.limitUp.lastUpdate = new Date();
     state.limitUp = applyLimitUpFetchResult(state.limitUp, rawItems);
-    rerenderLimitUpPage();
+    if (!patchLimitUpQuoteCells()) {
+      rerenderLimitUpPage();
+    }
     if (isLimitUpDateToday(date)) {
       enrichLimitUpItemsWithQuotes(rawItems, controller.signal)
         .then((quoteEnriched) => {
@@ -2125,7 +2190,9 @@ async function limitUpFetch() {
             } : it;
           });
           state.limitUp.groups = buildLimitUpGroupsForState();
-          rerenderLimitUpPage();
+          if (!patchLimitUpQuoteCells()) {
+            rerenderLimitUpPage();
+          }
         })
         .catch(() => { /* best-effort live quote enrichment */ });
     }
@@ -2143,7 +2210,7 @@ async function limitUpFetch() {
     if (requestSeq === state.limitUp.requestSeq) {
       if (state.limitUp.abort === controller) state.limitUp.abort = null;
       state.limitUp.loading = false;
-      rerenderLimitUpPage();
+      updateLimitUpStatusBar();
     }
   }
 }
@@ -2203,7 +2270,9 @@ function kickoffLimitUpMetadataFetch(items, date, requestSeq = state.limitUp.req
       if (!changed) return;
       state.limitUp.items = merged;
       state.limitUp.groups = buildLimitUpGroupsForState();
-      rerenderLimitUpPage();
+      if (!patchLimitUpQuoteCells()) {
+        rerenderLimitUpPage();
+      }
     })
     .catch(() => { /* best-effort; ignore */ });
 }
@@ -2226,7 +2295,9 @@ function kickoffLimitUpReasonsFetch(date, forceRefresh = false, requestSeq = sta
       if (!changed) return;
       state.limitUp.items = merged;
       state.limitUp.groups = buildLimitUpGroupsForState();
-      rerenderLimitUpPage();
+      if (!patchLimitUpQuoteCells()) {
+        rerenderLimitUpPage();
+      }
     })
     .catch(() => { /* best-effort; ignore */ });
 }
@@ -2262,7 +2333,9 @@ function applyLiveTicksToLimitUp() {
   if (merged === state.limitUp.items) return;
   state.limitUp.items = merged;
   state.limitUp.groups = buildLimitUpGroupsForState();
-  rerenderLimitUpPage();
+  if (!patchLimitUpQuoteCells()) {
+    rerenderLimitUpPage();
+  }
 }
 
 function startLimitUpTimer({ immediate = true } = {}) {
@@ -3079,9 +3152,36 @@ export function _forceRefresh() {
   return refreshNow();
 }
 
+function showToast(msg, type = 'error') {
+  if (typeof document === 'undefined' || !document.body) return;
+  let toast = document.getElementById('app-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'app-toast';
+    document.body.appendChild(toast);
+  }
+  toast.className = `app-toast app-toast-${type}`;
+  toast.textContent = msg;
+  toast.style.display = 'block';
+  toast.setAttribute('role', 'alert');
+  toast.setAttribute('aria-live', 'assertive');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => {
+    toast.style.display = 'none';
+  }, 3000);
+}
+
 function flashError(msg) {
   state.error = msg;
   renderStatus();
+  showToast(msg, 'error');
+  if (typeof document !== 'undefined') {
+    const input = document.getElementById('code-input');
+    if (input) {
+      input.classList.add('input-shake');
+      setTimeout(() => input.classList.remove('input-shake'), 600);
+    }
+  }
   setTimeout(() => {
     if (state.error === msg) {
       state.error = null;
@@ -3093,6 +3193,7 @@ function flashError(msg) {
 function flashInfo(msg) {
   state.info = msg;
   renderStatus();
+  showToast(msg, 'info');
   setTimeout(() => {
     if (state.info === msg) {
       state.info = null;
@@ -3103,14 +3204,19 @@ function flashInfo(msg) {
 
 async function refreshNow() {
   const refreshCodes = getRefreshCodes();
-  if (!refreshCodes.length || state.loading) return;
-  if (abortController) abortController.abort();
+  if (!refreshCodes.length) return;
+  if (abortController) {
+    try { abortController.abort(); } catch { /* ignore */ }
+  }
+  const seq = (state.refreshSeq || 0) + 1;
+  state.refreshSeq = seq;
   abortController = new AbortController();
   state.loading = true;
   state.error = null;
   renderStatus();
   try {
     const quotes = await fetchQuotes(refreshCodes, { signal: abortController.signal });
+    if (seq !== state.refreshSeq) return;
     for (const q of quotes) {
       state.quotes.set(q.code, q);
     }
@@ -3132,25 +3238,27 @@ async function refreshNow() {
       console && console.warn && console.warn('updateChartLastTickMulti failed:', e);
     }
   } catch (err) {
-    if (err.name !== 'AbortError') {
+    if (seq === state.refreshSeq && err.name !== 'AbortError') {
       state.error = err.message || String(err);
     }
   } finally {
-    state.loading = false;
-    // Refresh path must NOT rebuild the table. renderTable() destroys all
-    // chart instances to handle structural changes (add/remove/expand), but
-    // on a periodic data refresh the row set is unchanged — we'd be throwing
-    // away the chart ctl and the user's zoom/pan state every 10s. Instead
-    // patch the price/change/percent cells in place and refresh the status
-    // bar. The chart's last bar is already updated by
-    // updateChartLastTickMulti above via series.update() (preserves zoom).
-    for (const code of state.watchList) {
-      if (state.quotes.has(code)) updateRowQuoteCells(code);
+    if (seq === state.refreshSeq) {
+      state.loading = false;
+      // Refresh path must NOT rebuild the table. renderTable() destroys all
+      // chart instances to handle structural changes (add/remove/expand), but
+      // on a periodic data refresh the row set is unchanged — we'd be throwing
+      // away the chart ctl and the user's zoom/pan state every 10s. Instead
+      // patch the price/change/percent cells in place and refresh the status
+      // bar. The chart's last bar is already updated by
+      // updateChartLastTickMulti above via series.update() (preserves zoom).
+      for (const code of state.watchList) {
+        if (state.quotes.has(code)) updateRowQuoteCells(code);
+      }
+      for (const item of state.momentum.items || []) {
+        if (item && state.quotes.has(item.code)) updateMomentumQuoteCells(item.code);
+      }
+      renderStatus();
     }
-    for (const item of state.momentum.items || []) {
-      if (item && state.quotes.has(item.code)) updateMomentumQuoteCells(item.code);
-    }
-    renderStatus();
   }
 }
 
@@ -3174,18 +3282,36 @@ function updateRowQuoteCells(code) {
   const q = state.quotes.get(code);
   if (!q) return;
   const allCells = row.querySelectorAll('td');
-  // [3]=name, [4..5]=price/percent (with direction), [6..8]=openPct/volumeRatio/amount
   if (allCells.length < 9) return;
   const dir = priceDirection(Number(q.changePercent));
-  allCells[3].textContent = q.name || '...';
-  allCells[4].textContent = formatNumber(q.price);
-  allCells[4].className = `num ${dir}`;
-  allCells[5].textContent = formatPercent(q.changePercent);
-  allCells[5].className = `num ${dir}`;
   const isFuture = q.type === 'future' || isFutureCode(code);
-  allCells[6].textContent = formatPriceWithPercent(q.open, q.openChangePercent);
-  allCells[7].textContent = isFuture ? (q.volume ? `${Math.round(q.volume).toLocaleString('en-US')}` : '-') : formatNumber(q.volumeRatio);
-  allCells[8].textContent = isFuture ? (q.openInterest ? `持仓 ${Math.round(q.openInterest).toLocaleString('en-US')}` : '-') : formatAmount(q.amount);
+  const priceDecimals = isFuture && q.priceTick && q.priceTick < 0.01 ? 3 : 2;
+
+  const getCell = (field, fallbackIndex) => row.querySelector(`td[data-field="${field}"]`) || allCells[fallbackIndex];
+
+  const nameCell = getCell('name', 3);
+  if (nameCell) nameCell.textContent = q.name || '...';
+
+  const priceCell = getCell('price', 4);
+  if (priceCell) {
+    priceCell.textContent = formatNumber(q.price, priceDecimals);
+    priceCell.className = `num ${dir}`;
+  }
+
+  const percentCell = getCell('percent', 5);
+  if (percentCell) {
+    percentCell.textContent = formatPercent(q.changePercent);
+    percentCell.className = `num ${dir}`;
+  }
+
+  const openCell = getCell('open', 6);
+  if (openCell) openCell.textContent = formatPriceWithPercent(q.open, q.openChangePercent);
+
+  const volCell = getCell('volume', 7);
+  if (volCell) volCell.textContent = isFuture ? (q.volume ? `${Math.round(q.volume).toLocaleString('en-US')}` : '-') : formatNumber(q.volumeRatio);
+
+  const amtCell = getCell('amount', 8);
+  if (amtCell) amtCell.textContent = isFuture ? (q.openInterest ? `持仓 ${Math.round(q.openInterest).toLocaleString('en-US')}` : '-') : formatAmount(q.amount);
 }
 
 function mergeQuotesIntoMomentumItems() {
@@ -3341,7 +3467,10 @@ function _onKlineUpdated(code, period, data) {
 export function startApp(root) {
   initTheme();
   // Phase 8: subscribe to kline cache updates (SWR revalidate)
-  onKlineUpdated(_onKlineUpdated);
+  if (typeof state.unsubKlineUpdated === 'function') {
+    state.unsubKlineUpdated();
+  }
+  state.unsubKlineUpdated = onKlineUpdated(_onKlineUpdated);
   const settings = getSettings();
   state.refreshInterval = settings.refreshInterval || DEFAULT_REFRESH;
   state.watchList = getWatchList();
@@ -3408,6 +3537,33 @@ export function startApp(root) {
     root
   );
   router.start();
+}
+
+export function stopApp() {
+  if (typeof state.unsubKlineUpdated === 'function') {
+    state.unsubKlineUpdated();
+    state.unsubKlineUpdated = null;
+  }
+  stopMonitorTimer();
+  stopLimitUpTimer();
+  if (state.voiceTimer) {
+    clearInterval(state.voiceTimer);
+    state.voiceTimer = null;
+  }
+  if (state.voiceScheduleTimer) {
+    clearInterval(state.voiceScheduleTimer);
+    state.voiceScheduleTimer = null;
+  }
+  if (state.dataScheduleTimer) {
+    clearInterval(state.dataScheduleTimer);
+    state.dataScheduleTimer = null;
+  }
+  if (state.tickWorker) {
+    try { state.tickWorker.terminate(); } catch { /* ignore */ }
+    state.tickWorker = null;
+  }
+  closeAllCharts();
+  closeAllLimitUpCharts();
 }
 
 export function _internal() {

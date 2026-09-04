@@ -31,6 +31,7 @@ import {
   klineCachePrune,
   klineCacheClear,
   klineCacheHas,
+  klineCacheGetAccessTime,
   isKlineCacheStale
 } from '../src/js/storage.js';
 
@@ -370,16 +371,26 @@ QUnit.module('storage.klineCache', (hooks) => {
     t.strictEqual(isKlineCacheStale('sh600519', '1m', wed1510), true, 'minute kline crossing close is stale');
   });
 
-  QUnit.test('get updates lastAccessedAt (LRU tracking)', (t) => {
+  QUnit.test('get updates lastAccessedAt (LRU tracking) without disk write amplification', (t) => {
     klineCacheSet('sh600519', '1d', makeKline('sh600519', '1d'));
-    const before = JSON.parse(getRaw('kline-cache-v1')).entries['sh600519|1d'].lastAccessedAt;
-    // 100ms wait
-    const waitMs = 50;
-    const start = Date.now();
-    while (Date.now() - start < waitMs) { /* spin */ }
-    klineCacheGet('sh600519', '1d');
-    const after = JSON.parse(getRaw('kline-cache-v1')).entries['sh600519|1d'].lastAccessedAt;
-    t.ok(after > before, `lastAccessedAt updated: ${before} → ${after}`);
+    const before = klineCacheGetAccessTime('sh600519', '1d');
+    let setItemCalls = 0;
+    const origSetItem = mock.setItem;
+    mock.setItem = (k, v) => {
+      setItemCalls++;
+      origSetItem(k, v);
+    };
+    try {
+      const waitMs = 50;
+      const start = Date.now();
+      while (Date.now() - start < waitMs) { /* spin */ }
+      klineCacheGet('sh600519', '1d');
+      const after = klineCacheGetAccessTime('sh600519', '1d');
+      t.ok(after > before, `in-memory lastAccessedAt updated: ${before} → ${after}`);
+      t.strictEqual(setItemCalls, 0, 'klineCacheGet does NOT write to localStorage (no disk write amplification)');
+    } finally {
+      mock.setItem = origSetItem;
+    }
   });
 
   QUnit.test('prune removes all entries when called (manual clear path)', (t) => {
