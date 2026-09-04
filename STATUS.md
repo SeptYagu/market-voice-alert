@@ -2,7 +2,7 @@
 
 > **新窗口从这里开始**：本文件记录了完整的重做计划、决策、当前阶段和下一步任务。无需阅读历史对话。
 >
-> **新窗口交接文档**：[`docs/handoff/2026-09-03-futures-complete-defects-resolution-handoff.md`](docs/handoff/2026-09-03-futures-complete-defects-resolution-handoff.md) — 2026-09-03 境内期货全链路支持与全面代码审查缺陷闭环重构交接文档（最新）。详见审查清单 [`docs/handoff/2026-09-03-gemini-implementation-code-review-handoff.md`](docs/handoff/2026-09-03-gemini-implementation-code-review-handoff.md)。
+> **新窗口交接文档**：[`docs/handoff/2026-09-03-remaining-defects-and-remediation-handoff.md`](docs/handoff/2026-09-03-remaining-defects-and-remediation-handoff.md) — 2026-09-03 核心缺陷闭环差距分析与剩余未完成缺陷交接文档（最新）。详见前序 [`docs/handoff/2026-09-03-futures-complete-defects-resolution-handoff.md`](docs/handoff/2026-09-03-futures-complete-defects-resolution-handoff.md) 与原审查清单 [`docs/handoff/2026-09-03-gemini-implementation-code-review-handoff.md`](docs/handoff/2026-09-03-gemini-implementation-code-review-handoff.md)。
 
 ## 项目定位
 

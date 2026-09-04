@@ -1,7 +1,20 @@
 import { parseFutureInput } from './contractCatalog.js';
 import { getFuturesSession } from './futuresSessionService.js';
 import { getOrRefresh } from '../cacheStore.js';
+import { getCachedTradeCalendar } from '../calendarService.js';
 import { parseSinaFuture } from '../../src/js/parser.js';
+
+async function _loadTradingDates(signal) {
+  try {
+    const cal = await getCachedTradeCalendar({ signal });
+    if (cal && cal.data && Array.isArray(cal.data.dates)) {
+      return cal.data.dates;
+    }
+  } catch (_e) {
+    // ignore
+  }
+  return [];
+}
 
 const LIVE_TTL_MS = 3 * 1000;
 const CLOSED_TTL_MS = 30 * 1000;
@@ -107,7 +120,8 @@ export async function getCachedFuturesQuote(symbolOrId, opts = {}) {
 
   if (!inst) return null;
 
-  const session = getFuturesSession(inst);
+  const tradingDates = await _loadTradingDates(opts.signal);
+  const session = getFuturesSession(inst, opts.now || new Date(), tradingDates);
   const ttlMs = session.isTrading ? LIVE_TTL_MS : CLOSED_TTL_MS;
   const cacheKey = ['futures', 'quote', `${inst.symbol}.json`];
 

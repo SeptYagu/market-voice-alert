@@ -767,4 +767,46 @@ QUnit.module('kline.applyLiveQuoteToIntraday', () => {
     const lunch = new Date('2026-09-02T04:00:00.000Z');
     t.strictEqual(applyLiveQuoteToIntraday(base, { price: 103 }, lunch), base);
   });
+
+  QUnit.test('appends point during futures night trading (21:30) and morning trading (09:10)', (t) => {
+    // 21:30 Beijing time on 2026-09-02 is 13:30 UTC
+    const night = new Date('2026-09-02T13:30:00.000Z');
+    const stockOut = applyLiveQuoteToIntraday(base, { price: 103, code: 'sh600519' }, night);
+    t.strictEqual(stockOut, base, 'stock quote is blocked during night');
+
+    const futureOut = applyLiveQuoteToIntraday(base, {
+      code: 'rb0',
+      type: 'future',
+      price: 3150,
+      prevSettlement: 3140,
+      volume: 200,
+      amount: 0
+    }, night);
+    t.equal(futureOut.length, 2, 'future quote is accepted during night session');
+    t.equal(futureOut[1].close, 3150);
+
+    // 09:10 Beijing time on 2026-09-02 is 01:10 UTC
+    const morning = new Date('2026-09-02T01:10:00.000Z');
+    const morningBase = [{
+      time: parseBeijingDateTimeToChartSeconds('2026-09-02 09:05'),
+      open: 3140,
+      high: 3145,
+      low: 3138,
+      close: 3140,
+      volume: 100,
+      avgPrice: 3140,
+      preClose: 3140,
+      percent: 0
+    }];
+    const futureMorningOut = applyLiveQuoteToIntraday(morningBase, {
+      code: 'rb0',
+      type: 'future',
+      price: 3160,
+      prevSettlement: 3140,
+      volume: 250,
+      amount: 0
+    }, morning);
+    t.equal(futureMorningOut.length, 2, 'future quote is accepted during 09:00-09:30 morning session');
+    t.equal(futureMorningOut[1].close, 3160);
+  });
 });

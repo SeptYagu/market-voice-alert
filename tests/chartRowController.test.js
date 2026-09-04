@@ -117,4 +117,46 @@ QUnit.module('ChartRowManager', () => {
     t.equal(mgr.isExpanded('sh600519'), true);
     t.equal(mgr.isExpanded('sh600000'), false);
   });
+
+  QUnit.test('destroyCharts aborts in-flight kline and intraday requests and cleans up ctls', (t) => {
+    const instances = new Map();
+    const mgr = new ChartRowManager({
+      prefix: 'test-',
+      hasIntraday: true,
+      getChartInstances: () => instances,
+      isExpanded: (code) => instances.has(code)
+    });
+
+    let klineAborted = false;
+    let intradayAborted = false;
+    let klineDestroyed = false;
+    let intradayDestroyed = false;
+
+    const inst = createChartState('1d');
+    inst.abort = {
+      abort: () => { klineAborted = true; }
+    };
+    inst.intradayAbort = {
+      abort: () => { intradayAborted = true; }
+    };
+    instances.set('sh600519', inst);
+
+    mgr.klineCtlMap.set('sh600519', {
+      destroy: () => { klineDestroyed = true; }
+    });
+    mgr.intradayCtlMap.set('sh600519', {
+      destroy: () => { intradayDestroyed = true; }
+    });
+
+    mgr.destroyCharts('sh600519');
+
+    t.ok(klineAborted, 'inst.abort.abort() was called');
+    t.ok(intradayAborted, 'inst.intradayAbort.abort() was called');
+    t.equal(inst.abort, null, 'inst.abort cleared');
+    t.equal(inst.intradayAbort, null, 'inst.intradayAbort cleared');
+    t.ok(klineDestroyed, 'klineCtl destroyed');
+    t.ok(intradayDestroyed, 'intradayCtl destroyed');
+    t.notOk(mgr.klineCtlMap.has('sh600519'), 'klineCtl deleted from map');
+    t.notOk(mgr.intradayCtlMap.has('sh600519'), 'intradayCtl deleted from map');
+  });
 });

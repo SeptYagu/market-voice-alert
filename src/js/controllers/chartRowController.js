@@ -112,7 +112,7 @@ export function applyLiveQuoteToIntradayChart(ctl, inst, quote, now = new Date()
   if (!inst || !ctl || !inst.intradayData) return false;
   const isFuture = isFutureCode(inst.code);
   if (!isLiveTradeDate(inst.selectedTradeDate, isFuture, now)) return false;
-  const updated = applyLiveQuoteToIntraday(inst.intradayData.items, quote, now);
+  const updated = applyLiveQuoteToIntraday(inst.intradayData.items, quote, now, isFuture);
   if (updated === inst.intradayData.items) return false;
   inst.intradayData = { ...inst.intradayData, items: updated };
   if (typeof ctl.updatePoint === 'function' && updated.length > 0) {
@@ -269,6 +269,17 @@ export class ChartRowManager {
   }
 
   destroyCharts(code) {
+    const inst = this.getInst(code);
+    if (inst) {
+      if (inst.abort) {
+        try { inst.abort.abort(); } catch { /* ignore */ }
+        inst.abort = null;
+      }
+      if (inst.intradayAbort) {
+        try { inst.intradayAbort.abort(); } catch { /* ignore */ }
+        inst.intradayAbort = null;
+      }
+    }
     const klineCtl = this.klineCtlMap.get(code);
     if (klineCtl) {
       try { klineCtl.destroy(); } catch { /* ignore */ }

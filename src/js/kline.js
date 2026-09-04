@@ -1,4 +1,6 @@
 import { normalizeCode, toEastmoneySecId } from './parser.js';
+import { isFutureCode } from './futures/instrument.js';
+import { isFuturesMarketOpen } from './marketSession.js';
 import {
   parseBeijingDateTimeToChartSeconds,
   parseTencentMinuteToChartSeconds,
@@ -429,12 +431,17 @@ function _isContinuousTradingMinute(parts) {
   );
 }
 
-export function applyLiveQuoteToIntraday(items, quote, now = new Date()) {
+export function applyLiveQuoteToIntraday(items, quote, now = new Date(), isFuture = false) {
   if (!Array.isArray(items) || !items.length || !quote || typeof quote !== 'object') return items;
   const price = _positiveNumber(quote.price);
   if (!price) return items;
-  const parts = getBeijingClockParts(now);
-  if (!_isContinuousTradingMinute(parts)) return items;
+  const isFut = isFuture || quote.type === 'future' || quote.isFuture || (quote.code && isFutureCode(quote.code));
+  if (isFut) {
+    if (!isFuturesMarketOpen(now)) return items;
+  } else {
+    const parts = getBeijingClockParts(now);
+    if (!_isContinuousTradingMinute(parts)) return items;
+  }
   const time = getBeijingMinuteChartSeconds(now);
   if (!Number.isFinite(time)) return items;
 

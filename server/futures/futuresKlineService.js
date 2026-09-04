@@ -1,7 +1,20 @@
 import { parseFutureInput } from './contractCatalog.js';
 import { getFuturesSession } from './futuresSessionService.js';
 import { getOrRefresh } from '../cacheStore.js';
+import { getCachedTradeCalendar } from '../calendarService.js';
 import { parseBeijingDateTimeToChartSeconds } from '../../src/js/time.js';
+
+async function _loadTradingDates(signal) {
+  try {
+    const cal = await getCachedTradeCalendar({ signal });
+    if (cal && cal.data && Array.isArray(cal.data.dates)) {
+      return cal.data.dates;
+    }
+  } catch (_e) {
+    // ignore
+  }
+  return [];
+}
 
 const INTRADAY_TTL_MS = 10 * 1000;
 const KLINE_LIVE_TTL_MS = 30 * 1000;
@@ -49,7 +62,7 @@ async function fetchFuturesMinute(inst, period = '1') {
     });
     if (res.ok) {
       const text = await res.text();
-      const match = text.match(/var\s+_data\s*=\s*(\[[\s\S]*\])/);
+      const match = text.match(/var\s+[^=]+=\s*\(?\s*(\[[\s\S]*\])/);
       if (match) {
         const arr = JSON.parse(match[1]);
         if (Array.isArray(arr) && arr.length) {
@@ -59,16 +72,18 @@ async function fetchFuturesMinute(inst, period = '1') {
             if (row[0] && row[0].length >= 10) {
               time = parseBeijingDateTimeToChartSeconds(row[0]);
             } else if (row[0] && baseDate) {
-              time = parseBeijingDateTimeToChartSeconds(`${baseDate} ${row[0]}:00`);
+              const timeStr = row[0].length === 5 ? `${row[0]}:00` : row[0];
+              time = parseBeijingDateTimeToChartSeconds(`${baseDate} ${timeStr}`);
             }
+            const p = Number(row[1]);
             return {
               time,
-              open: Number(row[1]),
-              high: Number(row[2] || row[1]),
-              low: Number(row[3] || row[1]),
-              close: Number(row[4] || row[1]),
-              volume: Number(row[5]) || 0,
-              openInterest: Number(row[6]) || 0
+              open: p,
+              high: p,
+              low: p,
+              close: p,
+              volume: Number(row[3]) || 0,
+              openInterest: Number(row[4]) || 0
             };
           }).filter((item) => Number.isFinite(item.time) && Number.isFinite(item.close));
 
@@ -130,7 +145,7 @@ async function fetchFuturesDaily(inst) {
     });
     if (res.ok) {
       const text = await res.text();
-      const match = text.match(/var\s+_data\s*=\s*(\[[\s\S]*\])/);
+      const match = text.match(/var\s+[^=]+=\s*\(?\s*(\[[\s\S]*\])/);
       if (match) {
         const arr = JSON.parse(match[1]);
         if (Array.isArray(arr) && arr.length) {
@@ -175,7 +190,8 @@ export async function getCachedFuturesKline(symbolOrId, period = 'day', opts = {
 
   if (!inst) return null;
 
-  const session = getFuturesSession(inst);
+  const tradingDates = await _loadTradingDates(opts.signal);
+  const session = getFuturesSession(inst, opts.now || new Date(), tradingDates);
   const isIntradayPeriod = ['1', '5', '15', '30', '60', '1m', '5m', '15m', '30m', '60m'].includes(normPeriod);
   const ttlMs = session.isTrading ? (isIntradayPeriod ? INTRADAY_TTL_MS : KLINE_LIVE_TTL_MS) : KLINE_HISTORICAL_TTL_MS;
   const cacheKey = ['futures', 'kline', `${inst.symbol}-${normPeriod}.json`];
@@ -259,7 +275,8 @@ export async function getCachedFuturesIntraday(symbolOrId, opts = {}) {
 
   if (!inst) return null;
 
-  const session = getFuturesSession(inst);
+  const tradingDates = await _loadTradingDates(opts.signal);
+  const session = getFuturesSession(inst, opts.now || new Date(), tradingDates);
   const targetTradingDay = opts.date || opts.tradingDay || session.tradingDay;
   const cacheKey = ['futures', 'intraday', `${inst.symbol}-${targetTradingDay}.json`];
 
@@ -325,3 +342,10 @@ export async function getCachedFuturesIntraday(symbolOrId, opts = {}) {
 
   return result ? result.data : null;
 }
+
+export const _internal = {
+  fetchFuturesMinute,
+  fetchFuturesDaily,
+  filterMinuteBarsForTradingDay,
+  _loadTradingDates
+};

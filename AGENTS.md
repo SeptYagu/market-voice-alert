@@ -5,7 +5,8 @@
 股票期货实时监控助手 v2 - 单页 Web 应用
 
 **新窗口速读入口**：
-- [`docs/handoff/2026-09-03-futures-complete-defects-resolution-handoff.md`](docs/handoff/2026-09-03-futures-complete-defects-resolution-handoff.md) — 2026-09-03 境内期货全链路支持与全面代码审查缺陷闭环重构交接（最新）
+- [`docs/handoff/2026-09-03-remaining-defects-and-remediation-handoff.md`](docs/handoff/2026-09-03-remaining-defects-and-remediation-handoff.md) — 2026-09-03 核心缺陷闭环差距分析与剩余未完成缺陷交接（最新）
+- [`docs/handoff/2026-09-03-futures-complete-defects-resolution-handoff.md`](docs/handoff/2026-09-03-futures-complete-defects-resolution-handoff.md) — 2026-09-03 境内期货全链路支持与全面代码审查缺陷闭环重构交接
 - [`docs/handoff/2026-09-03-gemini-implementation-code-review-handoff.md`](docs/handoff/2026-09-03-gemini-implementation-code-review-handoff.md) — 2026-09-03 第三方与 GPT 详细代码审查与缺陷诊断清单
 - [`docs/handoff/2026-09-03-phase4-futures-full-pipeline-handoff.md`](docs/handoff/2026-09-03-phase4-futures-full-pipeline-handoff.md) — 2026-09-03 境内期货全链路支持与中低缺陷重构初版交接
 - [`docs/handoff/2026-09-02-runtime-bugs-chart-benchmark-handoff.md`](docs/handoff/2026-09-02-runtime-bugs-chart-benchmark-handoff.md) — 10 日涨幅扫描、分时/K 线实时更新与国内行情图对照修复（2026-09-02）

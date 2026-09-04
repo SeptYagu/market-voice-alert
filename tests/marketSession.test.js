@@ -2,7 +2,9 @@ import {
   getMarketSession,
   isAutoRefreshAllowedInSession,
   isVoiceAllowedInSession,
-  normalizeSmartSchedule
+  normalizeSmartSchedule,
+  isFuturesMarketOpen,
+  isLiveTradeDate
 } from '../src/js/marketSession.js';
 
 QUnit.module('marketSession', () => {
@@ -43,5 +45,29 @@ QUnit.module('marketSession', () => {
     t.equal(isAutoRefreshAllowedInSession('lunch', cfg), false);
     t.equal(isAutoRefreshAllowedInSession('after-close', cfg), false);
     t.equal(isAutoRefreshAllowedInSession('opening-auction', cfg), false);
+  });
+
+  QUnit.test('isFuturesMarketOpen accurately identifies commodity sessions', (t) => {
+    // 2026-09-04 is Friday. 09:10 Beijing time is 01:10 UTC
+    t.equal(isFuturesMarketOpen(new Date('2026-09-04T01:10:00Z')), true, 'Friday morning 09:10 is open');
+    // 21:30 Beijing time on Friday is 13:30 UTC
+    t.equal(isFuturesMarketOpen(new Date('2026-09-04T13:30:00Z')), true, 'Friday night 21:30 is open');
+    // 01:30 Beijing time on Saturday 2026-09-05 is 17:30 UTC Friday
+    t.equal(isFuturesMarketOpen(new Date('2026-09-04T17:30:00Z')), true, 'Saturday 01:30 midnight continuation is open');
+    // Saturday 10:00 Beijing time is 02:00 UTC Saturday
+    t.equal(isFuturesMarketOpen(new Date('2026-09-05T02:00:00Z')), false, 'Saturday daytime 10:00 is closed');
+    // Sunday 21:00 Beijing time is 13:00 UTC Sunday
+    t.equal(isFuturesMarketOpen(new Date('2026-09-06T13:00:00Z')), false, 'Sunday night is closed');
+  });
+
+  QUnit.test('isLiveTradeDate accurately handles Saturday midnight night session continuation', (t) => {
+    // Saturday 01:00 Beijing time (2026-09-05 01:00 -> 2026-09-04T17:00:00Z)
+    const satMidnight = new Date('2026-09-04T17:00:00Z');
+    // Next trading day is Monday 2026-09-07
+    t.equal(isLiveTradeDate('2026-09-07', true, satMidnight), true, 'Saturday midnight matches Monday as live session');
+    t.equal(isLiveTradeDate('2026-09-05', true, satMidnight), false, 'Saturday calendar date is not the futures trading day');
+    // After 02:30 on Saturday (03:00 Beijing time -> 2026-09-04T19:00:00Z)
+    const satClosed = new Date('2026-09-04T19:00:00Z');
+    t.equal(isLiveTradeDate('2026-09-07', true, satClosed), false, 'Saturday 03:00 is after session end, not live');
   });
 });

@@ -80,20 +80,33 @@ export function isFuturesMarketOpen(now = new Date(), tradingDates = []) {
 }
 
 export function isLiveTradeDate(selectedDate, isFuture = false, now = new Date(), _tradingDates = []) {
+  const clock = getBeijingClockParts(now);
   const beijingToday = getBeijingDate(now);
-  if (!selectedDate || selectedDate === beijingToday) return true;
+  const timeMin = clock.hour * 60 + clock.minute;
+  const dt = new Date(Date.UTC(clock.year, clock.month - 1, clock.day, 12, 0, 0));
+  const dow = dt.getUTCDay();
+
+  if (!selectedDate) return true;
+
   if (isFuture) {
-    const clock = getBeijingClockParts(now);
-    const timeMin = clock.hour * 60 + clock.minute;
-    // 如果在夜盘时段 (20:55以后)，选中的日期等于下一个交易日，亦属于 live 会话
+    // 1. 周六凌晨 (00:00 - 02:30) 为周五夜盘续段，归属下周一交易日
+    if (dow === 6) {
+      if (timeMin <= 2 * 60 + 30) {
+        dt.setUTCDate(dt.getUTCDate() + 2);
+        const mondayStr = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+        return selectedDate === mondayStr;
+      }
+      return false;
+    }
+
+    // 2. 如果在夜盘时段 (20:55以后)，选中的日期等于下一个交易日，亦属于 live 会话
     if (timeMin >= 20 * 60 + 50) {
-      const dt = new Date(Date.UTC(clock.year, clock.month - 1, clock.day, 12, 0, 0));
-      const dow = dt.getUTCDay();
       const delta = dow === 5 ? 3 : 1;
       dt.setUTCDate(dt.getUTCDate() + delta);
       const nextDayStr = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
       if (selectedDate === nextDayStr) return true;
     }
   }
-  return false;
+
+  return selectedDate === beijingToday;
 }
