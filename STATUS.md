@@ -47,7 +47,12 @@
   8. **Bug 2.8 (标的导出 CSV 标准化)**：新增 `buildExportCsv()` 导出含 UTF-8 BOM 和完整行情的标准 CSV 文件，保留纯文本向后兼容。
   9. **架构 4.1.2 (解除模块循环依赖)**：下沉通用格式化工具至 `src/js/format.js`，解除 `app.js` 与 `limitUpView.js` 相互引用。
   10. **UI/UX 与 A11y 体验增强**：Toast 浮动提示与输入框振动反馈、行展开键盘无障碍 (`role="button"`, `aria-expanded`, Enter/Space) 及移动端小屏响应式适配。
-- ✅ **测试与质量**：单元测试扩充至 628 项全部 PASS；Playwright 端到端测试 56/56 项 100% 通过；ESLint 0 错误 0 警告；Vite 生产构建成功。
+  11. **图表（日K与分时）停留在昨日缺陷彻底修复**：
+      - **分时锁死昨日修复**：`app.js` 重构交易日解析 `resolveInitialTradeDate`，依据当前北京时间与交易日历（或期货当期交易日）优先锚定今日开市交易日，避免远端历史日 K 只有昨日收盘 Bar 时将昨日写入 `selectedTradeDate`，恢复今日分时与后续实时 Tick 驱动；
+      - **日 K 跨日动态 Bar 追加**：`kline.js` 中 `applyLiveQuoteToKline` 增加目标交易日判定，当检测到标的报价日期 `targetDate > lastDate` 时自动追加今日新蜡烛并维护完整 OHLCV；
+      - **境内期货服务端日 K 实时合成**：`server/futures/futuresKlineService.js` 在日/周/月 K 服务中自动调用 `getCachedFuturesQuote` 合成未收盘的今日实时 Bar；
+      - **图表管理器注入实时 Quote**：`chartRowController.js` 注入 `getQuote`，在 `loadKline` 完成后即刻与内存实时 Quote 融合渲染。
+- ✅ **测试与质量**：单元测试扩充至 631 项全部 PASS；Playwright 端到端测试 56/56 项 100% 通过；ESLint 0 错误 0 警告；Vite 生产构建成功。
 - 详见交接文档：[`docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md`](docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md)。
 
 ## 备份

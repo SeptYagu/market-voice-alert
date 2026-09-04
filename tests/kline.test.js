@@ -721,6 +721,88 @@ QUnit.module('kline.applyLiveQuoteToKline', () => {
     t.equal(out[0].low, 96);
     t.equal(out[0].volume, 9000, 'daily cumulative volume must not replace weekly aggregate');
   });
+
+  QUnit.test('appends a new daily bar when quote date is later than last bar date', (t) => {
+    const items = [
+      { time: '2026-09-02', open: 100, high: 103, low: 98, close: 101, volume: 1000, amount: 100000 },
+      { time: '2026-09-03', open: 101, high: 104, low: 100, close: 102, volume: 1100, amount: 110000 }
+    ];
+    // Quote with date: '2026-09-04'
+    const out = applyLiveQuoteToKline(items, {
+      date: '2026-09-04',
+      price: 105,
+      open: 103,
+      high: 106,
+      low: 102.5,
+      volume: 1500,
+      amount: 150000,
+      changePercent: 2.94
+    }, '1d');
+
+    t.equal(out.length, 3, 'appends 1 bar');
+    t.equal(out[1].close, 102, 'previous bar untouched');
+    t.deepEqual(out[2], {
+      time: '2026-09-04',
+      open: 103,
+      high: 106,
+      low: 102.5,
+      close: 105,
+      volume: 1500,
+      amount: 150000,
+      changePercent: 2.94
+    });
+  });
+
+  QUnit.test('recognizes quoteDate YYYYMMDD and tradingDay YYYY-MM-DD', (t) => {
+    const items = [{ time: '2026-09-03', open: 10, high: 11, low: 9, close: 10, volume: 100 }];
+    const tencentQuote = {
+      quoteDate: '20260904',
+      price: 10.5,
+      open: 10.1,
+      high: 10.8,
+      low: 10.0,
+      volume: 50,
+      amount: 500
+    };
+    const out1 = applyLiveQuoteToKline(items, tencentQuote, '1d');
+    t.equal(out1.length, 2);
+    t.equal(out1[1].time, '2026-09-04');
+    t.equal(out1[1].close, 10.5);
+
+    const futureQuote = {
+      tradingDay: '2026-09-04',
+      price: 3500,
+      open: 3480,
+      high: 3520,
+      low: 3470,
+      volume: 20000,
+      amount: 0
+    };
+    const out2 = applyLiveQuoteToKline(items, futureQuote, '1d');
+    t.equal(out2.length, 2);
+    t.equal(out2[1].time, '2026-09-04');
+    t.equal(out2[1].close, 3500);
+  });
+
+  QUnit.test('updates existing bar in-place when quote date matches last bar date', (t) => {
+    const items = [
+      { time: '2026-09-03', open: 101, high: 104, low: 100, close: 102, volume: 1100, amount: 110000 },
+      { time: '2026-09-04', open: 103, high: 105, low: 102, close: 104, volume: 500, amount: 50000 }
+    ];
+    const out = applyLiveQuoteToKline(items, {
+      date: '2026-09-04',
+      price: 106,
+      high: 107,
+      low: 102,
+      volume: 800,
+      amount: 80000
+    }, '1d');
+
+    t.equal(out.length, 2, 'does not append duplicate bar');
+    t.equal(out[1].close, 106);
+    t.equal(out[1].high, 107);
+    t.equal(out[1].volume, 800);
+  });
 });
 
 QUnit.module('kline.applyLiveQuoteToIntraday', () => {

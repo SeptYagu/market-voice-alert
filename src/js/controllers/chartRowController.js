@@ -16,7 +16,7 @@ import {
   MA_COLORS
 } from '../chart.js';
 import { fetchKline, fetchIntraday } from '../api.js';
-import { chartTimeToDate } from '../time.js';
+import { chartTimeToDate, getBeijingDate } from '../time.js';
 import { isFutureCode } from '../futures/instrument.js';
 import { isLiveTradeDate } from '../marketSession.js';
 
@@ -193,6 +193,7 @@ export class ChartRowManager {
     this.isLatestKlineDate = options.isLatestKlineDate || ((inst, date) => !date || (inst && inst.klineData && getLastKlineDate(inst.klineData.items) === date));
     this.onStateChange = options.onStateChange || (() => {});
     this.onKlineBarClick = options.onKlineBarClick || null;
+    this.getQuote = options.getQuote || null;
 
     this.klineCtlMap = new Map();
     this.intradayCtlMap = new Map();
@@ -355,12 +356,23 @@ export class ChartRowManager {
       if (!this.isExpanded(code)) return;
       inst.klineData = data;
       if (this.hasIntraday && !inst.selectedTradeDate) {
-        inst.selectedTradeDate = this.resolveTradeDate(code, data);
+        inst.selectedTradeDate = this.resolveTradeDate(code, inst.klineData);
+      }
+      if (typeof this.getQuote === 'function') {
+        const q = this.getQuote(code);
+        if (q && Number(q.price) > 0) {
+          const targetDate = q.tradingDay || q.date || q.quoteDate || inst.selectedTradeDate || getBeijingDate();
+          const quoteForKline = (q.tradingDay || q.quoteDate || q.date) ? q : { ...q, date: targetDate };
+          const merged = applyLiveQuoteToKline(inst.klineData.items, quoteForKline, inst.period);
+          if (merged !== inst.klineData.items) {
+            inst.klineData = { ...inst.klineData, items: merged };
+          }
+        }
       }
       inst.loading = false;
       const ctl = this.klineCtlMap.get(code);
       if (ctl) {
-        applyKlineDataToChart(ctl, inst, data);
+        applyKlineDataToChart(ctl, inst, inst.klineData);
       }
       this.updateKlineStatus(code);
       if (this.hasIntraday) {

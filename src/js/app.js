@@ -397,6 +397,22 @@ const MOMENTUM_THRESHOLD_PCT = 45;
 const MOMENTUM_LOOKBACK_TRADING_DAYS = 10;
 const MOMENTUM_SCAN_CONCURRENCY = 8;
 
+function resolveInitialTradeDate(code, data) {
+  const dates = state.tradingDates || state.limitUp.tradingDates || [];
+  const today = getBeijingDate();
+  const latestTrading = resolveLatestTradingDate(today, dates);
+  const q = state.quotes.get(code);
+  if (q && q.tradingDay) return q.tradingDay;
+  if (isFutureCode(code)) {
+    return (q && q.tradingDay) || latestTrading || today;
+  }
+  const lastBarDate = data && data.items ? getLastKlineDate(data.items) : '';
+  if (latestTrading && (!lastBarDate || lastBarDate <= latestTrading)) {
+    return latestTrading;
+  }
+  return lastBarDate || latestTrading || today;
+}
+
 export const monitorChartMgr = new ChartRowManager({
   prefix: '',
   hasIntraday: true,
@@ -404,8 +420,9 @@ export const monitorChartMgr = new ChartRowManager({
   intradayHeight: 360,
   getTheme: getCurrentTheme,
   getChartInstances: () => state.chartInstances,
+  getQuote: (code) => state.quotes.get(code),
   isExpanded: (code) => state.expandedCodes.has(code),
-  resolveTradeDate: (_code, data) => getLastKlineDate(data.items),
+  resolveTradeDate: (code, data) => resolveInitialTradeDate(code, data),
   isLatestKlineDate: (inst, date) => isLatestKlineDate(inst, date),
   onStateChange: () => renderData()
 });
@@ -419,11 +436,13 @@ export const limitUpChartMgr = new ChartRowManager({
   intradayHeight: 360,
   getTheme: getCurrentTheme,
   getChartInstances: () => state.limitUp.chartInstances,
+  getQuote: (code) => state.quotes.get(code),
   isExpanded: (code) => state.limitUp.expandedCodes.has(code),
-  resolveTradeDate: (_code, data) => {
-    const latestTradeDate = (state.tradingDates || state.limitUp.tradingDates || []).at(-1);
+  resolveTradeDate: (code, data) => {
+    const dates = state.tradingDates || state.limitUp.tradingDates || [];
+    const latestTradeDate = resolveLatestTradingDate(getBeijingDate(), dates);
     const isHistorical = state.limitUp.selectedDate && latestTradeDate && state.limitUp.selectedDate < latestTradeDate;
-    return isHistorical ? state.limitUp.selectedDate : getLastKlineDate(data.items);
+    return isHistorical ? state.limitUp.selectedDate : resolveInitialTradeDate(code, data);
   },
   isLatestKlineDate: (inst, date) => isLatestKlineDate(inst, date),
   onStateChange: () => rerenderLimitUpPage()
@@ -437,6 +456,7 @@ export const momentumChartMgr = new ChartRowManager({
   klineHeight: 320,
   getTheme: getCurrentTheme,
   getChartInstances: () => state.momentum.chartInstances,
+  getQuote: (code) => state.quotes.get(code),
   isExpanded: (code) => state.momentum.expandedCodes.has(code),
   onStateChange: () => renderMomentumSection()
 });

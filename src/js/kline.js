@@ -401,10 +401,40 @@ export function applyLiveQuoteToKline(items, quote, period) {
   if (!Array.isArray(items) || !items.length || !quote || typeof quote !== 'object') return items;
   const price = _positiveNumber(quote.price);
   if (!price) return items;
+
   const last = items[items.length - 1];
-  const updated = { ...last, close: price };
+  const lastDate = chartTimeToDate(last && last.time);
+  const rawTargetDate = quote.tradingDay || quote.date || (quote.quoteDate && typeof quote.quoteDate === 'string' && quote.quoteDate.length === 8
+    ? `${quote.quoteDate.slice(0, 4)}-${quote.quoteDate.slice(4, 6)}-${quote.quoteDate.slice(6, 8)}`
+    : null);
+  const targetDate = rawTargetDate ? (chartTimeToDate(rawTargetDate) || rawTargetDate) : null;
+
   const quoteHigh = _positiveNumber(quote.high);
   const quoteLow = _positiveNumber(quote.low);
+  const quoteOpen = _positiveNumber(quote.open);
+  const quoteVolume = _positiveNumber(quote.volume);
+  const quoteAmount = _positiveNumber(quote.amount);
+
+  if (period === '1d' && lastDate && targetDate && lastDate < targetDate) {
+    const newTime = typeof last.time === 'number' ? parseBeijingDateTimeToChartSeconds(targetDate) : targetDate;
+    const open = quoteOpen || price;
+    const high = Math.max(price, quoteHigh || 0, open);
+    const lowCandidates = [quoteLow, price, open].filter((v) => v > 0);
+    const low = lowCandidates.length ? Math.min(...lowCandidates) : price;
+    const newBar = {
+      time: newTime,
+      open,
+      high,
+      low,
+      close: price,
+      volume: quoteVolume || 0,
+      amount: quoteAmount || 0,
+      changePercent: Number.isFinite(Number(quote.changePercent)) ? Number(quote.changePercent) : 0
+    };
+    return [...items, newBar];
+  }
+
+  const updated = { ...last, close: price };
   const lastHigh = _positiveNumber(last.high);
   const lastLow = _positiveNumber(last.low);
   updated.high = Math.max(lastHigh, quoteHigh, price);
@@ -412,12 +442,10 @@ export function applyLiveQuoteToKline(items, quote, period) {
   updated.low = lowCandidates.length ? Math.min(...lowCandidates) : price;
 
   if (period === '1d') {
-    const quoteOpen = _positiveNumber(quote.open);
     if (quoteOpen) updated.open = quoteOpen;
-    const quoteVolume = _positiveNumber(quote.volume);
-    const quoteAmount = _positiveNumber(quote.amount);
     if (quoteVolume) updated.volume = quoteVolume;
     if (quoteAmount) updated.amount = quoteAmount;
+    if (Number.isFinite(Number(quote.changePercent))) updated.changePercent = Number(quote.changePercent);
   }
 
   return [...items.slice(0, -1), updated];

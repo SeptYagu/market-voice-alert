@@ -1,5 +1,6 @@
 import { parseFutureInput } from './contractCatalog.js';
 import { getFuturesSession } from './futuresSessionService.js';
+import { getCachedFuturesQuote } from './futuresQuoteService.js';
 import { getOrRefresh } from '../cacheStore.js';
 import { getCachedTradeCalendar } from '../calendarService.js';
 import { parseBeijingDateTimeToChartSeconds, chartTimeToDate, shiftCalendarDate } from '../../src/js/time.js';
@@ -302,15 +303,48 @@ export async function getCachedFuturesKline(symbolOrId, period = 'day', opts = {
         const p = rawPeriod.replace(/m/i, '');
         raw = await fetchFuturesMinute(inst, p);
         items = raw.items;
-      } else if (isWeek) {
-        raw = await fetchFuturesDaily(inst);
-        items = aggregateDailyBarsToWeekly(raw.items);
-      } else if (isMonth) {
-        raw = await fetchFuturesDaily(inst);
-        items = aggregateDailyBarsToMonthly(raw.items);
       } else {
         raw = await fetchFuturesDaily(inst);
-        items = raw.items;
+        const dailyItems = raw.items ? [...raw.items] : [];
+        try {
+          const q = await getCachedFuturesQuote(inst, { signal: opts.signal });
+          if (q && q.tradingDay && Number(q.price) > 0) {
+            const targetSec = parseBeijingDateTimeToChartSeconds(q.tradingDay);
+            const lastBar = dailyItems[dailyItems.length - 1];
+            if (lastBar && lastBar.time < targetSec) {
+              const liveBar = {
+                time: targetSec,
+                open: q.open > 0 ? q.open : q.price,
+                high: Math.max(q.high || 0, q.price, q.open || 0),
+                low: Math.min(...[q.low, q.price, q.open].filter((v) => Number(v) > 0)),
+                close: q.price,
+                volume: q.volume || 0,
+                openInterest: q.openInterest || 0,
+                settle: q.prevSettlement || null
+              };
+              dailyItems.push(liveBar);
+            } else if (lastBar && lastBar.time === targetSec) {
+              dailyItems[dailyItems.length - 1] = {
+                ...lastBar,
+                close: q.price,
+                high: Math.max(lastBar.high || 0, q.high || 0, q.price),
+                low: Math.min(...[lastBar.low, q.low, q.price].filter((v) => Number(v) > 0)),
+                volume: q.volume || lastBar.volume,
+                openInterest: q.openInterest || lastBar.openInterest
+              };
+            }
+          }
+        } catch (_e) {
+          // ignore quote merge error
+        }
+
+        if (isWeek) {
+          items = aggregateDailyBarsToWeekly(dailyItems);
+        } else if (isMonth) {
+          items = aggregateDailyBarsToMonthly(dailyItems);
+        } else {
+          items = dailyItems;
+        }
       }
       return {
         instrumentId: inst.id,
