@@ -3,6 +3,9 @@ dist
 .DS_Store
 *.log
 *.log.*
+# Vite 加载 JS 配置时会在旁边生成带时间戳的临时文件
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
 playwright-report
 test-results
 .vscode
