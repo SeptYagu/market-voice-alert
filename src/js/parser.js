@@ -1,3 +1,5 @@
+import { parseFutureInput } from './futures/contractCatalog.js';
+
 const VALID_PREFIXES = new Set(['sh', 'sz', 'bj']);
 
 export function normalizeCode(input) {
@@ -165,7 +167,9 @@ export function parseSinaFuture(text) {
 
     if (!Number.isFinite(price) || price === 0) continue;
 
-    const basePrice = prevClose > 0 ? prevClose : (prevSettlement > 0 ? prevSettlement : price);
+    const inst = parseFutureInput(code);
+    const basePrice = prevSettlement > 0 ? prevSettlement : (prevClose > 0 ? prevClose : price);
+    const decimals = inst && inst.priceTick && inst.priceTick < 0.01 ? 3 : 2;
     const change = price - basePrice;
     const changePercent = basePrice > 0 ? ((change / basePrice) * 100) : 0;
 
@@ -175,6 +179,7 @@ export function parseSinaFuture(text) {
       price,
       prevClose,
       prevSettlement: prevSettlement > 0 ? prevSettlement : null,
+      priceTick: inst ? inst.priceTick : null,
       open,
       high,
       low,
@@ -182,8 +187,8 @@ export function parseSinaFuture(text) {
       openInterest,
       amount: 0,
       volumeRatio: 0,
-      openChangePercent: prevClose > 0 ? Number((((open - prevClose) / prevClose) * 100).toFixed(2)) : 0,
-      change: Number(change.toFixed(2)),
+      openChangePercent: basePrice > 0 ? Number((((open - basePrice) / basePrice) * 100).toFixed(2)) : 0,
+      change: Number(change.toFixed(decimals)),
       changePercent: Number(changePercent.toFixed(2)),
       type: 'future',
       source: 'sina'

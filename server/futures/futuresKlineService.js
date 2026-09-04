@@ -2,7 +2,8 @@ import { parseFutureInput } from './contractCatalog.js';
 import { getFuturesSession } from './futuresSessionService.js';
 import { getOrRefresh } from '../cacheStore.js';
 import { getCachedTradeCalendar } from '../calendarService.js';
-import { parseBeijingDateTimeToChartSeconds } from '../../src/js/time.js';
+import { parseBeijingDateTimeToChartSeconds, chartTimeToDate, shiftCalendarDate } from '../../src/js/time.js';
+import { shiftTradingDate } from '../../src/js/tradeCalendar.js';
 
 async function _loadTradingDates(signal) {
   try {
@@ -176,11 +177,99 @@ async function fetchFuturesDaily(inst) {
   throw new Error(`Failed to fetch futures daily kline for ${inst.symbol}`);
 }
 
-const VALID_PERIODS = new Set(['day', '1d', 'daily', '1', '5', '15', '30', '60', '1m', '5m', '15m', '30m', '60m']);
+export function aggregateDailyBarsToWeekly(dailyBars) {
+  if (!Array.isArray(dailyBars) || !dailyBars.length) return [];
+  const groups = new Map();
+
+  for (const bar of dailyBars) {
+    if (!bar || (typeof bar.time !== 'string' && !Number.isFinite(bar.time))) continue;
+    const dateStr = chartTimeToDate(bar.time);
+    if (!dateStr) continue;
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+    const dow = dt.getUTCDay(); // 0 Sun, 1 Mon ... 6 Sat
+    const diffToMonday = dow === 0 ? -6 : 1 - dow;
+    dt.setUTCDate(dt.getUTCDate() + diffToMonday);
+    const weekKey = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+    if (!groups.has(weekKey)) groups.set(weekKey, []);
+    groups.get(weekKey).push(bar);
+  }
+
+  const result = [];
+  for (const group of groups.values()) {
+    if (!group.length) continue;
+    const first = group[0];
+    const last = group[group.length - 1];
+    let high = -Infinity;
+    let low = Infinity;
+    let volume = 0;
+    for (const b of group) {
+      if (b.high > high) high = b.high;
+      if (b.low < low) low = b.low;
+      volume += Number(b.volume) || 0;
+    }
+    result.push({
+      time: last.time,
+      open: first.open,
+      high,
+      low,
+      close: last.close,
+      volume,
+      openInterest: last.openInterest,
+      settle: last.settle
+    });
+  }
+  return result;
+}
+
+export function aggregateDailyBarsToMonthly(dailyBars) {
+  if (!Array.isArray(dailyBars) || !dailyBars.length) return [];
+  const groups = new Map();
+
+  for (const bar of dailyBars) {
+    if (!bar || (typeof bar.time !== 'string' && !Number.isFinite(bar.time))) continue;
+    const dateStr = chartTimeToDate(bar.time);
+    if (!dateStr) continue;
+    const monthKey = dateStr.slice(0, 7);
+    if (!groups.has(monthKey)) groups.set(monthKey, []);
+    groups.get(monthKey).push(bar);
+  }
+
+  const result = [];
+  for (const group of groups.values()) {
+    if (!group.length) continue;
+    const first = group[0];
+    const last = group[group.length - 1];
+    let high = -Infinity;
+    let low = Infinity;
+    let volume = 0;
+    for (const b of group) {
+      if (b.high > high) high = b.high;
+      if (b.low < low) low = b.low;
+      volume += Number(b.volume) || 0;
+    }
+    result.push({
+      time: last.time,
+      open: first.open,
+      high,
+      low,
+      close: last.close,
+      volume,
+      openInterest: last.openInterest,
+      settle: last.settle
+    });
+  }
+  return result;
+}
 
 export async function getCachedFuturesKline(symbolOrId, period = 'day', opts = {}) {
-  const normPeriod = String(period || 'day').toLowerCase();
-  if (!VALID_PERIODS.has(normPeriod)) {
+  const rawPeriod = String(period || 'day').trim();
+  const isMonth = rawPeriod === '1M' || rawPeriod.toLowerCase() === 'month' || rawPeriod.toLowerCase() === 'monthly';
+  const isWeek = rawPeriod.toLowerCase() === '1w' || rawPeriod.toLowerCase() === 'week' || rawPeriod.toLowerCase() === 'weekly';
+  const isDay = rawPeriod.toLowerCase() === 'day' || rawPeriod.toLowerCase() === '1d' || rawPeriod.toLowerCase() === 'daily';
+  const isIntradayPeriod = !isMonth && ['1', '5', '15', '30', '60', '1m', '5m', '15m', '30m', '60m'].includes(rawPeriod.toLowerCase());
+
+  if (!isMonth && !isWeek && !isDay && !isIntradayPeriod) {
     throw new Error(`Invalid futures kline period: ${period}`);
   }
 
@@ -192,20 +281,29 @@ export async function getCachedFuturesKline(symbolOrId, period = 'day', opts = {
 
   const tradingDates = await _loadTradingDates(opts.signal);
   const session = getFuturesSession(inst, opts.now || new Date(), tradingDates);
-  const isIntradayPeriod = ['1', '5', '15', '30', '60', '1m', '5m', '15m', '30m', '60m'].includes(normPeriod);
   const ttlMs = session.isTrading ? (isIntradayPeriod ? INTRADAY_TTL_MS : KLINE_LIVE_TTL_MS) : KLINE_HISTORICAL_TTL_MS;
-  const cacheKey = ['futures', 'kline', `${inst.symbol}-${normPeriod}.json`];
+  const canonicalPeriod = isMonth ? '1M' : (isWeek ? '1w' : (isDay ? '1d' : rawPeriod.toLowerCase()));
+  const cacheKey = ['futures', 'kline', `${inst.symbol}-${canonicalPeriod}.json`];
 
   const result = await getOrRefresh(
     cacheKey,
     ttlMs,
     async () => {
       let raw;
+      let items;
       if (isIntradayPeriod) {
-        const p = String(period).replace('m', '');
+        const p = rawPeriod.replace(/m/i, '');
         raw = await fetchFuturesMinute(inst, p);
+        items = raw.items;
+      } else if (isWeek) {
+        raw = await fetchFuturesDaily(inst);
+        items = aggregateDailyBarsToWeekly(raw.items);
+      } else if (isMonth) {
+        raw = await fetchFuturesDaily(inst);
+        items = aggregateDailyBarsToMonthly(raw.items);
       } else {
         raw = await fetchFuturesDaily(inst);
+        items = raw.items;
       }
       return {
         instrumentId: inst.id,
@@ -213,43 +311,37 @@ export async function getCachedFuturesKline(symbolOrId, period = 'day', opts = {
         period,
         source: raw.source,
         tradingDay: session.tradingDay,
-        items: raw.items,
+        items,
         fetchedAt: Date.now()
       };
     },
     opts
   );
 
+  if (result && result.data) {
+    result.data.stale = !!result.stale;
+  }
   return result ? result.data : null;
 }
 
-function getPreviousTradeDayStr(dayStr) {
-  const [y, m, d] = String(dayStr).split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-  const dayOfWeek = dt.getUTCDay(); // 0 is Sun, 1 is Mon
-  const delta = dayOfWeek === 1 ? 3 : (dayOfWeek === 0 ? 2 : 1);
-  dt.setUTCDate(dt.getUTCDate() - delta);
-  const ry = dt.getUTCFullYear();
-  const rm = String(dt.getUTCMonth() + 1).padStart(2, '0');
-  const rd = String(dt.getUTCDate()).padStart(2, '0');
-  return `${ry}-${rm}-${rd}`;
-}
-
-function filterMinuteBarsForTradingDay(bars, targetTradingDay, inst) {
+function filterMinuteBarsForTradingDay(bars, targetTradingDay, inst, tradingDates = []) {
   if (!Array.isArray(bars) || !bars.length) return [];
-  const prevDay = getPreviousTradeDayStr(targetTradingDay);
+  const prevDay = shiftTradingDate(targetTradingDay, -1, tradingDates);
 
   let nightStart = null;
   let nightEnd = null;
 
   if (inst.nightSessionEnd) {
-    nightStart = parseBeijingDateTimeToChartSeconds(`${prevDay} 21:00:00`);
+    nightStart = parseBeijingDateTimeToChartSeconds(`${prevDay} 20:59:00`);
     if (inst.nightSessionEnd === '23:00') {
-      nightEnd = parseBeijingDateTimeToChartSeconds(`${prevDay} 23:00:00`);
-    } else if (inst.nightSessionEnd === '01:00') {
-      nightEnd = parseBeijingDateTimeToChartSeconds(`${targetTradingDay} 01:00:00`);
-    } else if (inst.nightSessionEnd === '02:30') {
-      nightEnd = parseBeijingDateTimeToChartSeconds(`${targetTradingDay} 02:30:00`);
+      nightEnd = parseBeijingDateTimeToChartSeconds(`${prevDay} 23:01:00`);
+    } else {
+      const nextCalDay = shiftCalendarDate(prevDay, 1);
+      if (inst.nightSessionEnd === '01:00') {
+        nightEnd = parseBeijingDateTimeToChartSeconds(`${nextCalDay} 01:01:00`);
+      } else if (inst.nightSessionEnd === '02:30') {
+        nightEnd = parseBeijingDateTimeToChartSeconds(`${nextCalDay} 02:31:00`);
+      }
     }
   }
 
@@ -290,8 +382,8 @@ export async function getCachedFuturesIntraday(symbolOrId, opts = {}) {
       }
 
       // Filter 5-day rolling items (~1023 bars) to only the target tradingDay
-      const dayBars = filterMinuteBarsForTradingDay(raw.items, targetTradingDay, inst);
-      const itemsToUse = dayBars.length ? dayBars : raw.items;
+      const dayBars = filterMinuteBarsForTradingDay(raw.items, targetTradingDay, inst, tradingDates);
+      const itemsToUse = dayBars;
 
       let prevSettlement = null;
       try {
@@ -340,6 +432,9 @@ export async function getCachedFuturesIntraday(symbolOrId, opts = {}) {
     opts
   );
 
+  if (result && result.data) {
+    result.data.stale = !!result.stale;
+  }
   return result ? result.data : null;
 }
 
@@ -347,5 +442,7 @@ export const _internal = {
   fetchFuturesMinute,
   fetchFuturesDaily,
   filterMinuteBarsForTradingDay,
-  _loadTradingDates
+  _loadTradingDates,
+  aggregateDailyBarsToWeekly,
+  aggregateDailyBarsToMonthly
 };

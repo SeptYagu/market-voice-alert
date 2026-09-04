@@ -16,6 +16,7 @@ import { handleProxyRequest } from './proxyService.js';
 import { getCachedFuturesQuotes } from './futures/futuresQuoteService.js';
 import { getCachedFuturesKline, getCachedFuturesIntraday } from './futures/futuresKlineService.js';
 import { getFuturesSession } from './futures/futuresSessionService.js';
+import { PRODUCT_MAP } from './futures/contractCatalog.js';
 import { DEFAULT_PORT, errorEnvelope, jsonResponse, okEnvelope } from './utils.js';
 
 const distRoot = fileURLToPath(new URL('../dist/', import.meta.url));
@@ -150,11 +151,34 @@ export async function handleCacheRequest(req, res) {
         return;
       }
       const result = await getCachedFuturesQuotes(ids);
+      const isStale = Array.isArray(result) && result.length > 0 && result.some((q) => q && q.stale);
       jsonResponse(res, 200, okEnvelope({
         source: 'server-futures-quote',
-        stale: false,
+        stale: isStale,
         ttlMs: 3000,
         data: result
+      }));
+      return;
+    }
+
+    if (path === '/api/cache/futures/contracts') {
+      const contracts = Object.entries(PRODUCT_MAP).map(([prod, info]) => ({
+        product: prod,
+        symbol: `${prod}0`,
+        code: `${prod.toLowerCase()}0`,
+        name: info.name,
+        exchange: info.exchange,
+        isFinancial: !!info.isFinancial,
+        isTreasury: !!info.isTreasury,
+        priceTick: info.tick,
+        contractMultiplier: info.mult,
+        nightSessionEnd: info.night
+      }));
+      jsonResponse(res, 200, okEnvelope({
+        source: 'server-futures-catalog',
+        stale: false,
+        ttlMs: 86400000,
+        data: contracts
       }));
       return;
     }
@@ -169,9 +193,9 @@ export async function handleCacheRequest(req, res) {
       try {
         const result = await getCachedFuturesKline(id, period);
         jsonResponse(res, 200, okEnvelope({
-          source: 'server-futures-kline',
-          stale: false,
-          ttlMs: 10000,
+          source: (result && result.source) || 'server-futures-kline',
+          stale: !!(result && result.stale),
+          ttlMs: (result && result.ttlMs) || 10000,
           data: result
         }));
       } catch (err) {
@@ -189,9 +213,9 @@ export async function handleCacheRequest(req, res) {
       const date = url.searchParams.get('date') || url.searchParams.get('tradingDay');
       const result = await getCachedFuturesIntraday(id, { date });
       jsonResponse(res, 200, okEnvelope({
-        source: 'server-futures-intraday',
-        stale: false,
-        ttlMs: 10000,
+        source: (result && result.source) || 'server-futures-intraday',
+        stale: !!(result && result.stale),
+        ttlMs: (result && result.ttlMs) || 10000,
         data: result
       }));
       return;

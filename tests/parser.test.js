@@ -183,9 +183,28 @@ QUnit.module('parser.parseSinaFuture', () => {
     t.equal(q.high, 5220.00);
     t.equal(q.low, 5180.00);
     t.equal(q.prevClose, 5160.00);
+    t.equal(q.prevSettlement, 5210.00);
     t.equal(q.type, 'future');
+    t.equal(q.change, -10.00, 'change = price - prevSettlement');
+    t.ok(Math.abs(q.changePercent - (-0.19)) < 0.01, 'change percent relative to prevSettlement');
+  });
+
+  QUnit.test('parses Sina future quote falling back to prevClose when prevSettlement missing', (t) => {
+    const noSettle = 'var hq_str_nf2105="螺纹2105,150000,5180.00,5220.00,5180.00,5160.00,5200.00,5200.00,5200.00,5200.00,0,5,10,1000000,12500,1000,2,2024-03-15,RB,";';
+    const list = parseSinaFuture(noSettle);
+    t.equal(list.length, 1);
+    const q = list[0];
     t.equal(q.change, 40.00, 'change = price - prevClose');
-    t.ok(Math.abs(q.changePercent - 0.7752) < 0.01, 'change percent');
+    t.ok(Math.abs(q.changePercent - 0.7752) < 0.01, 'change percent relative to prevClose');
+  });
+
+  QUnit.test('parses Treasury future quote with 3-decimal precision', (t) => {
+    const tf = 'var hq_str_nf_TF2406="100.125,100.150,100.100,100.135,100.000,100.000,1000,500,100.125,100.130,100.120,100.140,100.110,100.150,100.100,100.125,2024-06-14,15:15:00,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,五债2406";';
+    const list = parseSinaFuture(tf);
+    t.equal(list.length, 1);
+    const q = list[0];
+    t.equal(q.price, 100.135);
+    t.equal(q.change, 0.01, 'change with decimal precision');
   });
 
   QUnit.test('returns empty array for malformed input', (t) => {

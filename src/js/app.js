@@ -297,7 +297,7 @@ function formatPriceWithPercent(price, pct) {
 
 export function stripPrefix(code) {
   if (!code) return '';
-  const m = /^(?:sh|sz|bj|nf)?(.+)$/i.exec(String(code).trim());
+  const m = /^(?:sh|sz|bj|nf_?)?(.+)$/i.exec(String(code).trim());
   return m ? m[1] : '';
 }
 

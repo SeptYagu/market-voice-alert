@@ -132,6 +132,9 @@ QUnit.module('app.stripPrefix', () => {
     t.equal(stripPrefix('sz000001'), '000001');
     t.equal(stripPrefix('bj830799'), '830799');
     t.equal(stripPrefix('nf2105'), '2105');
+    t.equal(stripPrefix('nf_rb0'), 'rb0');
+    t.equal(stripPrefix('nf_rb2510'), 'rb2510');
+    t.equal(stripPrefix('NF_IF0'), 'IF0');
   });
   QUnit.test('uppercase prefix also handled', (t) => {
     t.equal(stripPrefix('SH600519'), '600519');

@@ -5,6 +5,7 @@ import {
   applyLiveTickToKlineChart,
   formatKlineStatus,
   formatIntradayStatus,
+  getPrevCloseForDate,
   ChartRowManager
 } from '../src/js/controllers/chartRowController.js';
 
@@ -158,5 +159,61 @@ QUnit.module('ChartRowManager', () => {
     t.ok(intradayDestroyed, 'intradayCtl destroyed');
     t.notOk(mgr.klineCtlMap.has('sh600519'), 'klineCtl deleted from map');
     t.notOk(mgr.intradayCtlMap.has('sh600519'), 'intradayCtl deleted from map');
+  });
+
+  QUnit.test('getPrevCloseForDate accurately finds prior day close across daily and minute bars', (t) => {
+    // Daily bars
+    const daily = [
+      { time: '2026-06-01', close: 100, settle: 101 },
+      { time: '2026-06-02', close: 105, settle: 106 },
+      { time: '2026-06-03', close: 110, settle: 111 }
+    ];
+    t.equal(getPrevCloseForDate(daily, '2026-06-03'), 106, 'finds prior day settle for 2026-06-03');
+    t.equal(getPrevCloseForDate(daily, '2026-06-02'), 101, 'finds prior day settle for 2026-06-02');
+    t.equal(getPrevCloseForDate(daily, '2026-06-01'), null, 'first day has no prior bar in range');
+
+    // Minute bars spanning two days
+    const minutes = [
+      { time: '2026-06-01 14:59', close: 99 },
+      { time: '2026-06-01 15:00', close: 100 },
+      { time: '2026-06-02 09:30', close: 101 },
+      { time: '2026-06-02 09:35', close: 102 }
+    ];
+    // When querying for 2026-06-02, should find 2026-06-01 15:00 close (100), NOT 09:30 close
+    t.equal(getPrevCloseForDate(minutes, '2026-06-02'), 100, 'finds end of prior day close for minute bars');
+  });
+
+  QUnit.test('handlePeriodChange aborts pending intraday request and clears selectedTradeDate', (t) => {
+    const instances = new Map();
+    const mgr = new ChartRowManager({
+      prefix: 'test-',
+      hasIntraday: true,
+      getChartInstances: () => instances,
+      isExpanded: () => true
+    });
+
+    let intradayAborted = false;
+    let klineAborted = false;
+
+    const inst = createChartState('1d');
+    inst.selectedTradeDate = '2026-06-05';
+    inst.intradayData = { items: [1] };
+    inst.intradayAbort = {
+      abort: () => { intradayAborted = true; }
+    };
+    inst.abort = {
+      abort: () => { klineAborted = true; }
+    };
+    instances.set('sh600519', inst);
+
+    // Change period from '1d' to '5m'
+    mgr.handlePeriodChange('5m', 'sh600519');
+
+    t.equal(inst.period, '5m', 'period updated');
+    t.equal(inst.selectedTradeDate, null, 'selectedTradeDate cleared');
+    t.equal(inst.intradayData, null, 'intradayData cleared');
+    t.ok(intradayAborted, 'pending intraday abort called');
+    t.equal(inst.intradayAbort, null, 'intradayAbort reference cleared');
+    t.ok(klineAborted, 'pending kline abort called');
   });
 });

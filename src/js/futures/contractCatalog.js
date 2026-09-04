@@ -167,6 +167,15 @@ export function parseFutureInput(input) {
     term = '2' + term;
   }
 
+  // 校验年月合法性：具体合约 term 应为 4 位数字，月份 1-12，年份在合理区间 (2010 - 2040)
+  if (term !== '0') {
+    if (term.length !== 4 || !/^\d{4}$/.test(term)) return null;
+    const year = 2000 + parseInt(term.slice(0, 2), 10);
+    const month = parseInt(term.slice(2, 4), 10);
+    if (month < 1 || month > 12) return null;
+    if (year < 2010 || year > 2040) return null;
+  }
+
   const info = PRODUCT_MAP[product];
   if (!info) return null;
 

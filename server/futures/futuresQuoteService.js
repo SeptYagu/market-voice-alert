@@ -167,6 +167,9 @@ export async function getCachedFuturesQuote(symbolOrId, opts = {}) {
     opts
   );
 
+  if (result && result.data) {
+    result.data.stale = !!result.stale;
+  }
   return result ? result.data : null;
 }
 

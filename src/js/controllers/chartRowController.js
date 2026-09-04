@@ -24,10 +24,21 @@ export const MA_PERIODS = [5, 10, 20, 60];
 
 export function getPrevCloseForDate(items, date) {
   if (!Array.isArray(items) || !date) return null;
+  let lastPriorBar = null;
   for (let i = 0; i < items.length; i++) {
-    if (chartTimeToDate(items[i] && items[i].time) !== date) continue;
-    const prev = i > 0 ? Number(items[i - 1].close) : NaN;
-    return Number.isFinite(prev) && prev > 0 ? prev : null;
+    const bar = items[i];
+    if (!bar) continue;
+    const barDate = chartTimeToDate(bar.time);
+    if (!barDate) continue;
+    if (barDate < date) {
+      lastPriorBar = bar;
+    } else if (barDate >= date) {
+      break;
+    }
+  }
+  if (lastPriorBar) {
+    const val = Number(lastPriorBar.settle || lastPriorBar.close);
+    return Number.isFinite(val) && val > 0 ? val : null;
   }
   return null;
 }
@@ -326,7 +337,7 @@ export class ChartRowManager {
         onData: (refreshed) => {
           if (refreshed && this.isExpanded(code)) {
             const currentInst = this.getInst(code);
-            if (currentInst) {
+            if (currentInst && currentInst.period === inst.period) {
               currentInst.klineData = refreshed;
               const ctl = this.klineCtlMap.get(code);
               if (ctl) {
@@ -438,13 +449,19 @@ export class ChartRowManager {
     inst.loading = true;
     inst.error = null;
     if (this.hasIntraday) {
+      inst.selectedTradeDate = null;
       inst.intradayData = null;
       inst.intradayError = null;
       inst._intradayVisibleRange = null;
+      if (inst.intradayAbort) {
+        try { inst.intradayAbort.abort(); } catch { /* ignore */ }
+        inst.intradayAbort = null;
+      }
     }
     inst._visibleRange = null;
     if (inst.abort) {
       try { inst.abort.abort(); } catch { /* ignore */ }
+      inst.abort = null;
     }
     this.onStateChange(code);
     this.loadKline(code);
