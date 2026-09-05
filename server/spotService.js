@@ -8,7 +8,13 @@ async function getKlineCacheUniverse() {
   const codeSet = new Set();
 
   // 1. Check optional explicit universe seed files if provided
-  for (const p of [cachePath('universe.json'), cachePath('..', 'universe.json')]) {
+  const candidatePaths = [];
+  try {
+    candidatePaths.push(cachePath('universe.json'));
+  } catch {
+    // ignore
+  }
+  for (const p of candidatePaths) {
     try {
       const raw = await readFile(p, 'utf8');
       const parsed = JSON.parse(raw);

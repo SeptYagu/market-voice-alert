@@ -146,7 +146,7 @@ function successCacheParts(dateKey, threshold) {
 function beijingParts(now = new Date()) {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Shanghai',
-    hour12: false,
+    hourCycle: 'h23',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -450,26 +450,37 @@ export function startTenDayMomentumScan({ date, threshold: rawThreshold, reason 
       return data;
     })
     .catch(async (err) => {
-      const lastSuccess = await readCache(successCacheParts(dateKey, threshold), { skipTouch: true });
-      const prior = lastSuccess && lastSuccess.data
-        ? lastSuccess
-        : await readCache(parts, { skipTouch: true });
-      const data = {
-        status: 'error',
-        date: dateKey,
-        threshold,
-        lookbackDays: LOOKBACK_DAYS,
-        universeSize: prior && prior.data ? prior.data.universeSize : 0,
-        scanned: prior && prior.data ? prior.data.scanned : 0,
-        latestMarketDate: prior && prior.data ? prior.data.latestMarketDate : null,
-        items: prior && prior.data && Array.isArray(prior.data.items) ? prior.data.items : [],
-        error: err && err.message ? err.message : String(err)
-      };
-      await writeMomentumProgress(parts, data);
-      return data;
+      try {
+        const lastSuccess = await readCache(successCacheParts(dateKey, threshold), { skipTouch: true }).catch(() => null);
+        const prior = lastSuccess && lastSuccess.data
+          ? lastSuccess
+          : await readCache(parts, { skipTouch: true }).catch(() => null);
+        const data = {
+          status: 'error',
+          date: dateKey,
+          threshold,
+          lookbackDays: LOOKBACK_DAYS,
+          universeSize: prior && prior.data ? prior.data.universeSize : 0,
+          scanned: prior && prior.data ? prior.data.scanned : 0,
+          latestMarketDate: prior && prior.data ? prior.data.latestMarketDate : null,
+          items: prior && prior.data && Array.isArray(prior.data.items) ? prior.data.items : [],
+          error: err && err.message ? err.message : String(err)
+        };
+        await writeMomentumProgress(parts, data).catch(() => {});
+        return data;
+      } catch {
+        return {
+          status: 'error',
+          date: dateKey,
+          threshold,
+          error: err && err.message ? err.message : String(err)
+        };
+      }
     })
     .finally(() => {
-      JOBS.delete(jobKey);
+      if (JOBS.get(jobKey)?.promise === job) {
+        JOBS.delete(jobKey);
+      }
     });
   JOBS.set(jobKey, { promise: job, startedAt });
   return JOBS.get(jobKey).promise;
@@ -478,7 +489,7 @@ export function startTenDayMomentumScan({ date, threshold: rawThreshold, reason 
 function ensureStartupMomentumScan(logger) {
   const dateKey = beijingDateKey();
   const threshold = DEFAULT_THRESHOLD;
-  const parts = ['momentum', 'ten-day', `${dateKey}-t${threshold}.json`];
+  const parts = cacheParts(dateKey, threshold);
 
   return readCache(parts, { skipTouch: true }).then((cached) => {
     if (cached && cached.data && Array.isArray(cached.data.items) && cached.data.items.length) {

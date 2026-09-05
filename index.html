@@ -7,7 +7,7 @@
   <title>股票期货监控助手</title>
   <script>
     try {
-      const t = localStorage.getItem('theme');
+      const t = localStorage.getItem('app_theme') || localStorage.getItem('theme');
       if (t) document.documentElement.setAttribute('data-theme', t);
     } catch (e) {}
   </script>

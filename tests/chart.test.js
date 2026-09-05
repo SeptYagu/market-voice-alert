@@ -130,6 +130,17 @@ QUnit.module('chart.createKlineChart (instance API)', (hooks) => {
     ctl.destroy();
   });
 
+  QUnit.test('ctl exposes subscribeBarClick and onClick functions', (t) => {
+    const host = makeHost();
+    const ctl = createKlineChart(host, { theme: 'warm', height: 360 });
+    t.equal(typeof ctl.subscribeBarClick, 'function', 'subscribeBarClick is a function');
+    t.equal(typeof ctl.onClick, 'function', 'onClick is a function');
+    const unsub = ctl.subscribeBarClick(() => {});
+    t.equal(typeof unsub, 'function', 'returns unsubscribe function');
+    unsub();
+    ctl.destroy();
+  });
+
   QUnit.test('setVolume + updateVolume accept bar data and do not throw', (t) => {
     const host = makeHost();
     const ctl = createKlineChart(host, { theme: 'warm', height: 360 });

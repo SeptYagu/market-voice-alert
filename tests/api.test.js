@@ -555,6 +555,17 @@ QUnit.module('api.fetchKline (Phase 8 cache + dedup + SWR)', (hooks) => {
     t.equal(calls, 2, 'noCache forces a new fetch');
   });
 
+  QUnit.test('forceRefresh option: skips klineCache', async (t) => {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      return { ok: true, status: 200, json: async () => makeKlineResponse(30) };
+    };
+    await fetchKline('sh600519', { period: '1d' });
+    await fetchKline('sh600519', { period: '1d', forceRefresh: true });
+    t.equal(calls, 2, 'forceRefresh forces a new fetch');
+  });
+
   QUnit.test('SWR: cache hit triggers background revalidate', async (t) => {
     let calls = 0;
     globalThis.fetch = async () => {

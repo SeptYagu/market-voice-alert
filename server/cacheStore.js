@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CACHE_ROOT, isFresh, nowMs, sanitizeSegment } from './utils.js';
@@ -42,12 +42,16 @@ export function cachePath(...parts) {
   return resolveCachePath(parts);
 }
 
-export async function readCache(parts) {
+export async function readCache(parts, opts = {}) {
   const path = resolveCachePath(parts);
   try {
     const raw = await readFile(path, 'utf8');
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
+    if (!opts.skipTouch) {
+      const now = new Date();
+      utimes(path, now, now).catch(() => {});
+    }
     return parsed;
   } catch {
     return null;
@@ -178,6 +182,8 @@ async function shouldDeleteCacheFile(path, now) {
     const lastAccessedAt = Number(parsed && parsed.lastAccessedAt) || generatedAt || 0;
     if (generatedAt && now - generatedAt <= SIXTY_DAYS_MS) return false;
     if (lastAccessedAt && now - lastAccessedAt <= THIRTY_DAYS_MS) return false;
+    const st = await stat(path).catch(() => null);
+    if (st && st.mtimeMs && (now - st.mtimeMs <= THIRTY_DAYS_MS)) return false;
     return true;
   } catch {
     return false;

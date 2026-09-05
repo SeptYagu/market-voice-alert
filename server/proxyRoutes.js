@@ -22,10 +22,14 @@ export function getProxyRoutes(env = process.env) {
 export function resolveProxyTarget(pathname, search = '', env = process.env) {
   const route = getProxyRoutes(env).find(({ prefix }) => pathname === prefix || pathname.startsWith(`${prefix}/`));
   if (!route) return null;
-  const suffix = pathname.slice(route.prefix.length);
-  const upstreamPath = `${route.upstreamPrefix}${suffix}` || '/';
+  const rawSuffix = pathname.slice(route.prefix.length);
+  const cleanSuffix = rawSuffix.replace(/^\/+/, '');
+  const upstreamPrefix = route.upstreamPrefix ? route.upstreamPrefix.replace(/\/+$/, '') : '';
+  const upstreamPath = (upstreamPrefix ? `${upstreamPrefix}/${cleanSuffix}` : `/${cleanSuffix}`).replace(/\/+$/, '') || '/';
+  const targetUrl = new URL(upstreamPath, route.target);
+  if (search) targetUrl.search = search;
   return {
     ...route,
-    url: new URL(`${upstreamPath}${search}`, route.target).toString()
+    url: targetUrl.toString()
   };
 }

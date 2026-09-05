@@ -55,8 +55,9 @@ export async function handleCacheRequest(req, res) {
     // Register the single-flight job before replying so an immediate GET poll
     // cannot observe the old empty cache between POST and task startup.
     const job = startTenDayMomentumScan({ date, threshold, reason: 'manual' });
-    if (job && job.promise && typeof job.promise.catch === 'function') {
-      job.promise.catch((err) => {
+    const jobPromise = job && typeof job.then === 'function' ? job : (job && job.promise);
+    if (jobPromise && typeof jobPromise.catch === 'function') {
+      jobPromise.catch((err) => {
         if (typeof console !== 'undefined' && console.error) console.error('background momentum scan job error:', err);
       });
     }
@@ -339,7 +340,7 @@ export function startBackgroundJobs() {
 
 export function startServer({
   port = Number(process.env.PORT || process.env.CACHE_SERVER_PORT || DEFAULT_PORT),
-  host = process.env.HOST || '0.0.0.0'
+  host = process.env.HOST || '127.0.0.1'
 } = {}) {
   startBackgroundJobs();
   const server = createAppServer();

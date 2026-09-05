@@ -397,6 +397,7 @@ export function createKlineChart(container, opts = {}) {
     applyTheme,
     setPeriod,
     onClick,
+    subscribeBarClick: onClick,
     resize,
     fitContent,
     getVisibleRange,

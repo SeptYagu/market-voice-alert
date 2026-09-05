@@ -2,7 +2,7 @@
 
 > **交接日期**：2026-09-05  
 > **基线分支**：`main`  
-> **验证状态**：648 / 648 单测全绿（`npm test`），56 / 56 Playwright E2E 全绿（`npm run e2e`），ESLint 0 错误 0 警告（`npm run lint`），生产构建顺利完成（`npm run build`）  
+> **验证状态**：651 / 651 单测全绿（`npm test`），56 / 56 Playwright E2E 全绿（`npm run e2e`），ESLint 0 错误 0 警告（`npm run lint`），生产构建顺利完成（`npm run build`）  
 > **前序文档**：  
 > - [`docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md`](./2026-09-04-code-review-defects-and-architecture-refactor-handoff.md)  
 > - [`STATUS.md`](../../STATUS.md) | [`AGENTS.md`](../../AGENTS.md)
@@ -79,6 +79,38 @@
   - 增加对以 `8`、`43`、`92` 开头的 6 位纯数字代码的北交所自动识别，赋予 30% 涨跌幅限制；
   - 在 `tests/kline.test.js` 中补齐针对 `830799`、`430047`、`920002` 的单元测试。
 
+### 2.7 P0-1 & P1-4 & P1-5: 后台扫描稳定性与任务调度加固
+- **P0-1（未捕获拒绝击溃进程）**：
+  - `server/index.js` 中 `startTenDayMomentumScan` 返回裸 Promise，修复为 `const jobPromise = job && typeof job.then === 'function' ? job : (job && job.promise)`，挂载 `.catch` 防御；
+  - `server/momentumService.js` catch 处理函数内部再包裹严格 try/catch，即便写盘或读取失败也保证返回错误结构体，杜绝 Unhandled Rejection 崩进程。
+- **P1-4（旧任务 finally 误删新任务）**：
+  - `server/momentumService.js` 在 `finally` 中严格校验 `JOBS.get(jobKey)?.promise === job` 才执行 `JOBS.delete(jobKey)`。
+- **P1-5（启动扫描缓存 key 不一致）**：
+  - `ensureStartupMomentumScan` 统一切换为 `cacheParts(dateKey, threshold)`，消除每次重启均全量扫描的问题。
+
+### 2.8 P1-1 & P1-2: 图表交互与强制刷新网络穿透
+- **P1-1（重新加载按钮未联网）**：
+  - `src/js/controllers/chartRowController.js` 统一传递 `noCache: !!force` 和 `forceRefresh: !!force`，移除死回调 `onData`；
+  - `src/js/api.js` 中 `fetchKline` 统一识别 `opts.noCache || opts.forceRefresh || opts.force`，跳过本地缓存直连上游并刷新本地缓存。
+- **P1-2（点击日 K 柱看分时失效）**：
+  - `src/js/chart.js` 在 `createKlineChart` 的返回实例中正式暴露 `subscribeBarClick: onClick`，全链路打通日 K 柱点击切换指定日分时功能。
+
+### 2.9 P1-3 & P1-6 & P1-7 & P1-8: 种子兜底、主题防闪与生命周期清理
+- **P1-3（universe 种子兜底失效）**：`server/spotService.js` 安全处理候选种子路径，消除求值时抛出 `Cache path escaped cache root` 导致的阻断。
+- **P1-6（深色主题刷新闪白）**：`index.html` 统一读取 `localStorage.getItem('app_theme') || localStorage.getItem('theme')`，与 `storage.js` 键名对齐，首帧消除白闪。
+- **P1-7（切页时 momentum 图表不销毁）**：`src/js/app.js` 补齐 `closeAllMomentumCharts()`，在切换到 `#/limit-up` 路由及 `stopApp` 时逐一释放图表实例与观察器。
+- **P1-8（stopApp 漏清语音 fallback 定时器）**：`stopApp()` 直接调用 `stopVoiceTimer()`，确保 Worker 和主线程定时器彻底销毁。
+
+### 2.10 安全 P1: 代理路由 Protocol-Relative SSRF 与监听地址收敛
+- **SSRF 守卫**：`server/proxyRoutes.js` 针对 `upstreamPrefix` 为空的路由，使用 `cleanSuffix = rawSuffix.replace(/^\/+/, '')` 强制前导单斜杠规范化，杜绝 `//evil.com/x` 协议相对路径跳转解析到第三方外部域名。新增针对性单元测试验证。
+- **监听收敛**：`server/index.js` 默认 `host` 从 `0.0.0.0` 改为 `127.0.0.1`，消除局域网越权跳板风险。
+
+### 2.11 P2 关键修复与 UX-2 单个标的删除确认
+- **P2-1（`readCache` skipTouch 与缓存访问刷新）**：`server/cacheStore.js` 支持 `readCache(parts, opts = {})`，非 `skipTouch` 时更新访问时间；`shouldDeleteCacheFile` 校验真实文件修改时间。
+- **P2-3（期货服务环境变量）**：`server/futures/futuresKlineService.js` 与 `futuresQuoteService.js` 统一使用 `process.env.AKTOOLS_BASE || 'http://127.0.0.1:8888'`。
+- **P2-14（午夜 24 点跨日解析）**：`src/js/time.js` 与 `server/momentumService.js` 中 `Intl.DateTimeFormat` 改用 `hourCycle: 'h23'`，消除跨平台午夜时分返回 24 点的缺陷。
+- **UX-2（单个删除标的防误触确认）**：`src/js/app.js` 的 `handleRemove` 接入非阻塞 `showConfirmModal`，点击单个删除出现危险操作二次确认；更新 E2E 自动化测试。
+
 ---
 
 ## 3. 验证基线
@@ -92,7 +124,7 @@ npm run lint
 
 # 2. 单元测试
 npm test
-# 输出：648 / 648 passed (100%)
+# 输出：651 / 651 passed (100%)
 
 # 3. 端到端自动化测试
 npm run e2e
@@ -100,7 +132,11 @@ npm run e2e
 
 # 4. 生产构建打包
 npm run build
-# 输出：built in 11.78s, dist assets 生成完整
+# 输出：built in 11.56s, dist assets 生成完整
+
+# 5. 完整 CI
+npm run ci
+# 输出：全绿通过 (lint + test + e2e + build)
 ```
 
 ---

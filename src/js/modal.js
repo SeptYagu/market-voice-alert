@@ -51,12 +51,12 @@ export function showConfirmModal(message, options = {}) {
 
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
-    cancelBtn.className = 'app-modal-btn btn-secondary';
+    cancelBtn.className = 'app-modal-btn app-modal-cancel-btn btn-secondary';
     cancelBtn.textContent = cancelText;
 
     const confirmBtn = document.createElement('button');
     confirmBtn.type = 'button';
-    confirmBtn.className = `app-modal-btn ${danger ? 'btn-danger' : 'btn-primary'}`;
+    confirmBtn.className = `app-modal-btn app-modal-confirm-btn ${danger ? 'btn-danger' : 'btn-primary'}`;
     confirmBtn.textContent = confirmText;
 
     footer.appendChild(cancelBtn);

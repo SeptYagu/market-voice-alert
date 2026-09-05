@@ -329,21 +329,9 @@ export class ChartRowManager {
       const data = await fetchKline(code, {
         period: inst.period,
         sharedCache: true,
-        forceRefresh: force,
-        signal: inst.abort.signal,
-        onData: (refreshed) => {
-          if (refreshed && this.isExpanded(code)) {
-            const currentInst = this.getInst(code);
-            if (currentInst && currentInst.period === inst.period) {
-              currentInst.klineData = refreshed;
-              const ctl = this.klineCtlMap.get(code);
-              if (ctl) {
-                applyKlineDataToChart(ctl, currentInst, refreshed);
-                this.updateKlineStatus(code);
-              }
-            }
-          }
-        }
+        noCache: !!force,
+        forceRefresh: !!force,
+        signal: inst.abort.signal
       });
       if (!data) throw new Error('未能获取 K 线数据');
       if (!data.items.length) throw new Error('K 线数据为空');

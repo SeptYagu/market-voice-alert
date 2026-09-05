@@ -21,6 +21,7 @@ async function _loadTradingDates(signal) {
 const INTRADAY_TTL_MS = 10 * 1000;
 const KLINE_LIVE_TTL_MS = 30 * 1000;
 const KLINE_HISTORICAL_TTL_MS = 24 * 60 * 60 * 1000;
+const AKTOOLS_BASE = (process.env.AKTOOLS_BASE || 'http://127.0.0.1:8888').replace(/\/+$/, '');
 
 /**
  * 从 AKTools 或新浪抓取期货分钟线
@@ -28,7 +29,7 @@ const KLINE_HISTORICAL_TTL_MS = 24 * 60 * 60 * 1000;
 async function fetchFuturesMinute(inst, period = '1') {
   // AKTools: futures_zh_minute_sina
   try {
-    const url = `http://127.0.0.1:8888/api/public/futures_zh_minute_sina?symbol=${inst.symbol}&period=${period}`;
+    const url = `${AKTOOLS_BASE}/api/public/futures_zh_minute_sina?symbol=${inst.symbol}&period=${period}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (res.ok) {
       const data = await res.json();
@@ -117,7 +118,7 @@ async function fetchFuturesMinute(inst, period = '1') {
  */
 async function fetchFuturesDaily(inst) {
   try {
-    const url = `http://127.0.0.1:8888/api/public/futures_zh_daily_sina?symbol=${inst.symbol}`;
+    const url = `${AKTOOLS_BASE}/api/public/futures_zh_daily_sina?symbol=${inst.symbol}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (res.ok) {
       const data = await res.json();

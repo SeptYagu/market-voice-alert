@@ -33,6 +33,9 @@ test.describe('监控页', () => {
     await page.press('#code-input', 'Enter');
     await expect(page.locator('tr[data-code="sh600519"]')).toBeVisible({ timeout: DEFAULT_TIMEOUT });
     await page.click('tr[data-code="sh600519"] .btn-link');
+    const confirmBtn = page.locator('.app-modal-confirm-btn');
+    await expect(confirmBtn).toBeVisible({ timeout: DEFAULT_TIMEOUT });
+    await confirmBtn.click();
     await expect(page.locator('tr[data-code="sh600519"]')).toHaveCount(0, { timeout: DEFAULT_TIMEOUT });
   });
 

@@ -76,9 +76,17 @@
 - ✅ **无障碍 A11y 深度加固 (`src/js/limitUpView.js`)**：
   - 涨停看板所有排序列注入 `role="button"`、`tabindex="0"`、`aria-sort` 与键盘回车/空格触发支持；
   - 为置顶/收藏按钮补齐动态 `aria-label`。
-- ✅ **北交所无前缀代码鲁棒性 (`src/js/kline.js`)**：
-  - `getPriceLimit` 强化对无 `bj` 前缀的 6 位纯数字北交所代码（如 `83xxxx`, `43xxxx`, `92xxxx`）正确识别为 30% 涨跌幅限制，新增针对性测试用例。
-- ✅ **测试与质量**：单元测试增至 648 项全部 PASS；Playwright 端到端测试 56/56 项 100% 通过；ESLint 0 错误 0 警告；Vite 生产构建成功；`npm run ci` 全绿。
+- ✅ **全量审查 P0/P1 与安全缺陷彻底闭环**：
+  - **P0-1**：`server/index.js` 与 `server/momentumService.js` 修复裸 Promise 未挂载 catch 及内部嵌套 try/catch，彻底消除 Unhandled Rejection 崩进程隐患；
+  - **P1-1**：`chartRowController.js` 与 `api.js` 修复 `noCache`/`forceRefresh` 穿透，确保「重新加载」跳过本地缓存直连网络；
+  - **P1-2**：`chart.js` 在 `createKlineChart` 正式暴露 `subscribeBarClick: onClick`，打通日 K 柱点击切换分时链路；
+  - **P1-3**：`server/spotService.js` 修复 `universe.json` 种子安全查找，消除数组立即求值抛错；
+  - **P1-4 & P1-5**：`server/momentumService.js` 修复 `finally` 误删新任务竞态与重启启动扫描缓存 key；
+  - **P1-6**：`index.html` 改读 `app_theme`，彻底消除深色模式刷新首帧闪白；
+  - **P1-7 & P1-8**：`src/js/app.js` 补齐 `closeAllMomentumCharts` 路由切页销毁，`stopApp` 调 `stopVoiceTimer` 消除后台定时器泄漏；
+  - **安全 P1**：`server/proxyRoutes.js` 修复协议相对路径 `//evil.com/x` SSRF 漏洞，`server/index.js` 监听地址默认收敛至 `127.0.0.1`；
+  - **P2 & UX-2**：`server/cacheStore.js` 支持 `readCache` skipTouch 并刷新文件 mtime；期货服务读取 `AKTOOLS_BASE` 环境变量；`time.js` 统一 `hourCycle: 'h23'` 杜绝午夜 24 点解析异常；自选股单个删除接入 `showConfirmModal` 确认弹窗。
+- ✅ **测试与质量**：单元测试增至 651 项全部 PASS；Playwright 端到端测试 56/56 项 100% 通过；ESLint 0 错误 0 警告；Vite 生产构建成功；`npm run ci` 全绿。
 - 详见交接文档：[`docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md`](docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md)。
 
 ## 备份

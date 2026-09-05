@@ -163,6 +163,12 @@ QUnit.module('server cache and production routing', (hooks) => {
     t.equal(aktools.url, 'http://127.0.0.1:9999/api/public/stock_zt_pool_em?date=20260605');
   });
 
+  QUnit.test('production proxy resolver guards against protocol-relative SSRF', (t) => {
+    const evil = resolveProxyTarget('/api/tencent//evil.com/x', '?test=1');
+    t.equal(evil.url, 'https://qt.gtimg.cn/evil.com/x?test=1');
+    t.notEqual(new URL(evil.url).hostname, 'evil.com');
+  });
+
   QUnit.test('app version metadata supports deterministic build overrides', (t) => {
     t.deepEqual(
       getAppVersionMetadata({ APP_VERSION: 'abc1234', APP_UPDATED_DATE: '2026-09-01' }),

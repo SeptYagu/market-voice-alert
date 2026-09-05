@@ -428,8 +428,9 @@ function _attachCallerSignal(promise, signal) {
 export function fetchKline(code, opts = {}) {
   if (!code) return Promise.reject(new Error('code is required'));
   const period = opts.period || '1d';
+  const noCache = Boolean(opts.noCache || opts.forceRefresh || opts.force);
   if (isFutureCode(code)) {
-    return fetchFuturesKline(code, period, opts);
+    return fetchFuturesKline(code, period, { ...opts, noCache });
   }
   const key = `${code}|${period}`;
 
@@ -439,7 +440,7 @@ export function fetchKline(code, opts = {}) {
   }
 
   // 2. klineCache hit (SWR): return immediately, revalidate in background
-  if (!opts.noCache) {
+  if (!noCache) {
     const cached = klineCacheGet(code, period);
     if (cached) {
       _scheduleKlineRevalidate(code, period, opts);
@@ -450,13 +451,13 @@ export function fetchKline(code, opts = {}) {
   // 3. Cache miss: create shared promise with independent lifecycle
   const p = (async () => {
     try {
-      const data = opts.sharedCache === true && !opts.noCache
+      const data = opts.sharedCache === true && !noCache
         ? await _fetchKlineFromSharedCache(code, period, undefined).catch((e) => {
           if (e && e.name === 'AbortError') throw e;
           return _fetchKlineFromNetwork(code, period, undefined);
         })
         : await _fetchKlineFromNetwork(code, period, undefined);
-      if (data && !opts.noCache) {
+      if (data && !noCache) {
         klineCacheSet(code, period, data);
         emitKlineUpdated(code, period, data);
       }

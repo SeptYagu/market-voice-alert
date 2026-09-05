@@ -833,6 +833,12 @@ function closeMomentumChart(code) {
   renderMomentumSection();
 }
 
+export function closeAllMomentumCharts() {
+  for (const code of [...state.momentum.expandedCodes]) {
+    closeMomentumChart(code);
+  }
+}
+
 function handleMomentumKlinePeriodChange(code, period) {
   momentumChartMgr.handlePeriodChange(period, code);
 }
@@ -1081,7 +1087,16 @@ function preloadLimitUpTopCharts(n = 10) {
   preloadKlineForCodes(top.map(it => it.code));
 }
 
-function handleRemove(code) {
+async function handleRemove(code) {
+  const quote = state.quotes.get(code);
+  const name = quote && quote.name ? `${quote.name} (${code})` : code;
+  const ok = await showConfirmModal(`确定从监控列表中删除 ${name} 吗？`, {
+    title: '删除标的',
+    confirmText: '确定删除',
+    cancelText: '取消',
+    danger: true
+  });
+  if (!ok) return;
   removeFromWatchList(code);
   state.watchList = getWatchList();
   state.selected.delete(code);
@@ -2665,6 +2680,7 @@ export function startApp(root) {
       '#/limit-up': (r) => {
         stopMonitorTimer();
         closeAllCharts();
+        closeAllMomentumCharts();
         limitUpRootEl = r;
         renderLimitUpPage(r, state.limitUp, {
           navigateTo: (path) => navigate(path),
@@ -2703,10 +2719,7 @@ export function stopApp() {
   }
   stopMonitorTimer();
   stopLimitUpTimer();
-  if (state.voiceTimer) {
-    clearInterval(state.voiceTimer);
-    state.voiceTimer = null;
-  }
+  stopVoiceTimer();
   if (state.voiceScheduleTimer) {
     clearInterval(state.voiceScheduleTimer);
     state.voiceScheduleTimer = null;
@@ -2715,12 +2728,9 @@ export function stopApp() {
     clearInterval(state.dataScheduleTimer);
     state.dataScheduleTimer = null;
   }
-  if (state.tickWorker) {
-    try { state.tickWorker.terminate(); } catch { /* ignore */ }
-    state.tickWorker = null;
-  }
   closeAllCharts();
   closeAllLimitUpCharts();
+  closeAllMomentumCharts();
 }
 
 export function _internal() {
