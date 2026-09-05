@@ -153,6 +153,7 @@ project1/
 
 ## 重要约束
 
+- **任务交付必须推 Git** - 每次完成代码开发、缺陷修复或功能闭环，在验证通过（CI/单测/构建通过）后，必须自动执行 `git commit` 并 `git push origin <branch>` 推送到远端仓库，保持远程与本地干净同步
 - **不要重新引入 ECharts** - 用 lightweight-charts
 - **不要在 src/ 下创建 *.cjs** - 全部用 ESM
 - **不要无说明地修改 SPEC.md** - 它是早期需求源；如需调整，只做清晰标注或在 PR/讨论中说明变更依据
