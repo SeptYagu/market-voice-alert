@@ -58,12 +58,34 @@ function percent(close, prevClose) {
 function decorateKlineIntraday(data, opts = {}) {
   if (!data || !Array.isArray(data.items)) return data;
   const prevClose = Number(opts.prevClose);
+  let cumVolume = 0;
+  let cumAmount = 0;
   const items = data.items.map((it) => {
     const pct = percent(it.close, prevClose);
+    const vol = Number(it.volume) || 0;
+    const amt = Number(it.amount) || 0;
+    cumVolume += vol;
+    cumAmount += amt;
+
+    let avgPrice = Number(it.avgPrice);
+    if (!Number.isFinite(avgPrice) || avgPrice <= 0) {
+      if (cumVolume > 0 && cumAmount > 0) {
+        const rawRatio = cumAmount / cumVolume;
+        const closePrice = Number(it.close);
+        if (Number.isFinite(closePrice) && closePrice > 0) {
+          if (rawRatio >= closePrice * 0.1 && rawRatio <= closePrice * 10) {
+            avgPrice = Math.round(rawRatio * 1000) / 1000;
+          } else if ((rawRatio / 100) >= closePrice * 0.1 && (rawRatio / 100) <= closePrice * 10) {
+            avgPrice = Math.round((rawRatio / 100) * 1000) / 1000;
+          }
+        }
+      }
+    }
+
     return {
       ...it,
       price: Number(it.close),
-      avgPrice: Number.isFinite(Number(it.avgPrice)) ? Number(it.avgPrice) : 0,
+      avgPrice: Number.isFinite(avgPrice) && avgPrice > 0 ? avgPrice : 0,
       preClose: prevClose || 0,
       percent: pct,
       changePercent: pct
@@ -108,8 +130,12 @@ async function fetchIntradayNetwork(common, allowLatestTickSource) {
     }
   }
 
+  // 2026-09-04 note: AKShare stock_intraday_em connects to Eastmoney push2 SSE
+  // which is frequently blocked/reset (RemoteDisconnected -> HTTP 500).
+  // Disabled by default to avoid slow fallback waterfalls, can be enabled via env.
+  const ENABLE_AKTOOLS_INTRADAY_TICKS = process.env.ENABLE_AKTOOLS_INTRADAY_TICKS === '1';
   const aktoolsTasks = [];
-  if (allowLatestTickSource) {
+  if (allowLatestTickSource && ENABLE_AKTOOLS_INTRADAY_TICKS) {
     aktoolsTasks.push({
       source: 'aktools-stock_intraday_em',
       promise: fetchAktoolsIntradayTicks(common)

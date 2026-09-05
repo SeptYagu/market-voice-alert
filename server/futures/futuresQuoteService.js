@@ -75,7 +75,10 @@ async function fetchFromAktools(inst) {
   const bidVol = Number(item.buy_vol ?? item['买量']) || 0;
   const askVol = Number(item.sell_vol ?? item['卖量']) || 0;
 
-  const basePrice = prevSettlement > 0 ? prevSettlement : (prevClose > 0 ? prevClose : price);
+  if (prevSettlement <= 0 && prevClose <= 0) {
+    throw new Error(`AKTools returned missing settlement/close baseline for ${inst.symbol}`);
+  }
+  const basePrice = prevSettlement > 0 ? prevSettlement : prevClose;
   const changeDecimals = inst.priceTick && inst.priceTick < 0.01 ? 3 : 2;
   const change = price - basePrice;
   const changePercent = basePrice > 0 ? ((change / basePrice) * 100) : 0;

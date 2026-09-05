@@ -254,12 +254,34 @@ function _hasIntradayItems(data) {
 function _decorateKlineIntraday(data, opts = {}) {
   if (!data || !Array.isArray(data.items)) return data;
   const prevClose = Number(opts.prevClose);
+  let cumVolume = 0;
+  let cumAmount = 0;
   const items = data.items.map((it) => {
     const percent = _calcPercent(it.close, prevClose);
+    const vol = Number(it.volume) || 0;
+    const amt = Number(it.amount) || 0;
+    cumVolume += vol;
+    cumAmount += amt;
+
+    let avgPrice = Number(it.avgPrice);
+    if (!Number.isFinite(avgPrice) || avgPrice <= 0) {
+      if (cumVolume > 0 && cumAmount > 0) {
+        const rawRatio = cumAmount / cumVolume;
+        const closePrice = Number(it.close);
+        if (Number.isFinite(closePrice) && closePrice > 0) {
+          if (rawRatio >= closePrice * 0.1 && rawRatio <= closePrice * 10) {
+            avgPrice = Math.round(rawRatio * 1000) / 1000;
+          } else if ((rawRatio / 100) >= closePrice * 0.1 && (rawRatio / 100) <= closePrice * 10) {
+            avgPrice = Math.round((rawRatio / 100) * 1000) / 1000;
+          }
+        }
+      }
+    }
+
     return {
       ...it,
       price: Number(it.close),
-      avgPrice: Number.isFinite(Number(it.avgPrice)) ? Number(it.avgPrice) : 0,
+      avgPrice: Number.isFinite(avgPrice) && avgPrice > 0 ? avgPrice : 0,
       preClose: prevClose || 0,
       percent,
       changePercent: percent
@@ -292,9 +314,13 @@ export async function fetchIntraday(code, opts = {}) {
   };
   const networkErrors = [];
 
-  // The shared server already tried the AKTools tick/minute sources. When it
-  // fails, do not repeat the same slow upstream waterfall in the browser.
-  if (opts.sharedCache !== true && opts.allowLatestTickSource !== false) {
+  // 2026-09-04 note: AKShare stock_intraday_em connects to Eastmoney push2 SSE
+  // which is frequently blocked/reset (RemoteDisconnected -> HTTP 500).
+  // Can be controlled via opts.enableAktoolsIntradayTicks when direct client fetch is performed.
+  const allowTick = opts.enableAktoolsIntradayTicks !== undefined
+    ? opts.enableAktoolsIntradayTicks
+    : (opts.allowLatestTickSource !== false);
+  if (allowTick && opts.sharedCache !== true) {
     try {
       const tickData = await fetchAktoolsIntradayTicks(common);
       const filtered = _filterIntradaySessions(tickData, opts.date);

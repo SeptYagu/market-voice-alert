@@ -5,6 +5,7 @@ import {
   applyLiveTickToKlineChart,
   formatKlineStatus,
   formatIntradayStatus,
+  intradaySourceLabel,
   getPrevCloseForDate,
   ChartRowManager
 } from '../src/js/controllers/chartRowController.js';
@@ -68,6 +69,16 @@ QUnit.module('chartRowController.helpers', () => {
     t.ok(s.includes('1 点'));
     t.ok(s.includes('+1.50%'));
     t.ok(s.includes('AKTools成交'));
+  });
+
+  QUnit.test('intradaySourceLabel maps sources to readable non-misleading labels', (t) => {
+    t.equal(intradaySourceLabel('aktools-stock_intraday_em'), 'AKTools成交');
+    t.equal(intradaySourceLabel('aktools-stock_zh_a_hist_min_em'), 'AKTools分钟');
+    t.equal(intradaySourceLabel('eastmoney-trends2'), '东财分时');
+    t.equal(intradaySourceLabel('eastmoney-kline-1m'), '分时(1分K)');
+    t.equal(intradaySourceLabel('eastmoney-kline-1m-cache'), '分时缓存(1分K)');
+    t.equal(intradaySourceLabel('custom'), 'custom');
+    t.equal(intradaySourceLabel(''), '');
   });
 
   QUnit.test('applyLiveTickToKlineChart updates live bar and MAs', (t) => {

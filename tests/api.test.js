@@ -263,6 +263,35 @@ QUnit.module('api.fetchIntraday', (hooks) => {
     t.ok(seen.some((u) => u.includes('stock_intraday_em')), 'tried tick source');
     t.ok(seen.some((u) => u.includes('stock_zh_a_hist_min_em')), 'then tried AKTools minute source');
   });
+
+  QUnit.test('calculates cumulative VWAP when falling back to 1m K-line', async (t) => {
+    globalThis.fetch = async (url) => {
+      if (url.includes('/api/eastmoney-kline/qt/stock/kline/get') && url.includes('klt=1')) {
+        return jsonBufferResponse({
+          data: {
+            code: '600000',
+            market: 1,
+            klines: [
+              '2026-06-05 09:30,10.0,10.2,10.2,10.0,1000,10100,0.0,2.0,0.2,0.1',
+              '2026-06-05 09:31,10.2,10.4,10.5,10.1,2000,20800,0.0,1.96,0.2,0.2'
+            ]
+          }
+        });
+      }
+      return jsonBufferResponse([], 500);
+    };
+
+    const out = await fetchIntraday('sh600000', {
+      date: '2026-06-05',
+      prevClose: 10,
+      allowLatestTickSource: false
+    });
+
+    t.equal(out.source, 'eastmoney-kline-1m');
+    t.equal(out.items.length, 2);
+    t.equal(out.items[0].avgPrice, 10.1);
+    t.equal(out.items[1].avgPrice, 10.3);
+  });
 });
 
 QUnit.module('api.fetchKline', (hooks) => {

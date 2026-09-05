@@ -149,9 +149,9 @@ export function formatKlineStatus(inst) {
 export function intradaySourceLabel(source) {
   if (source === 'aktools-stock_intraday_em') return 'AKTools成交';
   if (source === 'aktools-stock_zh_a_hist_min_em') return 'AKTools分钟';
-  if (source === 'eastmoney-trends2') return '东财备用';
-  if (source === 'eastmoney-kline-1m') return '东财K线备用';
-  if (source === 'eastmoney-kline-1m-cache') return '东财K线缓存备用';
+  if (source === 'eastmoney-trends2') return '东财分时';
+  if (source === 'eastmoney-kline-1m') return '分时(1分K)';
+  if (source === 'eastmoney-kline-1m-cache') return '分时缓存(1分K)';
   return source ? String(source) : '';
 }
 

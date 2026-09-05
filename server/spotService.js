@@ -1,19 +1,40 @@
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { getOrRefresh, cachePath } from './cacheStore.js';
 import { fetchAktoolsSpot, fetchTencentSpot, isAStockCode } from './marketData.js';
 
 const SPOT_TTL_MS = 30 * 1000;
 
 async function getKlineCacheUniverse() {
-  let entries = [];
-  try {
-    entries = await readdir(cachePath('kline'), { withFileTypes: true });
-  } catch {
-    return [];
+  const codeSet = new Set();
+
+  // 1. Check optional explicit universe seed files if provided
+  for (const p of [cachePath('universe.json'), cachePath('..', 'universe.json')]) {
+    try {
+      const raw = await readFile(p, 'utf8');
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.codes) ? parsed.codes : []);
+      for (const item of list) {
+        const code = typeof item === 'string' ? item.toLowerCase() : (item && item.code ? item.code.toLowerCase() : '');
+        if (isAStockCode(code)) codeSet.add(code);
+      }
+    } catch {
+      // optional seed file not present
+    }
   }
-  return entries
-    .filter((entry) => entry.isDirectory() && isAStockCode(entry.name))
-    .map((entry) => ({ code: entry.name.toLowerCase(), name: '' }));
+
+  // 2. Scan existing local kline cache directories
+  try {
+    const entries = await readdir(cachePath('kline'), { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && isAStockCode(entry.name)) {
+        codeSet.add(entry.name.toLowerCase());
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return Array.from(codeSet).map((code) => ({ code, name: '' }));
 }
 
 export async function getCachedSpotLatest({ signal } = {}) {
