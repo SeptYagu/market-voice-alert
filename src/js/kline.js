@@ -304,12 +304,14 @@ export function getPriceLimit(code, name) {
   if (typeof code !== 'string' || code.length === 0) return 10;
   // 北交所涨跌停 30%（北交所不适用 5% ST 规则）
   if (/^bj/i.test(code)) return 30;
-  // 去掉 sh/sz 前缀后看前缀号
-  const numeric = code.replace(/^(sh|sz)/i, '');
+  // 去掉 sh/sz/bj 前缀后看前缀号
+  const numeric = code.replace(/^(sh|sz|bj)/i, '');
   // 创业板 300xxx / 301xxx 涨跌停 20%（注册制规则：ST 股票亦为 20%）
   if (numeric.startsWith('30')) return 20;
   // 科创板 688xxx / 689xxx (CDR) 涨跌停 20%（注册制规则：ST 股票亦为 20%）
   if (numeric.startsWith('688') || numeric.startsWith('689')) return 20;
+  // 北交所股票代码以 8/43/92 开头（即便无 bj 前缀亦为 30%）
+  if (numeric.startsWith('8') || numeric.startsWith('43') || numeric.startsWith('92')) return 30;
   // 仅沪深主板 ST / *ST 股票涨跌停为 5%
   if (typeof name === 'string' && ST_RE.test(name)) return 5;
   return 10;

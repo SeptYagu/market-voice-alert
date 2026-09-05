@@ -2,7 +2,7 @@
 
 > **新窗口从这里开始**：本文件记录了完整的重做计划、决策、当前阶段和下一步任务。无需阅读历史对话。
 >
-> **新窗口交接文档**：[`docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md`](docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md) — 2026-09-04 全面代码审查结论、缺陷清单与架构重构实施交接文档（最新）。详见前序 [`docs/handoff/2026-09-03-remaining-defects-and-remediation-handoff.md`](docs/handoff/2026-09-03-remaining-defects-and-remediation-handoff.md) 与 [`docs/handoff/2026-09-03-futures-complete-defects-resolution-handoff.md`](docs/handoff/2026-09-03-futures-complete-defects-resolution-handoff.md)。
+> **新窗口交接文档**：[`docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md`](docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md) — 2026-09-05 代码审查遗留缺陷全量闭环与视图组件解耦交接文档（最新）。详见前序 [`docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md`](docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md)。
 
 ## 项目定位
 
@@ -54,6 +54,28 @@
       - **图表管理器注入实时 Quote**：`chartRowController.js` 注入 `getQuote`，在 `loadKline` 完成后即刻与内存实时 Quote 融合渲染。
 - ✅ **测试与质量**：单元测试扩充至 631 项全部 PASS；Playwright 端到端测试 56/56 项 100% 通过；ESLint 0 错误 0 警告；Vite 生产构建成功。
 - 详见交接文档：[`docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md`](docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md)。
+
+## 2026-09-05 视图解耦、无障碍 (A11y)、响应式与审查缺陷全量闭环状态
+
+- ✅ **自定义非阻塞确认模态框 (`src/js/modal.js`)**：
+  - 移除原生阻塞式 `window.confirm(...)`，实现主题自动适配、键盘焦点陷阱（Tab 循环、Escape 取消、Enter 确认）、遮罩点击关闭的异步非阻塞确认弹窗；
+  - 编写专用单元测试 `tests/modal.test.js`，5 项单测全部通过。
+- ✅ **大文件巨石与视图组件解耦 (`src/js/views/`)**：
+  - 抽离 `src/js/views/voiceBarView.js`：封装语音设置栏渲染、字段动态调序与事件处理；
+  - 抽离 `src/js/views/alertBarView.js`：封装价格预警栏渲染、阈值输入与通知权限申请；
+  - 抽离 `src/js/views/momentumView.js`：封装 10 日强势股面板渲染、纯函数排序、指标计算与过滤、单元格局部更新及行内图表展开；
+  - `src/js/app.js` 全面精简，仅作为协调控制器并保持所有既有外部引用的向后兼容重导出。
+- ✅ **表格更新脱敏与语义化定位 (`data-field`)**：
+  - 彻底废除 `allCells[4..9]` 等脆弱硬编码下标，为自选股与 10 日强势股表格所有 `th` / `td` 注入 `data-field` 语义标记，改用 `td[data-field="..."]` 精准 Patch。
+- ✅ **移动端完整响应式适配 (`src/style.css`)**：
+  - 在 `@media (max-width: 768px)` 中对 `#limit-up-table` 与 `#momentum-table` 的次要列（开盘价、量比、成交额等）进行自动隐藏，增加平滑横向滚动，解决小屏严重挤压问题。
+- ✅ **无障碍 A11y 深度加固 (`src/js/limitUpView.js`)**：
+  - 涨停看板所有排序列注入 `role="button"`、`tabindex="0"`、`aria-sort` 与键盘回车/空格触发支持；
+  - 为置顶/收藏按钮补齐动态 `aria-label`。
+- ✅ **北交所无前缀代码鲁棒性 (`src/js/kline.js`)**：
+  - `getPriceLimit` 强化对无 `bj` 前缀的 6 位纯数字北交所代码（如 `83xxxx`, `43xxxx`, `92xxxx`）正确识别为 30% 涨跌幅限制，新增针对性测试用例。
+- ✅ **测试与质量**：单元测试增至 638 项全部 PASS；Playwright 端到端测试 56/56 项 100% 通过；ESLint 0 错误 0 警告；Vite 生产构建成功。
+- 详见交接文档：[`docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md`](docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md)。
 
 ## 备份
 

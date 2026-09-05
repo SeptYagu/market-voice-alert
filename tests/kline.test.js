@@ -460,6 +460,9 @@ QUnit.module('kline.getPriceLimit', () => {
   QUnit.test('Beijing exchange (bj) returns 30', (t) => {
     t.equal(getPriceLimit('bj830799', '艾融软件'), 30);
     t.equal(getPriceLimit('bj872925', 'Some Co'), 30);
+    t.equal(getPriceLimit('830799', '艾融软件'), 30, 'raw 8xxxxx BSE code');
+    t.equal(getPriceLimit('430047', '诺思兰德'), 30, 'raw 43xxxx BSE code');
+    t.equal(getPriceLimit('920002', '万达轴承'), 30, 'raw 92xxxx BSE code');
   });
   QUnit.test('Main board ST returns 5', (t) => {
     t.equal(getPriceLimit('sh600519', 'ST茅台'), 5);

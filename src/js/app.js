@@ -64,7 +64,7 @@ import {
   getAdjacentTradingDates,
   resolveLatestTradingDate
 } from './tradeCalendar.js';
-import { chartTimeToDate, getBeijingDate, formatDateTime } from './time.js';
+import { getBeijingDate, formatDateTime } from './time.js';
 import {
   DEFAULT_SMART_SCHEDULE,
   getMarketSession,
@@ -86,6 +86,20 @@ import {
   makeExportFilename,
   intradaySourceLabel
 } from './format.js';
+import { showConfirmModal } from './modal.js';
+import { renderVoiceBar as renderVoiceBarView, updateVoiceHint as updateVoiceHintView } from './views/voiceBarView.js';
+import { renderAlertBar as renderAlertBarView, updateAlertHint as updateAlertHintView } from './views/alertBarView.js';
+import {
+  computeTenDayMomentum,
+  sortMomentumItems,
+  getMomentumReasonText,
+  buildMomentumHeaderCheckbox,
+  renderMomentumChartRow,
+  updateMomentumQuoteCells as updateMomentumQuoteCellsView,
+  MOMENTUM_LOOKBACK_TRADING_DAYS,
+  MOMENTUM_THRESHOLD_PCT
+} from './views/momentumView.js';
+
 export {
   LIMIT_UP_REFRESH_OPTIONS,
   formatNumber,
@@ -97,6 +111,15 @@ export {
   stripPrefix,
   makeExportFilename
 } from './format.js';
+export {
+  computeTenDayMomentum,
+  sortMomentumItems,
+  getMomentumReasonText,
+  buildMomentumHeaderCheckbox,
+  renderMomentumChartRow,
+  MOMENTUM_LOOKBACK_TRADING_DAYS,
+  MOMENTUM_THRESHOLD_PCT
+};
 
 export const REFRESH_OPTIONS = [
   { value: 3000, label: '3 秒' },
@@ -394,8 +417,6 @@ const state = {
 let limitUpRootEl = null;
 let abortController = null;
 
-const MOMENTUM_THRESHOLD_PCT = 45;
-const MOMENTUM_LOOKBACK_TRADING_DAYS = 10;
 const MOMENTUM_SCAN_CONCURRENCY = 8;
 
 function resolveInitialTradeDate(code, data) {
@@ -612,342 +633,47 @@ function renderToolbar() {
 }
 
 function renderVoiceBar() {
-  const bar = document.getElementById('voice-bar');
-  if (!bar) return;
-  bar.innerHTML = '';
-  const speechOK = isSpeechSupported();
-
-  // Main toggle as a big primary button (the core control).
-  const enabled = state.voice.enabled;
-  const toggleBtn = el(
-    'button',
-    {
-      class: enabled ? 'btn-ctl-active' : 'btn-ctl-toggle',
-      disabled: !speechOK,
-      title: speechOK ? '点击切换定时语音播报' : '当前浏览器不支持语音合成',
-      on: { click: () => handleVoiceEnabledChange(!state.voice.enabled) }
-    },
-    enabled ? '⏸ 停用定时语音播报' : '▶ 启用定时语音播报'
-  );
-
-  const intervalInput = el('input', {
-    type: 'text',
-    inputmode: 'numeric',
-    id: 'voice-interval',
-    value: String(state.voice.interval / 1000),
-    disabled: !speechOK,
-    placeholder: '5',
-    title: '正整数秒；留空启用时默认 5 秒',
-    on: {
-      input: (e) => {
-        // Strip non-digit characters as user types (allow empty).
-        const cleaned = e.target.value.replace(/\D+/g, '');
-        if (cleaned !== e.target.value) {
-          const cursor = e.target.selectionStart;
-          e.target.value = cleaned;
-          // Best-effort cursor preservation.
-          try { e.target.setSelectionRange(cursor - 1, cursor - 1); } catch { /* ignore */ }
-        }
-      },
-      blur: (e) => handleVoiceIntervalBlur(e.target.value),
-      keydown: (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          handleVoiceIntervalBlur(e.target.value);
-          e.target.blur();
-        }
-      }
+  renderVoiceBarView({
+    container: document.getElementById('voice-bar'),
+    voiceState: state.voice,
+    subscribedSize: state.subscribed.size,
+    isSpeechSupported: isSpeechSupported(),
+    fieldLabels: FIELD_LABELS,
+    defaultSmartSchedule: DEFAULT_SMART_SCHEDULE,
+    handlers: {
+      onToggleEnabled: handleVoiceEnabledChange,
+      onIntervalBlur: handleVoiceIntervalBlur,
+      onVolumeChange: handleVoiceVolumeChange,
+      onTestSpeech: handleTestSpeech,
+      onFieldChange: handleVoiceFieldChange,
+      onMoveField: handleMoveField,
+      onScheduleChange: handleVoiceScheduleChange
     }
   });
-
-  const volSlider = el('input', {
-    type: 'range',
-    id: 'voice-volume',
-    value: String(state.voice.volume),
-    disabled: !speechOK,
-    on: { input: (e) => handleVoiceVolumeChange(Number(e.target.value)) }
-  });
-  volSlider.min = '0';
-  volSlider.max = '100';
-  volSlider.step = '5';
-
-  const testBtn = el(
-    'button',
-    { on: { click: handleTestSpeech }, disabled: !speechOK },
-    '🎤 测试声音'
-  );
-
-  // Row 1: main toggle + interval + volume + test
-  const row1 = el(
-    'div',
-    { class: 'ctl-row' },
-    toggleBtn,
-    el(
-      'label',
-      { class: 'ctl-inline' },
-      el('span', { class: 'ctl-inline-label' }, '间隔:'),
-      intervalInput,
-      el('span', { class: 'ctl-inline-label' }, '秒')
-    ),
-    el(
-      'label',
-      { class: 'ctl-inline ctl-volume-wrap' },
-      el('span', { class: 'ctl-inline-label' }, '音量:'),
-      volSlider,
-      el('span', { class: 'volume-label', id: 'voice-volume-label' }, `${state.voice.volume}%`)
-    ),
-    testBtn
-  );
-
-  // Row 2: custom broadcast content
-  const row2 = el(
-    'div',
-    { class: 'ctl-row' },
-    el('span', { class: 'ctl-inline-label' }, '播报内容:'),
-    ...state.voice.fieldsOrder.map((k, i) => renderFieldToggle(k, FIELD_LABELS[k], i)),
-    el(
-      'span',
-      { class: 'ctl-hint' },
-      `订阅 ${state.subscribed.size}（行尾 🔊 列勾选）`
-    )
-  );
-
-  const smart = state.voice.smartSchedule || DEFAULT_SMART_SCHEDULE;
-  const row3 = el(
-    'div',
-    { class: 'ctl-row voice-schedule-row' },
-    el('span', { class: 'ctl-inline-label' }, '交易时段:'),
-    renderVoiceScheduleToggle('enabled', '智能交易时段', smart.enabled),
-    renderVoiceScheduleToggle('pauseLunchBreak', '午休暂停/下午恢复', smart.pauseLunchBreak, !smart.enabled),
-    renderVoiceScheduleToggle('autoStopAfterClose', '收盘自动停止', smart.autoStopAfterClose, !smart.enabled),
-    renderVoiceScheduleToggle('autoStartAuction', '集合竞价自动开始', smart.autoStartAuction, !smart.enabled)
-  );
-
-  if (!speechOK) {
-    bar.appendChild(el('div', { class: 'ctl-warn' }, '⚠ 当前浏览器不支持语音合成 (Web Speech API)，相关功能不可用。'));
-  }
-  bar.appendChild(row1);
-  bar.appendChild(row2);
-  bar.appendChild(row3);
 }
 
-function renderVoiceScheduleToggle(key, label, checked, disabled = false) {
-  return el(
-    'label',
-    { class: 'schedule-toggle' + (checked ? ' active' : '') },
-    el('input', {
-      type: 'checkbox',
-      checked: !!checked,
-      disabled: !!disabled,
-      on: { change: (e) => handleVoiceScheduleChange(key, e.target.checked) }
-    }),
-    label
-  );
-}
-
-function renderFieldToggle(key, label, index) {
-  const checked = !!state.voice.fields[key];
-  const order = state.voice.fieldsOrder;
-  const isFirst = index === 0;
-  const isLast = index === order.length - 1;
-  return el(
-    'div',
-    { class: 'field-toggle' + (checked ? ' active' : '') },
-    el(
-      'label',
-      { class: 'field-toggle-inner', title: '点击切换启用/禁用' },
-      el('input', {
-        type: 'checkbox',
-        checked,
-        'data-field': key,
-        on: { change: (e) => handleVoiceFieldChange(key, e.target.checked) }
-      }),
-      label
-    ),
-    el(
-      'div',
-      { class: 'field-order' },
-      el(
-        'button',
-        {
-          class: 'field-move',
-          type: 'button',
-          disabled: isFirst,
-          title: '上移',
-          on: { click: () => handleMoveField(key, 'up') }
-        },
-        '▲'
-      ),
-      el(
-        'button',
-        {
-          class: 'field-move',
-          type: 'button',
-          disabled: isLast,
-          title: '下移',
-          on: { click: () => handleMoveField(key, 'down') }
-        },
-        '▼'
-      )
-    )
-  );
-}
-
-// Update only the subscription-count hint in the voice bar.
-// Used by data refreshes and per-row subscription toggles to avoid rebuilding
-// the input/button/sliders (which would clobber in-flight user edits + focus).
 function updateVoiceHint() {
-  const hint = document.querySelector('#voice-bar .ctl-hint');
-  if (hint) {
-    hint.textContent = `订阅 ${state.subscribed.size}（行尾 🔊 列勾选）`;
-  }
+  updateVoiceHintView(state.subscribed.size);
 }
 
 function renderAlertBar() {
-  const bar = document.getElementById('alert-bar');
-  if (!bar) return;
-  bar.innerHTML = '';
-  const notifOK = isNotificationSupported();
-
-  const enabled = state.alert.enabled;
-  const toggleBtn = el(
-    'button',
-    {
-      class: enabled ? 'btn-ctl-active' : 'btn-ctl-toggle',
-      title: '点击切换价格阈值提醒（达到阈值时语音+通知）',
-      on: { click: () => handleAlertEnabledChange(!state.alert.enabled) }
-    },
-    enabled ? '⏸ 停用价格提醒' : '🔔 启用价格提醒'
-  );
-
-  const thresholdInput = el('input', {
-    type: 'text',
-    inputmode: 'decimal',
-    id: 'alert-threshold',
-    value: String(state.alert.threshold),
-    placeholder: '5',
-    title: '0.1 - 50 之间的数字（允许小数）；留空启用时默认 5',
-    on: {
-      input: (e) => {
-        // Allow only digits and a single dot.
-        let cleaned = e.target.value.replace(/[^\d.]/g, '');
-        const firstDot = cleaned.indexOf('.');
-        if (firstDot >= 0) {
-          cleaned = cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
-        }
-        if (cleaned !== e.target.value) {
-          const cursor = e.target.selectionStart;
-          e.target.value = cleaned;
-          try { e.target.setSelectionRange(cursor - 1, cursor - 1); } catch { /* ignore */ }
-        }
-      },
-      blur: (e) => handleAlertThresholdBlur(e.target.value),
-      keydown: (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          handleAlertThresholdBlur(e.target.value);
-          e.target.blur();
-        }
-      }
+  renderAlertBarView({
+    container: document.getElementById('alert-bar'),
+    alertState: state.alert,
+    subscribedSize: state.subscribed.size,
+    isNotificationSupported: isNotificationSupported(),
+    notifPermission: state.notifPermission,
+    handlers: {
+      onToggleEnabled: handleAlertEnabledChange,
+      onThresholdBlur: handleAlertThresholdBlur,
+      onTestAlert: handleTestAlert,
+      onRequestNotification: handleRequestNotification
     }
   });
-
-  const testBtn = el(
-    'button',
-    {
-      on: { click: handleTestAlert },
-      title: '用第一个订阅标的的当前涨跌幅模拟一次提醒'
-    },
-    '🔔 测试提醒'
-  );
-
-  // Row 1: main toggle + threshold input + test (left) + permission (right)
-  // Build permission bits to push-right within the same row.
-  const permBits = [];
-  if (notifOK) {
-    permBits.push(
-      el('span', { class: 'perm-label ctl-push-right' }, `桌面通知权限: ${state.notifPermission}`)
-    );
-    if (state.notifPermission !== 'granted') {
-      permBits.push(
-        el('button', { on: { click: handleRequestNotification } }, '请求通知权限')
-      );
-    }
-  } else {
-    permBits.push(
-      el('span', { class: 'perm-label ctl-push-right' }, '浏览器不支持桌面通知（仅使用语音）')
-    );
-  }
-
-  const row1 = el(
-    'div',
-    { class: 'ctl-row' },
-    toggleBtn,
-    el(
-      'label',
-      { class: 'ctl-inline' },
-      el('span', { class: 'ctl-inline-label' }, '阈值: ±'),
-      thresholdInput,
-      el('span', { class: 'ctl-inline-label' }, '%')
-    ),
-    testBtn,
-    ...permBits
-  );
-
-  // Row 2: subscription hint
-  const row2 = el(
-    'div',
-    { class: 'ctl-row' },
-    el(
-      'span',
-      { class: 'ctl-hint' },
-      `订阅 ${state.subscribed.size}（行尾 🔊 列勾选）`
-    )
-  );
-
-  bar.appendChild(row1);
-  bar.appendChild(row2);
 }
 
 function updateAlertHint() {
-  const hint = document.querySelector('#alert-bar .ctl-hint');
-  if (hint) {
-    hint.textContent = `订阅 ${state.subscribed.size}（行尾 🔊 列勾选）`;
-  }
-}
-
-export function computeTenDayMomentum(klineData, lookbackDays = MOMENTUM_LOOKBACK_TRADING_DAYS) {
-  const items = klineData && Array.isArray(klineData.items) ? klineData.items : [];
-  if (items.length < 2) return null;
-  const last = items[items.length - 1];
-  const startIndex = Math.max(0, items.length - 1 - Math.max(1, Number(lookbackDays) || MOMENTUM_LOOKBACK_TRADING_DAYS));
-  const start = items[startIndex];
-  const startClose = Number(start && start.close);
-  const lastClose = Number(last && last.close);
-  if (!Number.isFinite(startClose) || !Number.isFinite(lastClose) || startClose <= 0 || lastClose <= 0) return null;
-  return {
-    gainPercent: (lastClose / startClose - 1) * 100,
-    startClose,
-    lastClose,
-    startDate: chartTimeToDate(start.time),
-    endDate: chartTimeToDate(last.time)
-  };
-}
-
-function sortMomentumItems(items, pinnedCodes = state.momentum.pinnedCodes) {
-  const pins = pinnedCodes || new Set();
-  return [...(Array.isArray(items) ? items : [])].sort((a, b) => {
-    const ap = pins.has(a.code) ? 1 : 0;
-    const bp = pins.has(b.code) ? 1 : 0;
-    if (ap !== bp) return bp - ap;
-    const ag = Number(a.gainPercent) || 0;
-    const bg = Number(b.gainPercent) || 0;
-    if (ag !== bg) return bg - ag;
-    const aa = Number(a.amount) || 0;
-    const ba = Number(b.amount) || 0;
-    if (aa !== ba) return ba - aa;
-    return String(a.code || '').localeCompare(String(b.code || ''));
-  });
+  updateAlertHintView(state.subscribed.size);
 }
 
 function renderMomentumSection() {
@@ -1010,17 +736,17 @@ function renderMomentumSection() {
     'thead',
     {},
     el('tr', {},
-      el('th', { class: 'col-check' }, buildMomentumHeaderCheckbox(items)),
-      el('th', { class: 'col-sub', title: '勾选订阅语音播报与价格提醒' }, '播报'),
-      el('th', {}, '固定'),
-      el('th', {}, '代码'),
-      el('th', {}, '名称'),
-      el('th', { class: 'num' }, '10日涨幅'),
-      el('th', { class: 'num' }, '现价'),
-      el('th', { class: 'num' }, '当日涨幅'),
-      el('th', { class: 'num' }, '成交额'),
-      el('th', {}, '行业'),
-      el('th', {}, '异动/原因')
+      el('th', { class: 'col-check', 'data-field': 'check' }, buildMomentumHeaderCheckbox(items, s.selectedCodes, handleMomentumSelectAllChange)),
+      el('th', { class: 'col-sub', 'data-field': 'sub', title: '勾选订阅语音播报与价格提醒' }, '播报'),
+      el('th', { class: 'col-pin', 'data-field': 'pin' }, '固定'),
+      el('th', { class: 'code', 'data-field': 'code' }, '代码'),
+      el('th', { class: 'name', 'data-field': 'name' }, '名称'),
+      el('th', { class: 'num', 'data-field': 'gain' }, '10日涨幅'),
+      el('th', { class: 'num', 'data-field': 'price' }, '现价'),
+      el('th', { class: 'num', 'data-field': 'percent' }, '当日涨幅'),
+      el('th', { class: 'num', 'data-field': 'amount' }, '成交额'),
+      el('th', { class: 'col-industry', 'data-field': 'industry' }, '行业'),
+      el('th', { class: 'col-reason', 'data-field': 'reason' }, '异动/原因')
     )
   ));
   const tbody = el('tbody', {});
@@ -1039,11 +765,21 @@ function renderMomentumSection() {
         ].filter(Boolean).join(' '),
         'data-momentum-code': item.code,
         title: active ? '点击关闭 K 线' : '点击查看 K 线',
+        role: 'button',
+        tabindex: '0',
+        'aria-expanded': active ? 'true' : 'false',
         on: {
-          click: (e) => handleMomentumRowClick(item.code, e)
+          click: (e) => handleMomentumRowClick(item.code, e),
+          keydown: (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON')) return;
+              e.preventDefault();
+              handleMomentumRowClick(item.code, e);
+            }
+          }
         }
       },
-      el('td', {},
+      el('td', { class: 'col-check', 'data-field': 'check' },
         el('input', {
           type: 'checkbox',
           'data-momentum-select': item.code,
@@ -1054,7 +790,7 @@ function renderMomentumSection() {
           }
         })
       ),
-      el('td', {},
+      el('td', { class: 'col-sub', 'data-field': 'sub' },
         el('input', {
           type: 'checkbox',
           'data-momentum-sub': item.code,
@@ -1066,10 +802,11 @@ function renderMomentumSection() {
           }
         })
       ),
-      el('td', {},
+      el('td', { class: 'col-pin', 'data-field': 'pin' },
         el('button', {
           class: 'pin-btn' + (pinned ? ' active' : ''),
           title: pinned ? '取消固定' : '固定',
+          'aria-label': pinned ? `取消固定 ${item.name || item.code}` : `固定 ${item.name || item.code}`,
           on: {
             click: (e) => {
               e.stopPropagation();
@@ -1078,17 +815,23 @@ function renderMomentumSection() {
           }
         }, pinned ? '取消固定' : '固定')
       ),
-      el('td', { class: 'code' }, item.code),
-      el('td', {}, item.name || '-'),
-      el('td', { class: 'num up' }, formatPercent(item.gainPercent)),
-      el('td', { class: 'num' }, formatNumber(item.price)),
-      el('td', { class: `num ${dir}` }, formatPercent(item.changePercent)),
-      el('td', { class: 'num' }, formatAmount(item.amount)),
-      el('td', { class: 'momentum-industry' }, item.industry || '-'),
-      el('td', { class: 'momentum-reason', title: item.interpretation || item.reason || '' }, getMomentumReasonText(item))
+      el('td', { class: 'code', 'data-field': 'code' }, item.code),
+      el('td', { class: 'name', 'data-field': 'name' }, item.name || '-'),
+      el('td', { class: 'num up', 'data-field': 'gain' }, formatPercent(item.gainPercent)),
+      el('td', { class: 'num', 'data-field': 'price' }, formatNumber(item.price)),
+      el('td', { class: `num ${dir}`, 'data-field': 'percent' }, formatPercent(item.changePercent)),
+      el('td', { class: 'num', 'data-field': 'amount' }, formatAmount(item.amount)),
+      el('td', { class: 'momentum-industry', 'data-field': 'industry' }, item.industry || '-'),
+      el('td', { class: 'momentum-reason', 'data-field': 'reason', title: item.interpretation || item.reason || '' }, getMomentumReasonText(item))
     ));
     if (active) {
-      tbody.appendChild(renderMomentumChartRow(item, colCount));
+      tbody.appendChild(renderMomentumChartRow(item, colCount, {
+        momentumState: s,
+        defaultPeriod: DEFAULT_PERIOD,
+        onPeriodChange: handleMomentumKlinePeriodChange,
+        onForceReload: handleMomentumForceReloadChart,
+        onCloseChart: closeMomentumChart
+      }));
     }
   }
   table.appendChild(tbody);
@@ -1098,28 +841,13 @@ function renderMomentumSection() {
   }
 }
 
-function buildMomentumHeaderCheckbox(items) {
-  const codes = (items || []).map((it) => it.code).filter(Boolean);
-  const selectedCount = codes.filter((code) => state.momentum.selectedCodes.has(code)).length;
-  const input = el('input', {
-    type: 'checkbox',
-    id: 'momentum-select-all',
-    title: '全选/取消全选强势股',
-    checked: codes.length > 0 && selectedCount === codes.length,
-    on: {
-      click: (e) => e.stopPropagation(),
-      change: (e) => {
-        if (e.target.checked) {
-          state.momentum.selectedCodes = new Set(codes);
-        } else {
-          for (const code of codes) state.momentum.selectedCodes.delete(code);
-        }
-        renderMomentumSection();
-      }
-    }
-  });
-  input.indeterminate = selectedCount > 0 && selectedCount < codes.length;
-  return input;
+function handleMomentumSelectAllChange(checked, codes) {
+  if (checked) {
+    state.momentum.selectedCodes = new Set(codes);
+  } else {
+    for (const code of codes) state.momentum.selectedCodes.delete(code);
+  }
+  renderMomentumSection();
 }
 
 function handleMomentumToggleSelect(code, checked) {
@@ -1127,72 +855,6 @@ function handleMomentumToggleSelect(code, checked) {
   if (checked) state.momentum.selectedCodes.add(code);
   else state.momentum.selectedCodes.delete(code);
   renderMomentumSection();
-}
-
-function getMomentumReasonText(item) {
-  if (!item) return '-';
-  return item.reason || item.limitStats || item.anomaly || `10日涨幅${formatPercent(item.gainPercent)}`;
-}
-
-function renderMomentumChartRow(item, colCount) {
-  const inst = state.momentum.chartInstances.get(item.code);
-  const period = (inst && inst.period) || DEFAULT_PERIOD;
-  const tabs = el('div', { class: 'period-tabs' });
-  for (const p of Object.keys(PERIODS)) {
-    tabs.appendChild(el('button', {
-      class: 'period-tab momentum-period-tab' + (p === period ? ' active' : ''),
-      'data-period': p,
-      on: {
-        click: (e) => {
-          e.stopPropagation();
-          handleMomentumKlinePeriodChange(item.code, p);
-        }
-      }
-    }, PERIOD_LABELS[p]));
-  }
-  const status = el('div', { class: 'chart-status', id: `momentum-chart-status-${item.code}` });
-  const statusParts = [];
-  if (inst && inst.loading) statusParts.push('图表加载中...');
-  if (inst && inst.error) statusParts.push(`错误: ${inst.error}`);
-  if (inst && inst.klineData && !inst.loading && !inst.error) {
-    statusParts.push(`${PERIOD_LABELS[period] || period} · ${inst.klineData.items.length} 根`);
-  }
-  status.textContent = statusParts.join(' · ');
-  if (inst && inst.error) status.className = 'chart-status has-error';
-  const host = el('div', { class: 'momentum-chart-host chart-host', id: `momentum-chart-host-${item.code}` });
-  return el(
-    'tr',
-    { class: 'momentum-chart-row', 'data-momentum-chart-for': item.code },
-    el('td', { colspan: String(colCount), class: 'chart-td' },
-      el('div', { class: 'chart-inline-header' },
-        el('strong', {}, item.name || item.code),
-        el('span', { class: 'chart-inline-code' }, item.code),
-        tabs,
-        el('button', {
-          class: 'chart-reload',
-          title: '跳过缓存，从网络强制重新拉取',
-          on: {
-            click: (e) => {
-              e.stopPropagation();
-              handleMomentumForceReloadChart(item.code);
-            }
-          }
-        }, '重新加载'),
-        el('button', {
-          class: 'chart-close',
-          title: '关闭',
-          on: {
-            click: (e) => {
-              e.stopPropagation();
-              closeMomentumChart(item.code);
-            }
-          }
-        }, '关闭')
-      ),
-      status,
-      host
-    )
-  );
 }
 
 function handleMomentumRowClick(code, e) {
@@ -1521,16 +1183,16 @@ function renderTable() {
     el(
       'tr',
       {},
-      el('th', { class: 'col-check', title: '勾选用于批量删除/导出' }, buildWatchHeaderCheckbox()),
-      el('th', { class: 'col-sub', title: '勾选订阅语音播报与价格提醒' }, '🔊 订阅'),
-      el('th', {}, '代码'),
-      el('th', {}, '名称'),
-      el('th', { class: 'num' }, '现价'),
-      el('th', { class: 'num' }, '涨跌幅'),
-      el('th', { class: 'num' }, '开盘(涨幅)'),
-      el('th', { class: 'num', title: hasFuturesInList ? '股票显示量比，期货显示成交量' : '量比' }, hasFuturesInList ? '量比 / 量' : '量比'),
-      el('th', { class: 'num', title: hasFuturesInList ? '股票显示成交额，期货显示持仓量' : '成交额' }, hasFuturesInList ? '成交额 / 持仓' : '成交额'),
-      el('th', { class: 'col-op' }, '操作')
+      el('th', { class: 'col-check', 'data-field': 'check', title: '勾选用于批量删除/导出' }, buildWatchHeaderCheckbox()),
+      el('th', { class: 'col-sub', 'data-field': 'sub', title: '勾选订阅语音播报与价格提醒' }, '🔊 订阅'),
+      el('th', { class: 'code', 'data-field': 'code' }, '代码'),
+      el('th', { class: 'name', 'data-field': 'name' }, '名称'),
+      el('th', { class: 'num', 'data-field': 'price' }, '现价'),
+      el('th', { class: 'num', 'data-field': 'percent' }, '涨跌幅'),
+      el('th', { class: 'num', 'data-field': 'open' }, '开盘(涨幅)'),
+      el('th', { class: 'num', 'data-field': 'volume', title: hasFuturesInList ? '股票显示量比，期货显示成交量' : '量比' }, hasFuturesInList ? '量比 / 量' : '量比'),
+      el('th', { class: 'num', 'data-field': 'amount', title: hasFuturesInList ? '股票显示成交额，期货显示持仓量' : '成交额' }, hasFuturesInList ? '成交额 / 持仓' : '成交额'),
+      el('th', { class: 'col-op', 'data-field': 'op' }, '操作')
     )
   );
   table.appendChild(thead);
@@ -1921,9 +1583,16 @@ function handleSelectNone() {
   renderData();
 }
 
-function handleDeleteSelected() {
+async function handleDeleteSelected() {
   if (!state.selected.size) return;
-  if (!confirm(`确定删除选中的 ${state.selected.size} 个标的？`)) return;
+  const count = state.selected.size;
+  const ok = await showConfirmModal(`确定删除选中的 ${count} 个标的？`, {
+    title: '删除确认',
+    confirmText: '确定删除',
+    cancelText: '取消',
+    danger: true
+  });
+  if (!ok) return;
   const codes = [...state.selected];
   removeFromWatchList(codes);
   let subChanged = false;
@@ -3354,20 +3023,7 @@ function mergeQuotesIntoMomentumItems() {
 }
 
 function updateMomentumQuoteCells(code) {
-  const row = document.querySelector(`tr[data-momentum-code="${code}"]`);
-  if (!row) return;
-  const item = (state.momentum.items || []).find((it) => it && it.code === code);
-  if (!item) return;
-  const allCells = row.querySelectorAll('td');
-  if (allCells.length < 11) return;
-  const dir = priceDirection(Number(item.changePercent));
-  allCells[4].textContent = item.name || '-';
-  allCells[5].textContent = formatPercent(item.gainPercent);
-  allCells[6].textContent = formatNumber(item.price);
-  allCells[7].textContent = formatPercent(item.changePercent);
-  allCells[7].className = `num ${dir}`;
-  allCells[8].textContent = formatAmount(item.amount);
-  allCells[9].textContent = item.industry || '-';
+  updateMomentumQuoteCellsView(code, state.momentum.items || []);
 }
 
 function restartTimer() {

@@ -100,14 +100,24 @@ function buildSortHeader(label, sortKey, group, ctx, cls = '') {
   const active = sort && sort.key === sortKey;
   const dir = active ? sort.direction : '';
   const suffix = active ? (dir === 'asc' ? ' ↑' : ' ↓') : '';
+  const ariaSort = active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none';
   return el(
     'th',
     {
       class: `${cls} lu-sortable${active ? ' active' : ''}`.trim(),
       title: `按${label}排序`,
+      role: 'button',
+      tabindex: '0',
+      'aria-sort': ariaSort,
       on: {
         click: () => {
           if (typeof ctx.cb.sortGroup === 'function') ctx.cb.sortGroup(group.key, sortKey);
+        },
+        keydown: (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            if (typeof ctx.cb.sortGroup === 'function') ctx.cb.sortGroup(group.key, sortKey);
+          }
         }
       }
     },
@@ -142,6 +152,7 @@ function buildRow(item, ctx) {
     {
       class: 'pin-btn' + (isPinned ? ' active' : ''),
       title: isPinned ? '取消固定' : '固定',
+      'aria-label': isPinned ? `取消固定 ${item.name || item.code}` : `固定 ${item.name || item.code}`,
       on: {
         click: (e) => {
           e.stopPropagation();

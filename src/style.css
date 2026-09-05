@@ -1322,3 +1322,182 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   border-color: var(--up-color, #e74c3c) !important;
 }
 
+/* Custom Confirm Modal */
+.app-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  backdrop-filter: blur(2px);
+  animation: modal-fade-in 0.2s ease-out;
+}
+
+.app-modal-dialog {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  width: 90%;
+  max-width: 420px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modal-pop-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.app-modal-header {
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.app-modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-color);
+  margin: 0;
+}
+
+.app-modal-body {
+  padding: 20px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-color);
+}
+
+.app-modal-footer {
+  padding: 12px 20px 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  background: var(--hover-bg);
+  border-top: 1px solid var(--border-color);
+}
+
+.app-modal-btn {
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+}
+
+.app-modal-btn.btn-secondary {
+  background: transparent;
+  border-color: var(--border-color);
+  color: var(--text-color);
+}
+
+.app-modal-btn.btn-secondary:hover {
+  background: var(--card-bg);
+}
+
+.app-modal-btn.btn-primary {
+  background: var(--btn-bg);
+  color: #fff;
+}
+
+.app-modal-btn.btn-primary:hover {
+  background: var(--btn-hover);
+}
+
+.app-modal-btn.btn-danger {
+  background: var(--danger-color);
+  color: #fff;
+}
+
+.app-modal-btn.btn-danger:hover {
+  opacity: 0.9;
+}
+
+@keyframes modal-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modal-pop-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Responsive Styles for Mobile (<768px) */
+@media (max-width: 768px) {
+  body {
+    padding: 10px;
+  }
+
+  .app-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .header-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .toolbar .input-group,
+  .toolbar input[type="text"] {
+    width: 100%;
+  }
+
+  .list-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .table-wrap,
+  .momentum-table-wrap,
+  .lu-group-body {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    width: 100%;
+  }
+
+  /* Watch table mobile column folding */
+  .watch-table th[data-field="open"],
+  .watch-table td[data-field="open"],
+  .watch-table th[data-field="volume"],
+  .watch-table td[data-field="volume"] {
+    display: none;
+  }
+
+  /* Limit-up table mobile column folding */
+  .lu-table th.lu-open,
+  .lu-table td.lu-open,
+  .lu-table th.lu-ratio,
+  .lu-table td.lu-ratio,
+  .lu-table th.lu-amount,
+  .lu-table td.lu-amount {
+    display: none;
+  }
+
+  /* Momentum table mobile column folding */
+  .momentum-table th[data-field="amount"],
+  .momentum-table td[data-field="amount"],
+  .momentum-table th[data-field="industry"],
+  .momentum-table td[data-field="industry"] {
+    display: none;
+  }
+
+  .watch-table th,
+  .watch-table td,
+  .lu-table th,
+  .lu-table td,
+  .momentum-table th,
+  .momentum-table td {
+    padding: 8px 6px;
+    font-size: 13px;
+  }
+}
+
