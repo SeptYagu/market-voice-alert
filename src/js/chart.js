@@ -64,6 +64,21 @@ function _timeScaleOptions(c, period = '1d') {
   };
 }
 
+// Intraday (分时) charts: both edges pinned to the session bounds (9:30 and
+// 15:00) and panning/zooming disabled — the full session is always visible.
+function _intradayTimeScaleOptions(c) {
+  return {
+    ..._timeScaleOptions(c, '1m'),
+    fixLeftEdge: true,
+    fixRightEdge: true,
+    lockVisibleTimeRangeOnResize: true,
+    leftOffset: 0,
+    rightOffset: 0,
+    handleScroll: false,
+    handleScale: false
+  };
+}
+
 export function buildChartOptions({ width, height, theme, period } = {}) {
   const c = getChartThemeColors(theme);
   return {
@@ -417,6 +432,7 @@ export function createIntradayChart(container, opts = {}) {
   let symmetricPriceRange = null;
   let symmetricPercentRange = null;
   const chart = createChart(container, buildChartOptions({ width, height, theme: currentTheme, period: '1m' }));
+  chart.applyOptions({ timeScale: _intradayTimeScaleOptions(colors) });
   const priceSeries = chart.addLineSeries({
     priceScaleId: 'left',
     color: INTRADAY_PRICE_COLOR,
@@ -547,7 +563,7 @@ export function createIntradayChart(container, opts = {}) {
     const isFutureTimeline = opts.isFuture || hasNonStockHours;
     const timeline = [];
     if (date && !isFutureTimeline) {
-      for (const [startHour, startMinute, endHour, endMinute] of [[9, 31, 11, 30], [13, 1, 15, 0]]) {
+      for (const [startHour, startMinute, endHour, endMinute] of [[9, 30, 11, 30], [13, 0, 15, 0]]) {
         const start = startHour * 60 + startMinute;
         const end = endHour * 60 + endMinute;
         for (let minute = start; minute <= end; minute++) {
@@ -668,6 +684,7 @@ export function createIntradayChart(container, opts = {}) {
       theme: currentTheme,
       period: '1m'
     }));
+    chart.applyOptions({ timeScale: _intradayTimeScaleOptions(c) });
     priceSeries.applyOptions({ color: INTRADAY_PRICE_COLOR });
     averageSeries.applyOptions({ color: INTRADAY_AVG_COLOR });
     volumeSeries.applyOptions({ color: c.up });

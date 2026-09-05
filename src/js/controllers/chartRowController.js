@@ -93,7 +93,9 @@ export function applyKlineDataToChart(ctl, inst, data) {
 export function applyIntradayDataToChart(ctl, inst, data) {
   if (!ctl || !inst || !data || !Array.isArray(data.items)) return;
   ctl.setData(data.items);
-  restoreRangeOrFit(ctl, inst._intradayVisibleRange);
+  // The intraday time scale pins both edges to the session bounds and
+  // disables panning, so every load just refits the full 9:30-15:00 session.
+  if (typeof ctl.fitContent === 'function') ctl.fitContent();
 }
 
 export function applyLiveTickToKlineChart(ctl, inst, quoteOrPrice) {
@@ -309,10 +311,9 @@ export class ChartRowManager {
   rememberRanges(code) {
     const inst = this.getInst(code);
     if (!inst) return;
+    // Only the kline chart restores a remembered range; the intraday chart
+    // is edge-pinned and always refits, so its range is not remembered.
     rememberRange(inst, this.klineCtlMap.get(code), '_visibleRange');
-    if (this.hasIntraday) {
-      rememberRange(inst, this.intradayCtlMap.get(code), '_intradayVisibleRange');
-    }
   }
 
   async loadKline(code, { force = false } = {}) {

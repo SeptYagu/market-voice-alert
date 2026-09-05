@@ -105,6 +105,35 @@ function prevCloseKey(prevClose) {
   return String(value.toFixed(4)).replace(/\./g, 'p');
 }
 
+function beijingStamp(ms) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).formatToParts(new Date(Number(ms)));
+  const pick = (type) => Number(parts.find((p) => p.type === type)?.value || 0);
+  return {
+    date: `${pick('year')}-${String(pick('month')).padStart(2, '0')}-${String(pick('day')).padStart(2, '0')}`,
+    minutes: pick('hour') * 60 + pick('minute')
+  };
+}
+
+// A snapshot captured while the session was still running only contains part
+// of the day (e.g. fetched at 10:30 -> chart shows "morning only" forever,
+// and its last close never matches the daily K-line). Snapshots generated on
+// a later day, or after 15:05 Beijing, are treated as complete archives.
+function isHistoricalSnapshotComplete(generatedAtMs, dateDash) {
+  const n = Number(generatedAtMs);
+  if (!Number.isFinite(n) || n <= 0) return false;
+  const stamp = beijingStamp(n);
+  if (stamp.date !== dateDash) return true;
+  return stamp.minutes >= 15 * 60 + 5;
+}
+
 async function readHistoricalCache(parts, ttlMs) {
   const cached = await readCache(parts);
   if (!cached || !Object.prototype.hasOwnProperty.call(cached, 'data')) return null;
@@ -232,9 +261,33 @@ export async function getCachedIntraday({
     if (!historical) {
       historical = await readHistoricalCache(['intraday', code, `${dateKey}-latest-${safePrevClose}.json`], INTRADAY_TTL_MS);
     }
-    if (historical) {
+    if (historical && isHistoricalSnapshotComplete(historical.generatedAt, selectedDate)) {
       historical.data = { ...historical.data, name: name || historical.data.name || code };
       return historical;
+    }
+    if (historical) {
+      // Mid-session snapshot frozen in cache: re-archive the complete session
+      // from the historical network sources. getOrRefresh falls back to the
+      // stale snapshot when every upstream fails, so the chart stays usable.
+      const refreshed = await getOrRefresh(
+        parts,
+        INTRADAY_TTL_MS,
+        () => fetchIntradayNetwork({
+          code,
+          name: safeName,
+          date: selectedDate,
+          prevClose,
+          signal
+        }, false),
+        { skipPrune: true }
+      );
+      return {
+        ...refreshed,
+        data: {
+          ...refreshed.data,
+          name: name || refreshed.data.name || code
+        }
+      };
     }
   }
 

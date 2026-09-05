@@ -51,10 +51,37 @@ export async function handleCacheRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
   const path = url.pathname.replace(/\/+$/, '') || '/';
   if (req.method === 'POST' && path === '/api/cache/momentum/ten-day/scan') {
-    const hostHeader = (req.headers.host || '').toLowerCase();
-    const isLocalHost = hostHeader.startsWith('127.0.0.1') || hostHeader.startsWith('localhost') || hostHeader.startsWith('[::1]');
-    if (!isLocalHost) {
-      jsonResponse(res, 403, errorEnvelope('Forbidden: Host must be local'));
+    // Guard against CSRF and DNS rebinding (review item B1). The scan endpoint
+    // triggers thousands of upstream requests, so only trusted origins may
+    // start it: loopback hosts, private-network (LAN) addresses reached
+    // same-origin (e.g. http://192.168.x.x:3001 from another home device),
+    // plus an optional env allowlist for domain-based access.
+    // A DNS-rebinding page keeps its public Host/Origin hostname, which is
+    // neither a private IP nor same-host-with-private-IP, so it stays blocked.
+    const allowedHosts = (process.env.MOMENTUM_SCAN_ALLOWED_HOSTS || '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const hostHeader = (req.headers.host || '').toLowerCase().trim();
+    const hostHostname = hostHeader.replace(/:\d+$/, '').replace(/^\[/, '').replace(/\]$/, '');
+    const isLoopbackHost = ['127.0.0.1', 'localhost', '::1'].includes(hostHostname);
+    const isPrivateIpHost = (() => {
+      const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostHostname);
+      if (!m) return false;
+      const a = Number(m[1]);
+      const b = Number(m[2]);
+      if (a === 127 || a === 10) return true;
+      if (a === 192 && b === 168) return true;
+      if (a === 172 && b >= 16 && b <= 31) return true;
+      if (a === 169 && b === 254) return true;
+      return false;
+    })();
+    const hostAllowed = isLoopbackHost || isPrivateIpHost || allowedHosts.includes(hostHostname);
+    if (!hostAllowed) {
+      jsonResponse(res, 403, errorEnvelope(
+        `Forbidden: Scan requests are only allowed from localhost or a private-network host (got Host "${hostHeader || '(missing)'}"). ` +
+        'For domain-based access, add the hostname to the MOMENTUM_SCAN_ALLOWED_HOSTS env var.'
+      ));
       return;
     }
     const origin = req.headers.origin || req.headers.referer;
@@ -62,7 +89,10 @@ export async function handleCacheRequest(req, res) {
       try {
         const originUrl = new URL(origin);
         const originHost = originUrl.hostname.toLowerCase();
-        if (originHost !== '127.0.0.1' && originHost !== 'localhost' && originHost !== '::1') {
+        const originIsLoopback = ['127.0.0.1', 'localhost', '::1'].includes(originHost);
+        const sameHost = originHost === hostHostname;
+        const loopbackPair = isLoopbackHost && originIsLoopback;
+        if (!sameHost && !loopbackPair) {
           jsonResponse(res, 403, errorEnvelope('Forbidden: Cross-origin scan request rejected'));
           return;
         }
