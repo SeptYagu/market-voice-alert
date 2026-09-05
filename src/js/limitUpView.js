@@ -3,7 +3,8 @@ import {
   formatNumber,
   formatAmount,
   formatPercent,
-  LIMIT_UP_REFRESH_OPTIONS
+  LIMIT_UP_REFRESH_OPTIONS,
+  intradaySourceLabel
 } from './format.js';
 import { PERIODS, PERIOD_LABELS } from './kline.js';
 import { sortLimitUpGroupItems } from './limitUp.js';
@@ -32,15 +33,6 @@ function autoRefreshButtonText(state) {
 function autoRefreshButtonTitle(state) {
   if (!isAutoRefreshEnabled(state)) return '开始自动刷新';
   return state.autoRefreshPausedBySchedule ? '非交易时段，自动刷新将在开盘后恢复' : '停止自动刷新';
-}
-
-function intradaySourceLabel(source) {
-  if (source === 'aktools-stock_intraday_em') return 'AKTools成交';
-  if (source === 'aktools-stock_zh_a_hist_min_em') return 'AKTools分钟';
-  if (source === 'eastmoney-trends2') return '东财分时';
-  if (source === 'eastmoney-kline-1m') return '分时(1分K)';
-  if (source === 'eastmoney-kline-1m-cache') return '分时缓存(1分K)';
-  return source ? String(source) : '';
 }
 
 function buildIntradayStatusParts(inst) {

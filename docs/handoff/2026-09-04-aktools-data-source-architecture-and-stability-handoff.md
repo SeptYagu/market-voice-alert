@@ -1,7 +1,7 @@
-# 2026-09-04 AKTools 数据源稳定性根因分析、全功能评估与架构演进方案交接文档 (v2 修订版)
+# 2026-09-04 AKTools 数据源稳定性根因分析、全功能评估与架构演进方案交接文档 (v2.1 修订版)
 
 > **交接日期**：2026-09-04  
-> **文档版本**：v2.0（吸收对端深度审查与实测反馈全面修正）  
+> **文档版本**：v2.1（代码实现、接口默认值、模块收敛与架构取舍完整对齐版）  
 > **基线分支**：`main`  
 > **前序文档**：  
 > - [`docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md`](./2026-09-04-code-review-defects-and-architecture-refactor-handoff.md)  
@@ -130,8 +130,8 @@
 | **涨停看板** | 连板数、炸板统计、首次/最后封板时间、所属行业、涨停原因/龙虎榜、历史回溯 | **AKTools 主源**<br>(`stock_zt_pool_em` / `stock_lhb_detail_em`) | **100%** | **零牺牲**。<br>这是 AKTools 的无可替代的核心长板，百余条数据本地处理快、字段全真值。 |
 | **当日分时** | 241 点分时蓝线、**分时均价黄线 (VWAP)**、昨收 0% 中轴、成交量柱、双 Y 轴 | **东财直连 trends2**<br>(Node/Vite 代理) | **100%** | **不仅无牺牲，质量大幅超越 AKTools**：<br>① **真 VWAP 均价线**：东财 trends2 自带交易所逐笔计算的 `avgPrice`，AKTools 分钟线无均价线；<br>② **真实成交额**：trends2 为累积成交额，AKTools 为单点乘积估算；<br>③ **响应极快**：150ms 闪开，免除 AKTools 的 3~5 秒等待甚至 500 报错。 |
 | **历史分时** | 涨停看板切换前交易日、查看历史分时走势与量能 | **东财 1m K 线 / AKTools 历史分钟**<br>(服务端/浏览器持久化缓存) | **100%**<br>*(由 95% 提升)* | **零牺牲（自主累积计算 VWAP）**：<br>东财 1m K 线虽无直接的 `avgPrice` 字段，但每根 K 线自带完整的 `volume` 与 `amount`。通过公式 $\text{avgPrice}_t = \frac{\sum \text{amount}}{\sum \text{volume}}$，**完全可在降级或历史路径中自主计算出高精度 VWAP 均价线**，彻底恢复黄线绘制，消除“均价不可用”的短板。 |
-| **全市场选股** | 10 日涨幅池每日自动扫描与排序（5,000+ 股） | **腾讯批量并发快照**<br>(`fetchTencentSpot`) | **100%**<br>*(需补齐 Universe)* | **有条件无牺牲（需注意股票池来源）**：<br>① **性能提升**：腾讯并发 2~3 秒完成，AKTools 需 35+ 秒；<br>② **覆盖面注意点**：当前降级代码中的 `getKlineCacheUniverse` 仅扫描本地 `cachePath('kline')` 目录，会漏掉未缓存新股。**必须建立全市场 Universe 种子机制**（如全量代码表文件），方可达成真正无遗漏的“零牺牲”。 |
-| **境内期货** | 中金所/商品期货实时报价、涨跌幅、持仓量、五档买卖盘、日内分时、日 K | **新浪官方直连源**<br>(`hq.sinajs.cn` + `InnerFuturesNewService`) | **100%** | **修复了 AKTools 的严重 Bug，达成真全功能**：<br>① 彻底解决 AKTools 中金所金融期货漏昨收/昨结导致涨跌幅恒为 0% 的重大 Bug；<br>② 新浪自带五档买卖盘与分时均价线，毫秒级响应。 |
+| **全市场选股** | 10 日涨幅池每日自动扫描与排序（5,000+ 股） | **AKTools 首探 + 腾讯批量并发兜底**<br>(`server/spotService.js`) | **100%**<br>*(双源互补)* | **权衡决策与零牺牲路径**：<br>① **为何保留 AKTools 优先**：AKTools 单次调用 `stock_zh_a_spot_em` 即可动态拉取全市场 5,000+ 股（天然包含未建立 K 线缓存的冷门/新股）；因此作为首选探测（设置 5s 超时）；<br>② **腾讯极速兜底**：一旦 AKTools 响应超时或服务离线，无缝切换腾讯批量并发（2~3 秒完成），优先读取 `universe.json` 种子池并聚合本地 K 线目录，确保全天候稳定可用。 |
+| **境内期货** | 中金所/商品期货实时报价、涨跌幅、持仓量、五档买卖盘、日内分时、日 K | **新浪官方直连主源 + AKTools 备用**<br>(`server/futures/futuresQuoteService.js`) | **100%** | **修复了 AKTools 严重缺陷，达成真全功能**：<br>① **消除 4s 挂起**：`fetchFuturesQuoteRaw` 优先直连新浪（毫秒级极速响应），仅当新浪异常时才回退至 AKTools；<br>② **根除 0% Bug**：新浪提供完整的昨收/昨结与五档盘口，彻底杜绝 AKTools 中金所金融期货缺失基准价导致的涨跌幅 0.00% 异常。 |
 | **自选监控** | 3 秒高频刷新、价格红绿跳动、TTS 语音播报 | **腾讯实时行情主源 + 东财备源** | **100%** | **零牺牲**。原本设计即为直接代理，不经过 AKTools。 |
 
 ---
@@ -177,17 +177,18 @@ flowchart TD
 
 ---
 
-## 5. 落地实施与代码修复清单 (Remediation Checklist - v2 修订版)
+## 5. 落地实施与代码修复清单 (Remediation Checklist - v2.1 修订版)
 
-### 5.1 修复前端误导性标签
+### 5.1 修复前端误导性标签并收敛为单一模块
 - **涉及文件**：
-  - [`src/js/app.js:1754-1761`](../../src/js/app.js#L1754-L1761)
-  - [`src/js/controllers/chartRowController.js:151-155`](../../src/js/controllers/chartRowController.js#L151-L155)
-  - [`src/js/limitUpView.js:39-44`](../../src/js/limitUpView.js#L39-L44)
+  - 统一标签定义：[`src/js/format.js`](../../src/js/format.js)
+  - 图表管理器向后兼容导出：[`src/js/controllers/chartRowController.js`](../../src/js/controllers/chartRowController.js)
+  - 视图模块引用：[`src/js/app.js`](../../src/js/app.js)、[`src/js/limitUpView.js`](../../src/js/limitUpView.js)
 - **修改内容**：
   - 将 `eastmoney-trends2` 的文案从 **“东财备用”** 改为 **“东财分时”**；
   - 将 `eastmoney-kline-1m` 改为 **“分时(1分K)”**；
-  - 将 `eastmoney-kline-1m-cache` 改为 **“分时缓存(1分K)”**。
+  - 将 `eastmoney-kline-1m-cache` 改为 **“分时缓存(1分K)”**；
+  - **消除多处重复**：原先分散在 `app.js`、`chartRowController.js`、`limitUpView.js` 3 处各自维护的 `intradaySourceLabel`，全部统一下沉至 `format.js` 单一模块，`chartRowController.js` 保留 re-export 以向后兼容现有测试，彻底消除手工同步风险。
 
 ### 5.2 补全历史 1 分钟分时 VWAP 累积均价线
 - **涉及文件**：
@@ -196,20 +197,22 @@ flowchart TD
 - **修改内容**：
   在 `decorateKlineIntraday` 循环中增加成交量与成交额累加器，当条目无原生均价时，通过 `cumAmount / (cumVolume * 100)` 动态推算 `avgPrice`，彻底恢复历史分时图黄线显示。
 
-### 5.3 软停用已失效的东财 SSE 分时接口（双端同步清理）
+### 5.3 软停用已失效的东财 SSE 分时接口（双端严格收紧默认值）
 - **涉及文件**：
-  - 浏览器端 fallback：[`src/js/api.js:297-306`](../../src/js/api.js#L297-L306)（当 `sharedCache !== true` 时）
-  - 服务端调度：[`server/intradayService.js:111-117`](../../server/intradayService.js#L111-L117)
+  - 浏览器端调度：[`src/js/api.js:317-332`](../../src/js/api.js#L317-L332)
+  - 服务端调度：[`server/intradayService.js:133-143`](../../server/intradayService.js#L133-L143)
 - **修改内容**：
-  在两端增加特性开关 `ENABLE_AKTOOLS_INTRADAY_TICKS = false` 软停用 `fetchAktoolsIntradayTicks`。保留接口代码与解析器，并在代码处添加注释说明原因（因东财网关拦截报 500 暂时旁路，方便上游修复后一键恢复）。
+  - 服务端增加环境变量 `ENABLE_AKTOOLS_INTRADAY_TICKS` 控制，默认关闭；
+  - 浏览器端 `allowTick` 在调用方未显式传入开关时，默认回落收紧为 `false`（防范漏传参数时意外触发失效的 SSE tick 接口导致瀑布流降级延迟）；
+  - 保留接口代码与解析器，并在代码处添加注释说明原因（因东财网关拦截报 500 暂时旁路，方便上游修复后一键恢复）。
 
-### 5.4 规范快照服务与期货数据源优先级
+### 5.4 规范快照服务与期货数据源优先级（代码与文档完全对齐）
 - **涉及文件**：
-  - 快照服务核心：[`server/spotService.js:7-46`](../../server/spotService.js#L7-L46)（注：原报告误写为 `momentumService.js`，此处已修正）
-  - 期货实时行情：[`server/futures/futuresQuoteService.js:51-80`](../../server/futures/futuresQuoteService.js#L51-L80)
+  - 快照服务核心：[`server/spotService.js:7-68`](../../server/spotService.js#L7-L68)
+  - 期货实时行情：[`server/futures/futuresQuoteService.js:111-117`](../../server/futures/futuresQuoteService.js#L111-L117)
 - **修改内容**：
-  - 在 `server/spotService.js` 中优化 Universe 提取逻辑，增强种子池来源（避免未建立 K 线缓存的新股漏扫）；
-  - 期货实时快照优先调用新浪直连，规避 AKTools 金融期货昨收字段缺失 Bug。
+  - 在 `server/spotService.js` 中明确架构决策：保留 AKTools 5s 超时首探以动态覆盖全市场 5,000+ 标的；腾讯批量并发作为极速兜底（优先读取 `universe.json` 种子并聚合本地 K 线目录），兼顾动态全量与极端情况的高可用；
+  - 在 `server/futures/futuresQuoteService.js` 中将 `fetchFuturesQuoteRaw` 实施为**新浪直连优先、AKTools 备用兜底**，代码与文档完全一致，消除每轮 4s 挂起，且彻底杜绝中金所昨收字段缺失 Bug。
 
 ---
 

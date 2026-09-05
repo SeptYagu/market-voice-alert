@@ -110,9 +110,9 @@ async function fetchFromAktools(inst) {
 
 export async function fetchFuturesQuoteRaw(inst) {
   try {
-    return await fetchFromAktools(inst);
-  } catch (_e) {
     return await fetchFromSina(inst);
+  } catch (_e) {
+    return await fetchFromAktools(inst);
   }
 }
 

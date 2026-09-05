@@ -318,8 +318,8 @@ export async function fetchIntraday(code, opts = {}) {
   // which is frequently blocked/reset (RemoteDisconnected -> HTTP 500).
   // Can be controlled via opts.enableAktoolsIntradayTicks when direct client fetch is performed.
   const allowTick = opts.enableAktoolsIntradayTicks !== undefined
-    ? opts.enableAktoolsIntradayTicks
-    : (opts.allowLatestTickSource !== false);
+    ? Boolean(opts.enableAktoolsIntradayTicks)
+    : Boolean(opts.allowLatestTickSource === true);
   if (allowTick && opts.sharedCache !== true) {
     try {
       const tickData = await fetchAktoolsIntradayTicks(common);
