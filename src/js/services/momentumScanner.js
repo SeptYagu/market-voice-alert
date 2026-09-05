@@ -68,7 +68,7 @@ export async function fetchMomentumUniverse({ signal, watchList = [], limitUpIte
 
 export async function scanMomentumCandidate(candidate, { signal, limitUpItems = [] } = {}) {
   if (!candidate || !/^(sh|sz|bj)\d{6}$/i.test(candidate.code)) return null;
-  const data = await fetchKline(candidate.code, { period: '1d', signal, sharedCache: true });
+  const data = await fetchKline(candidate.code, { period: '1d', signal, sharedCache: true, revalidate: false });
   const stats = computeTenDayMomentum(data);
   if (!stats || stats.gainPercent < MOMENTUM_THRESHOLD_PCT) return null;
   const limitUpItem = (limitUpItems || []).find((it) => it && it.code === candidate.code);

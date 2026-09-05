@@ -426,6 +426,9 @@ export function startTenDayMomentumScan({ date, threshold: rawThreshold, reason 
   if (JOBS.has(jobKey)) {
     const existing = JOBS.get(jobKey);
     if (existing && existing.startedAt && (nowMs() - existing.startedAt > 10 * 60 * 1000)) {
+      if (existing.controller) {
+        try { existing.controller.abort(); } catch { /* ignore */ }
+      }
       JOBS.delete(jobKey);
     } else if (existing && existing.promise) {
       return existing.promise;
@@ -482,7 +485,7 @@ export function startTenDayMomentumScan({ date, threshold: rawThreshold, reason 
         JOBS.delete(jobKey);
       }
     });
-  JOBS.set(jobKey, { promise: job, startedAt });
+  JOBS.set(jobKey, { promise: job, startedAt, controller });
   return JOBS.get(jobKey).promise;
 }
 

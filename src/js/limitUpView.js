@@ -191,24 +191,24 @@ function buildRow(item, ctx) {
         }
       }
     },
-    el('td', { class: 'lu-check' }, cb),
-    el('td', { class: 'lu-pin' }, pinBtn),
-    el('td', { class: 'lu-code' }, item.code),
+    el('td', { class: 'lu-check', 'data-field': 'check' }, cb),
+    el('td', { class: 'lu-pin', 'data-field': 'pin' }, pinBtn),
+    el('td', { class: 'lu-code', 'data-field': 'code' }, item.code),
     el(
       'td',
-      { class: 'lu-name' },
+      { class: 'lu-name', 'data-field': 'name' },
       item.name || '-',
       item.isST ? el('span', { class: 'lu-st-badge', title: 'ST / *ST 股票' }, 'ST') : null
     ),
-    el('td', { class: 'lu-count num' }, `${item.limitUpCount || 0} 板`),
-    el('td', { class: 'lu-price num' }, formatNumber(item.price)),
-    el('td', { class: `lu-pct num ${direction}` }, formatPercent(item.changePercent)),
-    el('td', { class: 'lu-open num' }, formatNumber(item.open)),
-    el('td', { class: 'lu-ratio num' }, formatNumber(item.volumeRatio)),
-    el('td', { class: 'lu-amount num' }, formatAmount(item.amount)),
-    el('td', { class: 'lu-final num' }, item.lastLimitTime || '-'),
-    el('td', { class: 'lu-break num' }, String(item.breakCount || 0)),
-    el('td', { class: 'lu-reason', title: item.interpretation || '无龙虎榜信息' }, item.reason || '—')
+    el('td', { class: 'lu-count num', 'data-field': 'count' }, `${item.limitUpCount || 0} 板`),
+    el('td', { class: 'lu-price num', 'data-field': 'price' }, formatNumber(item.price)),
+    el('td', { class: `lu-pct num ${direction}`, 'data-field': 'percent' }, formatPercent(item.changePercent)),
+    el('td', { class: 'lu-open num', 'data-field': 'open' }, formatNumber(item.open)),
+    el('td', { class: 'lu-ratio num', 'data-field': 'ratio' }, formatNumber(item.volumeRatio)),
+    el('td', { class: 'lu-amount num', 'data-field': 'amount' }, formatAmount(item.amount)),
+    el('td', { class: 'lu-final num', 'data-field': 'final' }, item.lastLimitTime || '-'),
+    el('td', { class: 'lu-break num', 'data-field': 'break' }, String(item.breakCount || 0)),
+    el('td', { class: 'lu-reason', 'data-field': 'reason', title: item.interpretation || '无龙虎榜信息' }, item.reason || '—')
   );
 }
 

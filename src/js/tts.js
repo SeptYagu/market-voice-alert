@@ -121,7 +121,8 @@ export function formatQuoteSpeech(quote, fields, fieldsOrder) {
     name: () => baseName,
     price: () => {
       const unit = quote.type === 'future' ? '' : ' 元';
-      return `现价 ${price.toFixed(2)}${unit}`;
+      const decimals = quote.type === 'future' && ((quote.priceTick && quote.priceTick < 0.01) || quote.priceDecimals === 3) ? 3 : 2;
+      return `现价 ${price.toFixed(decimals)}${unit}`;
     },
     percent: () => {
       const pct = Number(quote.changePercent);

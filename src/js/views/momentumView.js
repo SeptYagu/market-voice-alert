@@ -4,8 +4,7 @@ import {
   formatNumber,
   formatPercent,
   formatAmount,
-  priceDirection,
-  intradaySourceLabel
+  priceDirection
 } from '../format.js';
 import { PERIODS, PERIOD_LABELS } from '../kline.js';
 import { chartTimeToDate } from '../time.js';
@@ -123,6 +122,7 @@ export function renderMomentumChartRow(item, colCount, ctx) {
     'button',
     {
       class: 'btn-reload-chart',
+      id: `momentum-chart-reload-${item.code}`,
       title: '从网络强制重新拉取',
       on: { click: () => onForceReload && onForceReload(item.code) }
     },
@@ -157,8 +157,7 @@ export function renderMomentumChartRow(item, colCount, ctx) {
     closeBtn
   );
 
-  const status = el('div', { class: 'chart-status', id: `chart-status-momentum-${item.code}` });
-  const intradayStatus = el('div', { class: 'chart-status', id: `chart-status-momentum-intraday-${item.code}` });
+  const status = el('div', { class: 'chart-status', id: `momentum-chart-status-${item.code}` });
   const statusParts = [];
   if (inst && inst.loading) statusParts.push('图表加载中...');
   if (inst && inst.error) statusParts.push(`错误: ${inst.error}`);
@@ -168,48 +167,18 @@ export function renderMomentumChartRow(item, colCount, ctx) {
   status.textContent = statusParts.join(' · ');
   if (inst && inst.error) status.className = 'chart-status has-error';
 
-  const intradayParts = [];
-  if (inst && inst.intradayLoading) intradayParts.push('分时加载中...');
-  if (inst && inst.intradayError) intradayParts.push(`分时错误: ${inst.intradayError}`);
-  if (inst && inst.intradayData && Array.isArray(inst.intradayData.items) && inst.intradayData.items.length) {
-    const items = inst.intradayData.items;
-    const last = items[items.length - 1] || {};
-    const source = intradaySourceLabel(inst.intradayData.source);
-    const summary = [`${inst.selectedTradeDate || ''} · ${items.length} 点`];
-    if (Number.isFinite(Number(last.close))) summary.push(formatNumber(last.close));
-    if (Number.isFinite(Number(last.percent))) summary.push(formatPercent(last.percent));
-    if (source) summary.push(source);
-    intradayParts.push(summary.join(' · '));
-  } else if (!inst || (!inst.intradayLoading && !inst.intradayError)) {
-    intradayParts.push(inst && inst.selectedTradeDate ? `${inst.selectedTradeDate} · 暂无分时` : '点击右侧日K查看分时');
-  }
-  intradayStatus.textContent = intradayParts.join(' · ');
-  if (inst && inst.intradayError) intradayStatus.className = 'chart-status has-error';
-
-  const intradayHost = el('div', { class: 'chart-host', id: `chart-host-momentum-intraday-${item.code}` });
-  const host = el('div', { class: 'chart-host', id: `chart-host-momentum-${item.code}` });
-  const split = el(
+  const host = el('div', { class: 'chart-host', id: `momentum-chart-host-${item.code}` });
+  const pane = el(
     'div',
-    { class: 'chart-split' },
-    el('section', { class: 'chart-pane chart-pane-intraday' },
-      el(
-        'div',
-        { class: 'chart-pane-title' },
-        el('span', {}, '分时图'),
-        el('span', { class: 'intraday-legend intraday-legend-price' }, '价格'),
-        el('span', { class: 'intraday-legend intraday-legend-average' }, '均价')
-      ),
-      intradayStatus,
-      intradayHost
-    ),
-    el('section', { class: 'chart-pane chart-pane-kline' },
+    { class: 'chart-split momentum-chart-split' },
+    el('section', { class: 'chart-pane chart-pane-kline momentum-kline-pane', style: 'width: 100%;' },
       el('div', { class: 'chart-pane-title' }, 'K线图'),
       status,
       host
     )
   );
 
-  const td = el('td', { colspan: String(colCount), class: 'chart-td' }, header, split);
+  const td = el('td', { colspan: String(colCount), class: 'chart-td' }, header, pane);
   return el('tr', { class: 'chart-row momentum-chart-row', 'data-chart-for': item.code }, td);
 }
 

@@ -369,7 +369,7 @@ export class ChartRowManager {
       inst.loading = false;
       this.updateKlineStatus(code);
     } finally {
-      if (this.isExpanded(code)) {
+      if (this.isExpanded(code) && this.getInst(code) === inst) {
         this.setInst(code, inst);
         this.onStateChange(code);
       }
@@ -416,7 +416,7 @@ export class ChartRowManager {
       inst.intradayLoading = false;
       this.updateIntradayStatus(code);
     } finally {
-      if (this.isExpanded(code)) {
+      if (this.isExpanded(code) && this.getInst(code) === inst) {
         this.setInst(code, inst);
         this.updateIntradayStatus(code);
       }

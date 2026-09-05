@@ -82,4 +82,49 @@ test.describe('监控页', () => {
     await expect(page.locator('tr[data-code="rb2510"] .name')).toContainText('螺纹钢2510', { timeout: DEFAULT_TIMEOUT });
     await expect(page.locator('tr[data-code="rb2510"]')).toContainText('持仓', { timeout: DEFAULT_TIMEOUT });
   });
+
+  test('10日强势股行点击展开图表并挂载 Canvas (F-P0-1 验证)', async ({ page }) => {
+    await page.route('**/api/cache/momentum/ten-day**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          source: 'cache',
+          data: {
+            status: 'complete',
+            date: '20260605',
+            threshold: 45,
+            lookbackDays: 10,
+            universeSize: 1,
+            scanned: 1,
+            items: [
+              {
+                code: 'sh600519',
+                name: '贵州茅台',
+                gainPercent: 48.5,
+                price: 2000,
+                changePercent: 5.2,
+                amount: 8000000000,
+                industry: '白酒',
+                reason: '消费复苏'
+              }
+            ]
+          }
+        })
+      });
+    });
+
+    await page.goto('http://127.0.0.1:5173/');
+    await page.getByRole('button', { name: '扫描', exact: true }).click();
+    const row = page.locator('tr[data-momentum-code="sh600519"]');
+    await expect(row).toBeVisible({ timeout: DEFAULT_TIMEOUT });
+    await row.click();
+    const chartRow = page.locator('tr.momentum-chart-row[data-chart-for="sh600519"]');
+    await expect(chartRow).toBeVisible({ timeout: DEFAULT_TIMEOUT });
+    const host = page.locator('#momentum-chart-host-sh600519');
+    await expect(host).toBeVisible({ timeout: DEFAULT_TIMEOUT });
+    await expect(host.locator('canvas').first()).toBeVisible({ timeout: DEFAULT_TIMEOUT });
+  });
 });
+

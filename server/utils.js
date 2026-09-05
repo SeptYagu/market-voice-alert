@@ -38,9 +38,18 @@ export async function fetchWithTimeout(url, options = {}) {
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signals = [timeoutSignal];
   if (upstreamSignal) signals.push(upstreamSignal);
-  const signal = typeof AbortSignal.any === 'function'
-    ? AbortSignal.any(signals)
-    : timeoutSignal;
+  let signal;
+  if (typeof AbortSignal.any === 'function') {
+    signal = AbortSignal.any(signals);
+  } else if (upstreamSignal) {
+    const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    timeoutSignal.addEventListener('abort', onAbort, { once: true });
+    upstreamSignal.addEventListener('abort', onAbort, { once: true });
+    signal = controller.signal;
+  } else {
+    signal = timeoutSignal;
+  }
 
   const { timeoutMs: _timeoutMs, signal: _signal, ...fetchOptions } = options;
   try {
@@ -62,7 +71,7 @@ export function normalizeCodeParam(raw) {
   if (/^\d{6}$/.test(s)) {
     const first = s[0];
     if (first === '6' || first === '5') return `sh${s}`;
-    if (first === '0' || first === '3') return `sz${s}`;
+    if (first === '0' || first === '3' || first === '1') return `sz${s}`;
     if (first === '4' || first === '8' || first === '9') return `bj${s}`;
   }
   return '';
@@ -75,15 +84,21 @@ export function sanitizeSegment(raw) {
 }
 
 export function jsonResponse(res, status, body) {
-  const text = JSON.stringify(body);
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'access-control-allow-origin': '*',
-    'access-control-allow-methods': 'GET,POST,OPTIONS',
-    'access-control-allow-headers': 'content-type'
-  });
-  res.end(text);
+  if (!res || res.headersSent || res.destroyed) return;
+  try {
+    const isHead = Boolean(res.req && res.req.method === 'HEAD');
+    const text = JSON.stringify(body);
+    res.writeHead(status, {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'GET,POST,OPTIONS',
+      'access-control-allow-headers': 'content-type'
+    });
+    res.end(isHead ? undefined : text);
+  } catch {
+    // Ignore socket write errors when client disconnects
+  }
 }
 
 export function okEnvelope({ source, stale = false, generatedAt, ttlMs, data }) {

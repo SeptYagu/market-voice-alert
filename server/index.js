@@ -40,12 +40,37 @@ function routeNotFound(res) {
 
 export async function handleCacheRequest(req, res) {
   if (req.method === 'OPTIONS') {
-    jsonResponse(res, 204, {});
+    res.writeHead(204, {
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'GET,POST,OPTIONS,HEAD',
+      'access-control-allow-headers': 'content-type'
+    });
+    res.end();
     return;
   }
   const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
   const path = url.pathname.replace(/\/+$/, '') || '/';
   if (req.method === 'POST' && path === '/api/cache/momentum/ten-day/scan') {
+    const hostHeader = (req.headers.host || '').toLowerCase();
+    const isLocalHost = hostHeader.startsWith('127.0.0.1') || hostHeader.startsWith('localhost') || hostHeader.startsWith('[::1]');
+    if (!isLocalHost) {
+      jsonResponse(res, 403, errorEnvelope('Forbidden: Host must be local'));
+      return;
+    }
+    const origin = req.headers.origin || req.headers.referer;
+    if (origin) {
+      try {
+        const originUrl = new URL(origin);
+        const originHost = originUrl.hostname.toLowerCase();
+        if (originHost !== '127.0.0.1' && originHost !== 'localhost' && originHost !== '::1') {
+          jsonResponse(res, 403, errorEnvelope('Forbidden: Cross-origin scan request rejected'));
+          return;
+        }
+      } catch {
+        jsonResponse(res, 400, errorEnvelope('Invalid Origin or Referer header'));
+        return;
+      }
+    }
     const date = url.searchParams.get('date');
     const threshold = url.searchParams.get('threshold');
     if (date && !/^\d{8}$/.test(date.trim()) && !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
@@ -69,7 +94,7 @@ export async function handleCacheRequest(req, res) {
     }));
     return;
   }
-  if (req.method !== 'GET') {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
     jsonResponse(res, 405, errorEnvelope('Method not allowed'));
     return;
   }
@@ -328,7 +353,13 @@ async function handleAppRequest(req, res) {
 export function createAppServer() {
   return http.createServer((req, res) => {
     handleAppRequest(req, res).catch((err) => {
-      jsonResponse(res, 500, errorEnvelope(err && err.message ? err.message : String(err)));
+      if (res && !res.headersSent && !res.destroyed) {
+        try {
+          jsonResponse(res, 500, errorEnvelope(err && err.message ? err.message : String(err)));
+        } catch {
+          // ignore error writing to destroyed socket
+        }
+      }
     });
   });
 }
@@ -342,6 +373,14 @@ export function startServer({
   port = Number(process.env.PORT || process.env.CACHE_SERVER_PORT || DEFAULT_PORT),
   host = process.env.HOST || '127.0.0.1'
 } = {}) {
+  if (!process.__server_uncaught_registered) {
+    process.__server_uncaught_registered = true;
+    process.on('uncaughtException', (err) => {
+      if (typeof console !== 'undefined' && console.error) {
+        console.error('[Server] Uncaught exception guarded:', err);
+      }
+    });
+  }
   startBackgroundJobs();
   const server = createAppServer();
   server.listen(port, host, () => {

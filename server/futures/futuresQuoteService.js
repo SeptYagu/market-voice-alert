@@ -3,6 +3,7 @@ import { getFuturesSession } from './futuresSessionService.js';
 import { getOrRefresh } from '../cacheStore.js';
 import { getCachedTradeCalendar } from '../calendarService.js';
 import { parseSinaFuture } from '../../src/js/parser.js';
+import { fetchWithTimeout } from '../utils.js';
 
 async function _loadTradingDates(signal) {
   try {
@@ -22,9 +23,9 @@ const CLOSED_TTL_MS = 30 * 1000;
 async function fetchFromSina(inst) {
   const sinaCode = inst.providerSymbols.sina;
   const url = `https://hq.sinajs.cn/list=${sinaCode}`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: { Referer: 'https://finance.sina.com.cn' },
-    signal: AbortSignal.timeout(4000)
+    timeoutMs: 4000
   });
   if (!res.ok) throw new Error(`Sina HTTP ${res.status}`);
   const buf = await res.arrayBuffer();
@@ -54,7 +55,7 @@ async function fetchFromAktools(inst) {
   // AKTools futures_zh_spot: CFFEX requires market=FF, commodity requires market=CF
   const market = inst.exchange === 'cffex' ? 'FF' : 'CF';
   const url = `${AKTOOLS_BASE}/api/public/futures_zh_spot?symbol=${encodeURIComponent(inst.symbol)}&market=${market}&adjust=0`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
+  const res = await fetchWithTimeout(url, { timeoutMs: 4000 });
   if (!res.ok) throw new Error(`AKTools HTTP ${res.status}`);
   const data = await res.json();
   if (!Array.isArray(data) || !data.length) {

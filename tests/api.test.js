@@ -8,7 +8,8 @@ import {
   fetchIntraday,
   parseEastmoneyTrends,
   EASTMONEY_FIELDS,
-  onKlineUpdated
+  onKlineUpdated,
+  clearKlineRevalidateThrottle
 } from '../src/js/api.js';
 import { klineCacheClear, setStorageAdapter } from '../src/js/storage.js';
 
@@ -432,11 +433,13 @@ QUnit.module('api.fetchKline (Phase 8 cache + dedup + SWR)', (hooks) => {
     mock = createMockStorage();
     setStorageAdapter(mock);
     klineCacheClear();
+    clearKlineRevalidateThrottle();
     originalFetch = globalThis.fetch;
   });
   hooks.afterEach(() => {
     globalThis.fetch = originalFetch;
     klineCacheClear();
+    clearKlineRevalidateThrottle();
     setStorageAdapter(null);
   });
 

@@ -336,7 +336,9 @@ export function buildExportCsv(codes, quotesMap) {
     const q = quotesMap && typeof quotesMap.get === 'function' ? quotesMap.get(code) : null;
     const isFuture = q ? (q.type === 'future' || isFutureCode(code)) : isFutureCode(code);
     const displayCode = isFuture ? code.toUpperCase() : stripPrefix(code);
-    const name = (q && q.name) ? `"${String(q.name).replace(/"/g, '""')}"` : `"${displayCode}"`;
+    let rawName = (q && q.name) ? String(q.name) : displayCode;
+    if (/^[=+\-@\t\r]/.test(rawName)) rawName = `'${rawName}`;
+    const name = `"${rawName.replace(/"/g, '""')}"`;
     const decimals = isFuture && q && q.priceTick && q.priceTick < 0.01 ? 3 : 2;
     const price = q && Number.isFinite(Number(q.price)) ? Number(q.price).toFixed(decimals) : '';
     const pct = q && Number.isFinite(Number(q.changePercent)) ? Number(q.changePercent).toFixed(2) : '';
@@ -507,6 +509,7 @@ export const momentumChartMgr = new ChartRowManager({
   onStateChange: () => renderMomentumSection()
 });
 export const momentumChartCtlMap = momentumChartMgr.klineCtlMap;
+let appRouter = null;
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -679,7 +682,13 @@ function handleMomentumRowClick(code, e) {
   else openMomentumChart(code);
 }
 
+let momentumPollTimer = null;
+
 function stopMomentumScan() {
+  if (momentumPollTimer) {
+    clearTimeout(momentumPollTimer);
+    momentumPollTimer = null;
+  }
   if (state.momentum.abort) {
     try { state.momentum.abort.abort(); } catch { /* ignore */ }
   }
@@ -692,6 +701,25 @@ function stopMomentumScan() {
 
 function mergePinnedMomentumItems(nextItems) {
   return mergePinnedMomentumItemsService(nextItems, state.momentum.pinnedCodes, state.momentum.items);
+}
+
+function _mergeMomentumQuotesSafely(items) {
+  for (const item of items || []) {
+    if (!item || !item.code) continue;
+    const existing = state.quotes.get(item.code);
+    if (existing) {
+      state.quotes.set(item.code, {
+        ...item,
+        ...existing,
+        price: Number.isFinite(Number(item.price)) ? Number(item.price) : existing.price,
+        changePercent: Number.isFinite(Number(item.changePercent)) ? Number(item.changePercent) : existing.changePercent,
+        amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : existing.amount,
+        type: 'stock'
+      });
+    } else {
+      state.quotes.set(item.code, { ...item, type: 'stock' });
+    }
+  }
 }
 
 async function handleMomentumScan(options = {}) {
@@ -727,7 +755,9 @@ async function handleMomentumScan(options = {}) {
       if (cached.status === 'scanning') {
         state.momentum.serverScanning = true;
         state.momentum.message = '服务端扫描中，稍后自动刷新';
-        setTimeout(() => {
+        if (momentumPollTimer) clearTimeout(momentumPollTimer);
+        momentumPollTimer = setTimeout(() => {
+          momentumPollTimer = null;
           if (state.momentum.serverScanning && !state.momentum.loading) handleMomentumScan({ poll: true });
         }, 5000);
         return;
@@ -744,9 +774,7 @@ async function handleMomentumScan(options = {}) {
       if (cached.status === 'partial') {
         state.momentum.message = cached.message || '部分股票数据源刷新失败；当前仅展示有效结果';
       }
-      for (const item of state.momentum.items) {
-        if (item && item.code) state.quotes.set(item.code, { ...item, type: 'stock' });
-      }
+      _mergeMomentumQuotesSafely(state.momentum.items);
       state.momentum.lastUpdate = new Date();
       return;
     }
@@ -786,9 +814,7 @@ async function handleMomentumScan(options = {}) {
     const workerCount = Math.min(MOMENTUM_SCAN_CONCURRENCY, universe.length);
     await Promise.all(Array.from({ length: workerCount }, worker));
     state.momentum.items = mergePinnedMomentumItems(found);
-    for (const item of state.momentum.items) {
-      if (item && item.code) state.quotes.set(item.code, { ...item, type: 'stock' });
-    }
+    _mergeMomentumQuotesSafely(state.momentum.items);
     state.momentum.lastUpdate = new Date();
   } catch (e) {
     state.momentum.serverScanning = false;
@@ -1255,26 +1281,26 @@ function patchLimitUpQuoteCells() {
     const row = groupsSection.querySelector(`tr[data-code="${code}"]`);
     if (!row) return false;
     const dir = priceDirection(Number(item.changePercent));
-    const pCell = row.querySelector('.lu-price');
+    const pCell = row.querySelector('td[data-field="price"]') || row.querySelector('.lu-price');
     if (pCell) pCell.textContent = formatNumber(item.price);
-    const pctCell = row.querySelector('.lu-pct');
+    const pctCell = row.querySelector('td[data-field="percent"]') || row.querySelector('.lu-pct');
     if (pctCell) {
       pctCell.textContent = formatPercent(item.changePercent);
       pctCell.className = `lu-pct num ${dir}`;
     }
-    const openCell = row.querySelector('.lu-open');
+    const openCell = row.querySelector('td[data-field="open"]') || row.querySelector('.lu-open');
     if (openCell) openCell.textContent = formatNumber(item.open);
-    const ratioCell = row.querySelector('.lu-ratio');
+    const ratioCell = row.querySelector('td[data-field="ratio"]') || row.querySelector('.lu-ratio');
     if (ratioCell) ratioCell.textContent = formatNumber(item.volumeRatio);
-    const amtCell = row.querySelector('.lu-amount');
+    const amtCell = row.querySelector('td[data-field="amount"]') || row.querySelector('.lu-amount');
     if (amtCell) amtCell.textContent = formatAmount(item.amount);
-    const countCell = row.querySelector('.lu-count');
+    const countCell = row.querySelector('td[data-field="count"]') || row.querySelector('.lu-count');
     if (countCell && item.limitUpCount !== undefined) countCell.textContent = `${item.limitUpCount} 板`;
-    const finalCell = row.querySelector('.lu-final');
+    const finalCell = row.querySelector('td[data-field="final"]') || row.querySelector('.lu-final');
     if (finalCell && item.lastLimitTime) finalCell.textContent = item.lastLimitTime;
-    const breakCell = row.querySelector('.lu-break');
+    const breakCell = row.querySelector('td[data-field="break"]') || row.querySelector('.lu-break');
     if (breakCell && item.breakCount !== undefined) breakCell.textContent = String(item.breakCount);
-    const reasonCell = row.querySelector('.lu-reason');
+    const reasonCell = row.querySelector('td[data-field="reason"]') || row.querySelector('.lu-reason');
     if (reasonCell && item.reason) {
       reasonCell.textContent = item.reason;
       if (item.interpretation) reasonCell.title = item.interpretation;
@@ -1377,7 +1403,11 @@ async function limitUpFetch() {
   state.limitUp.abort = controller;
   state.limitUp.loading = true;
   state.limitUp.error = null;
-  rerenderLimitUpPage();
+  if (!state.limitUp.items.length || !limitUpRootEl || !limitUpRootEl.firstElementChild) {
+    rerenderLimitUpPage();
+  } else {
+    updateLimitUpStatusBar();
+  }
   try {
     const date = await ensureLimitUpTradingDate(
       state.limitUp.selectedDate || getBeijingDate(),
@@ -2393,15 +2423,18 @@ function showToast(msg, type = 'error') {
   }, 3000);
 }
 
-function flashError(msg) {
+function flashError(msg, targetInputId = null) {
   state.error = msg;
   renderStatus();
   showToast(msg, 'error');
   if (typeof document !== 'undefined') {
-    const input = document.getElementById('code-input');
-    if (input) {
-      input.classList.add('input-shake');
-      setTimeout(() => input.classList.remove('input-shake'), 600);
+    const targetId = targetInputId || (msg && msg.includes('代码') ? 'code-input' : null);
+    if (targetId) {
+      const input = document.getElementById(targetId);
+      if (input) {
+        input.classList.add('input-shake');
+        setTimeout(() => input.classList.remove('input-shake'), 600);
+      }
     }
   }
   setTimeout(() => {
@@ -2479,6 +2512,7 @@ async function refreshNow() {
       for (const item of state.momentum.items || []) {
         if (item && state.quotes.has(item.code)) updateMomentumQuoteCells(item.code);
       }
+      applyLiveTicksToLimitUp();
       renderStatus();
     }
   }
@@ -2488,6 +2522,11 @@ function getRefreshCodes() {
   const out = new Set(state.watchList);
   for (const code of state.subscribed || []) {
     if (code) out.add(code);
+  }
+  if (state.limitUp && Array.isArray(state.limitUp.items) && isLimitUpDateToday()) {
+    for (const it of state.limitUp.items) {
+      if (it && it.code) out.add(it.code);
+    }
   }
   return [...out];
 }
@@ -2665,7 +2704,7 @@ export function startApp(root) {
   startDataRefreshScheduleChecker();
   startVoiceScheduleChecker();
   if (state.voice.enabled) startVoiceTimer();
-  const router = createHashRouter(
+  appRouter = createHashRouter(
     {
       '#/': (r) => {
         stopLimitUpTimer();
@@ -2709,7 +2748,7 @@ export function startApp(root) {
     '#/',
     root
   );
-  router.start();
+  appRouter.start();
 }
 
 export function stopApp() {
@@ -2717,6 +2756,15 @@ export function stopApp() {
     state.unsubKlineUpdated();
     state.unsubKlineUpdated = null;
   }
+  if (appRouter && typeof appRouter.stop === 'function') {
+    appRouter.stop();
+    appRouter = null;
+  }
+  if (abortController) {
+    try { abortController.abort(); } catch { /* ignore */ }
+    abortController = null;
+  }
+  stopMomentumScan();
   stopMonitorTimer();
   stopLimitUpTimer();
   stopVoiceTimer();

@@ -2,7 +2,7 @@
 
 > **新窗口从这里开始**：本文件记录了完整的重做计划、决策、当前阶段和下一步任务。无需阅读历史对话。
 >
-> **新窗口交接文档**：[`docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md`](docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md) — 2026-09-05 代码审查遗留缺陷全量闭环与视图组件解耦交接文档（最新）。详见前序 [`docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md`](docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md)。
+> **新窗口交接文档**：[`docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md) — 2026-09-05 WorkBuddy 全量代码审查缺陷彻底闭环交接文档（最新）。详见前序 [`docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md`](docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md)。
 
 ## 项目定位
 
@@ -88,6 +88,38 @@
   - **P2 & UX-2**：`server/cacheStore.js` 支持 `readCache` skipTouch 并刷新文件 mtime；期货服务读取 `AKTOOLS_BASE` 环境变量；`time.js` 统一 `hourCycle: 'h23'` 杜绝午夜 24 点解析异常；自选股单个删除接入 `showConfirmModal` 确认弹窗。
 - ✅ **测试与质量**：单元测试增至 651 项全部 PASS；Playwright 端到端测试 56/56 项 100% 通过；ESLint 0 错误 0 警告；Vite 生产构建成功；`npm run ci` 全绿。
 - 详见交接文档：[`docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md`](docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md)。
+
+## 2026-09-05 WorkBuddy 全量代码审查缺陷彻底闭环状态
+
+- ✅ **3 项 P0 级致命缺陷全量闭环**：
+  - **F-P0-1（10日强势股内嵌图表展开空白与单双图结构不匹配）**：修复 `src/js/views/momentumView.js` 生成的 host ID 前缀不一致问题（对齐为 `momentum-chart-host-${code}`），并消除无分时数据源时的空分时 split 结构，改为全宽日 K 单 Pane 展示；在 `e2e/monitor.spec.js` 中新增专用测试真实断言图表展开与 Canvas 挂载。
+  - **F-P0-2（涨停看板实时报价停滞）**：在 `app.js` 的 `refreshNow()` 刷新循环中显式接入 `applyLiveTicksToLimitUp()`，并在 `getRefreshCodes()` 中把交易日当天的 `state.limitUp.items` 代码纳入全局刷新池，实现涨停板标的毫秒级 Tick 驱动更新。
+  - **B-P0-1（`server/utils.js` jsonResponse 崩溃进程）**：在 `jsonResponse` 写入响应头与数据前增加 `res.headersSent` 与 `res.destroyed` 防御判断，并用 `try...catch` 拦截客户端提前中断连接时的 Socket 异常；在 `server/index.js` 服务入口增加 `process.on('uncaughtException')` 兜底。
+- ✅ **7 项前端 P1 级缺陷彻底闭环**：
+  - **F1（涨停看板 30s 周期刷新破坏 DOM）**：轮询仅局部更新状态栏与报价单元格 (`patchLimitUpQuoteCells`)，彻底消除周期性全量 DOM 销毁与已展开图表白屏。
+  - **F2（图表异步加载竞态条件）**：在 `chartRowController.js` 的 `finally` 块中增加当前实例有效性与展开状态校验 (`this.isExpanded(code) && this.getInst(code) === inst`)，消除快速折叠展开时的状态篡改。
+  - **F3（`stopApp()` 清理不彻底）**：增补对 `appRouter.stop()`、`abortController.abort()`、`stopMomentumScan()` 的彻底销毁。
+  - **F4（10日涨幅后台轮询定时器泄漏）**：为 `momentumPollTimer` 引入独立句柄变量，在发起新扫描、页面停止扫描与退出时及时 `clearTimeout`。
+  - **F5（扫描与大批量加载时的 SWR 请求风暴）**：`api.js` 中增加 30s 最小重试节流，并在扫描候选股时传入 `opts.revalidate = false`。
+  - **F6（动量扫描结果脏覆盖 `state.quotes`）**：实现 `_mergeMomentumQuotesSafely`，保留既有标的完整字段，防止后续单元格读取产生 NaN。
+  - **F7（交易时段判断边界漏洞）**：`isFuturesMarketOpen` 补齐周二至周六凌晨夜盘前日法定日历校验与节前夜盘休市判定。
+- ✅ **5 项服务端 P1 级缺陷彻底闭环**：
+  - **B1（动量扫描接口 CSRF / DNS Rebinding）**：严格校验 `Host` 必须为 `localhost` 或 `127.0.0.1` 并校验 `Origin`/`Referer`。
+  - **B2（过期扫描任务泄漏）**：保存 `controller` 并在替换 10 分钟过期任务时主动触发 `abort()`。
+  - **B3（声明 Node.js 最低版本）**：`package.json` 补充 `"engines": { "node": ">=20.3.0" }`。
+  - **B4（代理请求废弃事件与 OOM 防御）**：改用 `res.on('close')` 并限制代理请求体上限 `MAX_PROXY_BODY_BYTES = 10MB`。
+  - **B5（期货外部 API 缺少超时控制）**：期货报价与 K 线服务统一接入 `fetchWithTimeout` 8s 超时。
+- ✅ **P2 缺陷与 UX 交互优化**：
+  - **P2-1（CSV 公式注入防护）**：导出 CSV 针对 `[=+\-@\t\r]` 首字符添加转义前缀 `'`。
+  - **P2-2（TTS 高精度标的播报）**：国债期货等最小变动价位 `< 0.01` 标的采用 3 位小数。
+  - **UX-7（错误振动定位）**：`flashError` 支持按错误类型精确定位振动输入框。
+  - **UX-8（危险操作取消按钮默认聚焦）**：`showConfirmModal` 增加 Tab 焦点环，当 `danger: true` 时默认聚焦取消按钮防误触。
+- ✅ **质量基线验证**：
+  - ESLint 代码规范：0 错误 0 警告
+  - QUnit 单元测试：652 / 652 全部 PASS
+  - Playwright E2E 自动化测试：57 / 57 全部 PASS
+  - Vite 生产打包：顺利构建
+- 详见交接文档：[`docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md)。
 
 ## 备份
 

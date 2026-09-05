@@ -62,13 +62,23 @@ QUnit.module('modal.showConfirmModal', (hooks) => {
     t.notOk(document.querySelector('.app-modal-backdrop'), 'backdrop removed from DOM');
   });
 
-  QUnit.test('Enter key confirms modal', async (t) => {
+  QUnit.test('Enter key confirms normal modal', async (t) => {
     const promise = showConfirmModal('测试 Enter');
     const ev = new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
     document.dispatchEvent(ev);
 
     const result = await promise;
     t.true(result, 'resolves true on Enter');
+    t.notOk(document.querySelector('.app-modal-backdrop'), 'backdrop removed from DOM');
+  });
+
+  QUnit.test('danger modal focuses cancel button and Enter cancels', async (t) => {
+    const promise = showConfirmModal('测试 Danger Enter', { danger: true });
+    const ev = new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
+    document.dispatchEvent(ev);
+
+    const result = await promise;
+    t.false(result, 'resolves false on Enter when danger: true');
     t.notOk(document.querySelector('.app-modal-backdrop'), 'backdrop removed from DOM');
   });
 

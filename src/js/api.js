@@ -515,11 +515,26 @@ async function _fetchKlineFromNetwork(code, period, signal) {
 
 const inflightKline = new Map();
 const _revalidatingKline = new Set();  // dedup SWR revalidations
+const _lastRevalidatedAt = new Map();
+const REVALIDATE_MIN_INTERVAL_MS = 30_000;
+
+export function clearKlineRevalidateThrottle() {
+  _lastRevalidatedAt.clear();
+  _revalidatingKline.clear();
+}
 
 function _scheduleKlineRevalidate(code, period, opts = {}) {
+  if (opts && opts.revalidate === false) return;
   const key = `${code}|${period}`;
+  if (opts && (opts.forceRevalidate || opts.forceRefresh || opts.force)) {
+    _lastRevalidatedAt.delete(key);
+  }
+  const now = Date.now();
+  const last = _lastRevalidatedAt.get(key) || 0;
+  if (now - last < REVALIDATE_MIN_INTERVAL_MS) return;
   if (_revalidatingKline.has(key)) return;
   _revalidatingKline.add(key);
+  _lastRevalidatedAt.set(key, now);
   setTimeout(() => {
     const refresh = opts.sharedCache === true
       ? _fetchKlineFromSharedCache(code, period, null).catch(() => _fetchKlineFromNetwork(code, period, null))

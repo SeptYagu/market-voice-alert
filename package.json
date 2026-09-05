@@ -4,6 +4,9 @@
   "description": "股票期货实时监控助手 - 实时监控、语音播报、价格提醒、涨停看板、走势图",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20.3.0"
+  },
   "scripts": {
     "dev": "vite",
     "server": "node server/index.js",

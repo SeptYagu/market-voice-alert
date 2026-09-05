@@ -5,6 +5,7 @@ import { getOrRefresh } from '../cacheStore.js';
 import { getCachedTradeCalendar } from '../calendarService.js';
 import { parseBeijingDateTimeToChartSeconds, chartTimeToDate, shiftCalendarDate } from '../../src/js/time.js';
 import { shiftTradingDate } from '../../src/js/tradeCalendar.js';
+import { fetchWithTimeout } from '../utils.js';
 
 async function _loadTradingDates(signal) {
   try {
@@ -30,7 +31,7 @@ async function fetchFuturesMinute(inst, period = '1') {
   // AKTools: futures_zh_minute_sina
   try {
     const url = `${AKTOOLS_BASE}/api/public/futures_zh_minute_sina?symbol=${inst.symbol}&period=${period}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const res = await fetchWithTimeout(url, { timeoutMs: 5000 });
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length) {
@@ -64,9 +65,9 @@ async function fetchFuturesMinute(inst, period = '1') {
   // Sina Fallback for futures minute
   try {
     const url = `https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20_data=/InnerFuturesNewService.getMinLine?symbol=${inst.symbol}`;
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: { Referer: 'https://finance.sina.com.cn' },
-      signal: AbortSignal.timeout(5000)
+      timeoutMs: 5000
     });
     if (res.ok) {
       const text = await res.text();
@@ -119,7 +120,7 @@ async function fetchFuturesMinute(inst, period = '1') {
 async function fetchFuturesDaily(inst) {
   try {
     const url = `${AKTOOLS_BASE}/api/public/futures_zh_daily_sina?symbol=${inst.symbol}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const res = await fetchWithTimeout(url, { timeoutMs: 5000 });
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length) {
@@ -149,9 +150,9 @@ async function fetchFuturesDaily(inst) {
   // Sina Fallback for futures daily: Sina returns [{ d: "2026-09-03", o, h, l, c, v, p, s }]
   try {
     const url = `https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20_data=/InnerFuturesNewService.getDailyKLine?symbol=${inst.symbol}`;
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: { Referer: 'https://finance.sina.com.cn' },
-      signal: AbortSignal.timeout(5000)
+      timeoutMs: 5000
     });
     if (res.ok) {
       const text = await res.text();

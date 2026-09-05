@@ -16,7 +16,7 @@ export function showConfirmModal(message, options = {}) {
     title = '提示',
     confirmText = '确定',
     cancelText = '取消',
-    danger = true
+    danger = false
   } = options;
 
   return new Promise((resolve) => {
@@ -91,6 +91,21 @@ export function showConfirmModal(message, options = {}) {
         e.preventDefault();
         e.stopPropagation();
         cleanup(false);
+      } else if (e.key === 'Tab') {
+        const focusable = [cancelBtn, confirmBtn];
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey) {
+          if (document.activeElement === first || !dialog.contains(document.activeElement)) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last || !dialog.contains(document.activeElement)) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
       } else if (e.key === 'Enter') {
         if (document.activeElement === cancelBtn) {
           e.preventDefault();
@@ -120,9 +135,13 @@ export function showConfirmModal(message, options = {}) {
       }
     });
 
-    // Auto-focus confirm button
+    // Auto-focus: focus cancel on danger modals to prevent accidental Enter confirmation
     try {
-      confirmBtn.focus();
+      if (danger) {
+        cancelBtn.focus();
+      } else {
+        confirmBtn.focus();
+      }
     } catch {
       /* ignore */
     }
