@@ -246,3 +246,172 @@ export function updateMomentumQuoteCells(code, momentumItems = []) {
   const industryCell = getCell('industry', 9);
   if (industryCell) industryCell.textContent = item.industry || '-';
 }
+
+export function renderMomentumSectionView(wrap, options = {}) {
+  if (!wrap) return;
+  const {
+    momentumState: s,
+    subscribedCodes = new Set(),
+    defaultPeriod = '1d',
+    beforeRerenderClean,
+    callbacks = {}
+  } = options;
+
+  if (typeof beforeRerenderClean === 'function') {
+    beforeRerenderClean();
+  }
+
+  wrap.innerHTML = '';
+  const statusBits = [];
+  if (s.loading || s.serverScanning) statusBits.push(`扫描中 ${s.scanned}/${s.total || '?'}`);
+  else if (s.lastUpdate) statusBits.push(`更新于 ${s.lastUpdate.toLocaleTimeString()}`);
+  if (s.message) statusBits.push(s.message);
+  if (s.error) statusBits.push(`错误: ${s.error}`);
+
+  const head = el(
+    'header',
+    { class: 'momentum-header' },
+    el('div', { class: 'momentum-title' }, `10日涨幅超${MOMENTUM_THRESHOLD_PCT}%`),
+    el('div', { class: 'momentum-actions' },
+      el(
+        'button',
+        {
+          disabled: s.loading || s.serverScanning,
+          on: { click: () => callbacks.onScan && callbacks.onScan() }
+        },
+        '扫描'
+      ),
+      el(
+        'button',
+        {
+          disabled: !s.loading && !s.serverScanning,
+          on: { click: () => callbacks.onStop && callbacks.onStop() }
+        },
+        '停止'
+      ),
+      s.selectedCodes && s.selectedCodes.size
+        ? el('span', { class: 'momentum-status' }, `${s.selectedCodes.size} 已选`)
+        : null,
+      el('span', { class: 'momentum-status' }, statusBits.join(' · '))
+    )
+  );
+  wrap.appendChild(head);
+
+  const items = sortMomentumItems(s.items, s.pinnedCodes);
+  if (!items.length) {
+    wrap.appendChild(el('div', { class: 'momentum-empty' }, (s.loading || s.serverScanning) ? '扫描中...' : '暂无结果'));
+    return;
+  }
+
+  const table = el('table', { class: 'momentum-table', id: 'momentum-table' });
+  const colCount = 11;
+  table.appendChild(el(
+    'thead',
+    {},
+    el('tr', {},
+      el('th', { class: 'col-check', 'data-field': 'check' }, buildMomentumHeaderCheckbox(items, s.selectedCodes, callbacks.onSelectAllChange)),
+      el('th', { class: 'col-sub', 'data-field': 'sub', title: '勾选订阅语音播报与价格提醒' }, '播报'),
+      el('th', { class: 'col-pin', 'data-field': 'pin' }, '固定'),
+      el('th', { class: 'code', 'data-field': 'code' }, '代码'),
+      el('th', { class: 'name', 'data-field': 'name' }, '名称'),
+      el('th', { class: 'num', 'data-field': 'gain' }, '10日涨幅'),
+      el('th', { class: 'num', 'data-field': 'price' }, '现价'),
+      el('th', { class: 'num', 'data-field': 'percent' }, '当日涨幅'),
+      el('th', { class: 'num', 'data-field': 'amount' }, '成交额'),
+      el('th', { class: 'col-industry', 'data-field': 'industry' }, '行业'),
+      el('th', { class: 'col-reason', 'data-field': 'reason' }, '异动/原因')
+    )
+  ));
+  const tbody = el('tbody', {});
+  for (const item of items) {
+    const pinned = s.pinnedCodes.has(item.code);
+    const selected = s.selectedCodes && s.selectedCodes.has(item.code);
+    const subscribed = subscribedCodes && subscribedCodes.has(item.code);
+    const active = s.expandedCodes && s.expandedCodes.has(item.code);
+    const dir = priceDirection(Number(item.changePercent));
+    tbody.appendChild(el(
+      'tr',
+      {
+        class: [
+          pinned ? 'momentum-pinned' : '',
+          active ? 'active' : ''
+        ].filter(Boolean).join(' '),
+        'data-momentum-code': item.code,
+        title: active ? '点击关闭 K 线' : '点击查看 K 线',
+        role: 'button',
+        tabindex: '0',
+        'aria-expanded': active ? 'true' : 'false',
+        on: {
+          click: (e) => callbacks.onRowClick && callbacks.onRowClick(item.code, e),
+          keydown: (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON')) return;
+              e.preventDefault();
+              if (callbacks.onRowClick) callbacks.onRowClick(item.code, e);
+            }
+          }
+        }
+      },
+      el('td', { class: 'col-check', 'data-field': 'check' },
+        el('input', {
+          type: 'checkbox',
+          'data-momentum-select': item.code,
+          checked: !!selected,
+          on: {
+            click: (e) => e.stopPropagation(),
+            change: (e) => callbacks.onToggleSelect && callbacks.onToggleSelect(item.code, e.target.checked)
+          }
+        })
+      ),
+      el('td', { class: 'col-sub', 'data-field': 'sub' },
+        el('input', {
+          type: 'checkbox',
+          'data-momentum-sub': item.code,
+          title: '订阅播报/提醒',
+          checked: !!subscribed,
+          on: {
+            click: (e) => e.stopPropagation(),
+            change: (e) => callbacks.onToggleSubscribe && callbacks.onToggleSubscribe(item.code, e.target.checked)
+          }
+        })
+      ),
+      el('td', { class: 'col-pin', 'data-field': 'pin' },
+        el('button', {
+          class: 'pin-btn' + (pinned ? ' active' : ''),
+          title: pinned ? '取消固定' : '固定',
+          'aria-label': pinned ? `取消固定 ${item.name || item.code}` : `固定 ${item.name || item.code}`,
+          on: {
+            click: (e) => {
+              e.stopPropagation();
+              if (callbacks.onPinToggle) callbacks.onPinToggle(item.code);
+            }
+          }
+        }, pinned ? '取消固定' : '固定')
+      ),
+      el('td', { class: 'code', 'data-field': 'code' }, item.code),
+      el('td', { class: 'name', 'data-field': 'name' }, item.name || '-'),
+      el('td', { class: 'num up', 'data-field': 'gain' }, formatPercent(item.gainPercent)),
+      el('td', { class: 'num', 'data-field': 'price' }, formatNumber(item.price)),
+      el('td', { class: `num ${dir}`, 'data-field': 'percent' }, formatPercent(item.changePercent)),
+      el('td', { class: 'num', 'data-field': 'amount' }, formatAmount(item.amount)),
+      el('td', { class: 'momentum-industry', 'data-field': 'industry' }, item.industry || '-'),
+      el('td', { class: 'momentum-reason', 'data-field': 'reason', title: item.interpretation || item.reason || '' }, getMomentumReasonText(item))
+    ));
+    if (active) {
+      tbody.appendChild(renderMomentumChartRow(item, colCount, {
+        momentumState: s,
+        defaultPeriod,
+        onPeriodChange: callbacks.onPeriodChange,
+        onForceReload: callbacks.onForceReload,
+        onCloseChart: callbacks.onCloseChart
+      }));
+    }
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+
+  if (typeof callbacks.onAfterMountCharts === 'function') {
+    callbacks.onAfterMountCharts();
+  }
+}
+

@@ -25,11 +25,9 @@ import {
   setLimitUpPinnedCodes
 } from './storage.js';
 import { fetchQuotes, fetchKline, fetchIntraday, onKlineUpdated } from './api.js';
-import { fetchAktoolsSpotList } from './aktoolsApi.js';
 import { normalizeCode } from './parser.js';
 import { parseFutureInput, isFutureCode } from './futures/instrument.js';
 import {
-  PERIODS,
   PERIOD_LABELS,
   DEFAULT_PERIOD,
   isValidPeriod,
@@ -81,7 +79,6 @@ import {
   priceDirection,
   formatPercent,
   formatAmount,
-  formatPriceWithPercent,
   stripPrefix,
   makeExportFilename,
   intradaySourceLabel
@@ -89,16 +86,35 @@ import {
 import { showConfirmModal } from './modal.js';
 import { renderVoiceBar as renderVoiceBarView, updateVoiceHint as updateVoiceHintView } from './views/voiceBarView.js';
 import { renderAlertBar as renderAlertBarView, updateAlertHint as updateAlertHintView } from './views/alertBarView.js';
+import { renderHeaderView, updateMonitorAutoRefreshButton as updateMonitorAutoRefreshButtonView } from './views/headerView.js';
+import { renderToolbarView } from './views/toolbarView.js';
+import {
+  renderTableView,
+  renderRow,
+  renderInlineChartRow,
+  buildWatchHeaderCheckbox as buildWatchHeaderCheckboxView,
+  updateWatchHeaderCheckbox as updateWatchHeaderCheckboxView,
+  updateRowQuoteCells as updateRowQuoteCellsView
+} from './views/monitorTableView.js';
 import {
   computeTenDayMomentum,
   sortMomentumItems,
   getMomentumReasonText,
   buildMomentumHeaderCheckbox,
   renderMomentumChartRow,
+  renderMomentumSectionView,
   updateMomentumQuoteCells as updateMomentumQuoteCellsView,
   MOMENTUM_LOOKBACK_TRADING_DAYS,
   MOMENTUM_THRESHOLD_PCT
 } from './views/momentumView.js';
+import {
+  fetchSharedMomentum,
+  startSharedMomentumScan,
+  fetchMomentumUniverse,
+  scanMomentumCandidate,
+  mergePinnedMomentumItems as mergePinnedMomentumItemsService,
+  MOMENTUM_SCAN_CONCURRENCY
+} from './services/momentumScanner.js';
 
 export {
   LIMIT_UP_REFRESH_OPTIONS,
@@ -119,6 +135,16 @@ export {
   renderMomentumChartRow,
   MOMENTUM_LOOKBACK_TRADING_DAYS,
   MOMENTUM_THRESHOLD_PCT
+};
+export {
+  renderHeaderView,
+  renderToolbarView,
+  renderTableView,
+  renderRow,
+  renderInlineChartRow,
+  buildWatchHeaderCheckboxView as buildWatchHeaderCheckbox,
+  updateWatchHeaderCheckboxView as updateWatchHeaderCheckbox,
+  updateRowQuoteCellsView as updateRowQuoteCells
 };
 
 export const REFRESH_OPTIONS = [
@@ -417,8 +443,6 @@ const state = {
 let limitUpRootEl = null;
 let abortController = null;
 
-const MOMENTUM_SCAN_CONCURRENCY = 8;
-
 function resolveInitialTradeDate(code, data) {
   const dates = state.tradingDates || state.limitUp.tradingDates || [];
   const today = getBeijingDate();
@@ -512,8 +536,26 @@ function el(tag, attrs = {}, ...children) {
 export function renderMonitorPage(root) {
   if (!root) return;
   root.innerHTML = '';
-  root.appendChild(renderHeader());
-  root.appendChild(renderToolbar());
+  root.appendChild(renderHeaderView({
+    currentTheme: getCurrentTheme(),
+    refreshInterval: state.refreshInterval,
+    refreshOptions: REFRESH_OPTIONS,
+    onRefreshChange: handleRefreshChange,
+    onToggleTheme: handleToggleTheme
+  }));
+  root.appendChild(renderToolbarView({
+    autoRefreshEnabled: state.autoRefreshEnabled,
+    autoRefreshPaused: state.autoRefreshPausedBySchedule,
+    handlers: {
+      onAdd: handleAdd,
+      onRefreshNow: handleRefreshNow,
+      onAutoRefreshToggle: handleMonitorAutoRefreshToggle,
+      onSelectAll: handleSelectAll,
+      onSelectNone: handleSelectNone,
+      onDeleteSelected: handleDeleteSelected,
+      onExport: handleExport
+    }
+  }));
   root.appendChild(el('section', { class: 'ctl-bar', id: 'voice-bar' }));
   root.appendChild(el('section', { class: 'ctl-bar', id: 'alert-bar' }));
   root.appendChild(el('section', { class: 'table-wrap', id: 'table-wrap' }));
@@ -526,110 +568,8 @@ export function renderMonitorPage(root) {
   renderStatus();
 }
 
-function renderHeader() {
-  const theme = getCurrentTheme();
-  return el(
-    'header',
-    { class: 'app-header' },
-    el('h1', {}, '股票期货监控助手 v2'),
-    el(
-      'nav',
-      { class: 'app-nav', id: 'app-nav' },
-      el('a', { href: '#/', class: 'nav-link', 'data-route': '#/' }, '监控'),
-      el('a', { href: '#/limit-up', class: 'nav-link', 'data-route': '#/limit-up' }, '涨停看板')
-    ),
-    el(
-      'div',
-      { class: 'header-actions' },
-      renderRefreshSelect(),
-      el(
-        'button',
-        {
-          id: 'theme-toggle',
-          title: `当前: ${THEME_LABELS[theme]} (点击切换)`,
-          on: { click: handleToggleTheme }
-        },
-        THEME_ICONS[theme] + ' ' + THEME_LABELS[theme]
-      )
-    )
-  );
-}
-
-function renderRefreshSelect() {
-  const select = el('select', { id: 'refresh-select', on: { change: handleRefreshChange } });
-  for (const opt of REFRESH_OPTIONS) {
-    const option = el('option', { value: opt.value }, opt.label);
-    if (Number(opt.value) === state.refreshInterval) option.selected = true;
-    select.appendChild(option);
-  }
-  return el('label', { class: 'refresh-label' }, '刷新: ', select);
-}
-
-function autoRefreshButtonText(enabled, paused) {
-  if (!enabled) return '开始自动刷新';
-  return paused ? '自动刷新已暂停' : '停止自动刷新';
-}
-
-function autoRefreshButtonTitle(enabled, paused) {
-  if (!enabled) return '开始自动刷新';
-  return paused ? '非交易时段，自动刷新将在开盘后恢复' : '停止自动刷新';
-}
-
 function updateMonitorAutoRefreshButton() {
-  const btn = document.getElementById('auto-refresh-toggle');
-  if (!btn) return;
-  btn.className = state.autoRefreshEnabled ? 'btn-ctl-active' : '';
-  btn.title = autoRefreshButtonTitle(state.autoRefreshEnabled, state.autoRefreshPausedBySchedule);
-  btn.textContent = autoRefreshButtonText(state.autoRefreshEnabled, state.autoRefreshPausedBySchedule);
-}
-
-function renderToolbar() {
-  return el(
-    'section',
-    { class: 'toolbar' },
-    el(
-      'div',
-      { class: 'add-row' },
-      el('input', {
-        type: 'text',
-        id: 'code-input',
-        placeholder: '输入代码（用逗号或空格分隔，回车添加）：600519, 000001 nf2105',
-        on: {
-          keydown: (e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              handleAdd();
-            }
-          }
-        }
-      }),
-      el(
-        'div',
-        { class: 'add-actions' },
-        el('button', { class: 'btn-primary', on: { click: handleAdd } }, '+ 添加'),
-        el('button', { on: { click: handleRefreshNow } }, '⟳ 立即刷新'),
-        el(
-          'button',
-          {
-            id: 'auto-refresh-toggle',
-            class: state.autoRefreshEnabled ? 'btn-ctl-active' : '',
-            title: autoRefreshButtonTitle(state.autoRefreshEnabled, state.autoRefreshPausedBySchedule),
-            on: { click: () => handleMonitorAutoRefreshToggle(!state.autoRefreshEnabled) }
-          },
-          autoRefreshButtonText(state.autoRefreshEnabled, state.autoRefreshPausedBySchedule)
-        )
-      )
-    ),
-    el(
-      'div',
-      { class: 'list-actions' },
-      el('button', { on: { click: handleSelectAll } }, '全选'),
-      el('button', { on: { click: handleSelectNone } }, '清空选择'),
-      el('button', { class: 'btn-danger', on: { click: handleDeleteSelected } }, '删除选中'),
-      el('button', { on: { click: () => handleExport('selected') } }, '导出选中'),
-      el('button', { on: { click: () => handleExport('all') } }, '导出全部')
-    )
-  );
+  updateMonitorAutoRefreshButtonView(state.autoRefreshEnabled, state.autoRefreshPausedBySchedule);
 }
 
 function renderVoiceBar() {
@@ -679,166 +619,39 @@ function updateAlertHint() {
 function renderMomentumSection() {
   const wrap = document.getElementById('momentum-section');
   if (!wrap) return;
-  const s = state.momentum;
-  for (const code of s.expandedCodes || []) {
-    const inst = s.chartInstances.get(code);
-    const ctl = momentumChartCtlMap.get(code);
-    rememberRange(inst, ctl, '_visibleRange');
-    if (ctl) {
-      try { ctl.destroy(); } catch { /* ignore */ }
-      momentumChartCtlMap.delete(code);
-    }
-  }
-  wrap.innerHTML = '';
-  const statusBits = [];
-  if (s.loading || s.serverScanning) statusBits.push(`扫描中 ${s.scanned}/${s.total || '?'}`);
-  else if (s.lastUpdate) statusBits.push(`更新于 ${s.lastUpdate.toLocaleTimeString()}`);
-  if (s.message) statusBits.push(s.message);
-  if (s.error) statusBits.push(`错误: ${s.error}`);
-  const head = el(
-    'header',
-    { class: 'momentum-header' },
-    el('div', { class: 'momentum-title' }, `10日涨幅超${MOMENTUM_THRESHOLD_PCT}%`),
-    el('div', { class: 'momentum-actions' },
-      el(
-        'button',
-        {
-          disabled: s.loading || s.serverScanning,
-          on: { click: handleMomentumScan }
-        },
-        '扫描'
-      ),
-      el(
-        'button',
-        {
-          disabled: !s.loading && !s.serverScanning,
-          on: { click: stopMomentumScan }
-        },
-        '停止'
-      ),
-      s.selectedCodes && s.selectedCodes.size
-        ? el('span', { class: 'momentum-status' }, `${s.selectedCodes.size} 已选`)
-        : null,
-      el('span', { class: 'momentum-status' }, statusBits.join(' · '))
-    )
-  );
-  wrap.appendChild(head);
-
-  const items = sortMomentumItems(s.items, s.pinnedCodes);
-  if (!items.length) {
-    wrap.appendChild(el('div', { class: 'momentum-empty' }, (s.loading || s.serverScanning) ? '扫描中...' : '暂无结果'));
-    return;
-  }
-
-  const table = el('table', { class: 'momentum-table' });
-  const colCount = 11;
-  table.appendChild(el(
-    'thead',
-    {},
-    el('tr', {},
-      el('th', { class: 'col-check', 'data-field': 'check' }, buildMomentumHeaderCheckbox(items, s.selectedCodes, handleMomentumSelectAllChange)),
-      el('th', { class: 'col-sub', 'data-field': 'sub', title: '勾选订阅语音播报与价格提醒' }, '播报'),
-      el('th', { class: 'col-pin', 'data-field': 'pin' }, '固定'),
-      el('th', { class: 'code', 'data-field': 'code' }, '代码'),
-      el('th', { class: 'name', 'data-field': 'name' }, '名称'),
-      el('th', { class: 'num', 'data-field': 'gain' }, '10日涨幅'),
-      el('th', { class: 'num', 'data-field': 'price' }, '现价'),
-      el('th', { class: 'num', 'data-field': 'percent' }, '当日涨幅'),
-      el('th', { class: 'num', 'data-field': 'amount' }, '成交额'),
-      el('th', { class: 'col-industry', 'data-field': 'industry' }, '行业'),
-      el('th', { class: 'col-reason', 'data-field': 'reason' }, '异动/原因')
-    )
-  ));
-  const tbody = el('tbody', {});
-  for (const item of items) {
-    const pinned = s.pinnedCodes.has(item.code);
-    const selected = s.selectedCodes && s.selectedCodes.has(item.code);
-    const subscribed = state.subscribed.has(item.code);
-    const active = s.expandedCodes && s.expandedCodes.has(item.code);
-    const dir = priceDirection(Number(item.changePercent));
-    tbody.appendChild(el(
-      'tr',
-      {
-        class: [
-          pinned ? 'momentum-pinned' : '',
-          active ? 'active' : ''
-        ].filter(Boolean).join(' '),
-        'data-momentum-code': item.code,
-        title: active ? '点击关闭 K 线' : '点击查看 K 线',
-        role: 'button',
-        tabindex: '0',
-        'aria-expanded': active ? 'true' : 'false',
-        on: {
-          click: (e) => handleMomentumRowClick(item.code, e),
-          keydown: (e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON')) return;
-              e.preventDefault();
-              handleMomentumRowClick(item.code, e);
-            }
-          }
+  renderMomentumSectionView(wrap, {
+    momentumState: state.momentum,
+    subscribedCodes: state.subscribed,
+    defaultPeriod: DEFAULT_PERIOD,
+    beforeRerenderClean: () => {
+      for (const code of state.momentum.expandedCodes || []) {
+        const inst = state.momentum.chartInstances.get(code);
+        const ctl = momentumChartCtlMap.get(code);
+        rememberRange(inst, ctl, '_visibleRange');
+        if (ctl) {
+          try { ctl.destroy(); } catch { /* ignore */ }
+          momentumChartCtlMap.delete(code);
         }
-      },
-      el('td', { class: 'col-check', 'data-field': 'check' },
-        el('input', {
-          type: 'checkbox',
-          'data-momentum-select': item.code,
-          checked: !!selected,
-          on: {
-            click: (e) => e.stopPropagation(),
-            change: (e) => handleMomentumToggleSelect(item.code, e.target.checked)
-          }
-        })
-      ),
-      el('td', { class: 'col-sub', 'data-field': 'sub' },
-        el('input', {
-          type: 'checkbox',
-          'data-momentum-sub': item.code,
-          title: '订阅播报/提醒',
-          checked: !!subscribed,
-          on: {
-            click: (e) => e.stopPropagation(),
-            change: (e) => handleToggleSubscribe(item.code, e.target.checked)
-          }
-        })
-      ),
-      el('td', { class: 'col-pin', 'data-field': 'pin' },
-        el('button', {
-          class: 'pin-btn' + (pinned ? ' active' : ''),
-          title: pinned ? '取消固定' : '固定',
-          'aria-label': pinned ? `取消固定 ${item.name || item.code}` : `固定 ${item.name || item.code}`,
-          on: {
-            click: (e) => {
-              e.stopPropagation();
-              handleMomentumPinToggle(item.code);
-            }
-          }
-        }, pinned ? '取消固定' : '固定')
-      ),
-      el('td', { class: 'code', 'data-field': 'code' }, item.code),
-      el('td', { class: 'name', 'data-field': 'name' }, item.name || '-'),
-      el('td', { class: 'num up', 'data-field': 'gain' }, formatPercent(item.gainPercent)),
-      el('td', { class: 'num', 'data-field': 'price' }, formatNumber(item.price)),
-      el('td', { class: `num ${dir}`, 'data-field': 'percent' }, formatPercent(item.changePercent)),
-      el('td', { class: 'num', 'data-field': 'amount' }, formatAmount(item.amount)),
-      el('td', { class: 'momentum-industry', 'data-field': 'industry' }, item.industry || '-'),
-      el('td', { class: 'momentum-reason', 'data-field': 'reason', title: item.interpretation || item.reason || '' }, getMomentumReasonText(item))
-    ));
-    if (active) {
-      tbody.appendChild(renderMomentumChartRow(item, colCount, {
-        momentumState: s,
-        defaultPeriod: DEFAULT_PERIOD,
-        onPeriodChange: handleMomentumKlinePeriodChange,
-        onForceReload: handleMomentumForceReloadChart,
-        onCloseChart: closeMomentumChart
-      }));
+      }
+    },
+    callbacks: {
+      onScan: handleMomentumScan,
+      onStop: stopMomentumScan,
+      onSelectAllChange: handleMomentumSelectAllChange,
+      onToggleSelect: handleMomentumToggleSelect,
+      onToggleSubscribe: handleToggleSubscribe,
+      onPinToggle: handleMomentumPinToggle,
+      onRowClick: handleMomentumRowClick,
+      onPeriodChange: handleMomentumKlinePeriodChange,
+      onForceReload: handleMomentumForceReloadChart,
+      onCloseChart: closeMomentumChart,
+      onAfterMountCharts: () => {
+        for (const code of state.momentum.expandedCodes || []) {
+          mountMomentumChart(code);
+        }
+      }
     }
-  }
-  table.appendChild(tbody);
-  wrap.appendChild(table);
-  for (const code of s.expandedCodes || []) {
-    mountMomentumChart(code);
-  }
+  });
 }
 
 function handleMomentumSelectAllChange(checked, codes) {
@@ -878,71 +691,7 @@ function stopMomentumScan() {
 }
 
 function mergePinnedMomentumItems(nextItems) {
-  const byCode = new Map((Array.isArray(nextItems) ? nextItems : []).map((it) => [it.code, it]));
-  const oldByCode = new Map((state.momentum.items || []).map((it) => [it.code, it]));
-  for (const code of state.momentum.pinnedCodes) {
-    if (byCode.has(code)) continue;
-    const old = oldByCode.get(code);
-    if (old) byCode.set(code, { ...old, pinnedOnly: true });
-  }
-  return sortMomentumItems([...byCode.values()], state.momentum.pinnedCodes);
-}
-
-async function fetchMomentumUniverse(signal) {
-  try {
-    const sharedSpot = await fetchSharedSpot(signal);
-    if (Array.isArray(sharedSpot) && sharedSpot.length) return sharedSpot;
-  } catch (e) {
-    if (e && e.name === 'AbortError') throw e;
-  }
-  try {
-    const spot = await fetchAktoolsSpotList({ signal });
-    if (Array.isArray(spot) && spot.length) return spot;
-  } catch (e) {
-    if (e && e.name === 'AbortError') throw e;
-  }
-  const fallbackCodes = [...new Set([
-    ...state.watchList,
-    ...state.limitUp.items.map((it) => it.code)
-  ])].filter((code) => /^(sh|sz|bj)\d{6}$/i.test(code));
-  if (!fallbackCodes.length) return [];
-  const quotes = await fetchQuotes(fallbackCodes, { signal });
-  return quotes;
-}
-
-async function fetchSharedSpot(signal) {
-  const res = await fetch('/api/cache/spot/latest', { signal });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json();
-  const items = json && json.ok === true && json.data && Array.isArray(json.data.items)
-    ? json.data.items
-    : [];
-  if (!items.length) throw new Error('shared spot cache failed');
-  return items;
-}
-
-async function scanMomentumCandidate(candidate, signal) {
-  if (!candidate || !/^(sh|sz|bj)\d{6}$/i.test(candidate.code)) return null;
-  const data = await fetchKline(candidate.code, { period: '1d', signal, sharedCache: true });
-  const stats = computeTenDayMomentum(data);
-  if (!stats || stats.gainPercent < MOMENTUM_THRESHOLD_PCT) return null;
-  const limitUpItem = (state.limitUp.items || []).find((it) => it && it.code === candidate.code);
-  const reason = candidate.reason || (limitUpItem && (limitUpItem.reason || limitUpItem.limitStats)) || '';
-  const interpretation = candidate.interpretation || (limitUpItem && limitUpItem.interpretation) || '';
-  return {
-    code: candidate.code,
-    name: candidate.name || (data && data.name) || candidate.code,
-    price: Number(candidate.price) || stats.lastClose,
-    changePercent: Number(candidate.changePercent) || 0,
-    amount: Number(candidate.amount) || 0,
-    volumeRatio: Number(candidate.volumeRatio) || 0,
-    industry: candidate.industry || (limitUpItem && limitUpItem.industry) || '',
-    reason,
-    interpretation,
-    limitStats: candidate.limitStats || (limitUpItem && limitUpItem.limitStats) || '',
-    anomaly: reason ? '' : `10日涨幅超${MOMENTUM_THRESHOLD_PCT}%`,
-    ...stats
-  };
+  return mergePinnedMomentumItemsService(nextItems, state.momentum.pinnedCodes, state.momentum.items);
 }
 
 async function handleMomentumScan(options = {}) {
@@ -1002,7 +751,11 @@ async function handleMomentumScan(options = {}) {
       return;
     }
 
-    const universe = await fetchMomentumUniverse(abort.signal);
+    const universe = await fetchMomentumUniverse({
+      signal: abort.signal,
+      watchList: state.watchList,
+      limitUpItems: state.limitUp.items
+    });
     if (!universe.length) throw new Error('没有可扫描的股票池');
     state.momentum.total = universe.length;
     renderMomentumSection();
@@ -1015,7 +768,10 @@ async function handleMomentumScan(options = {}) {
         if (abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
         const candidate = universe[idx];
         try {
-          const item = await scanMomentumCandidate(candidate, abort.signal);
+          const item = await scanMomentumCandidate(candidate, {
+            signal: abort.signal,
+            limitUpItems: state.limitUp.items
+          });
           if (item) found.push(item);
         } catch (e) {
           if (e && e.name === 'AbortError') throw e;
@@ -1042,31 +798,6 @@ async function handleMomentumScan(options = {}) {
     state.momentum.loading = false;
     renderMomentumSection();
   }
-}
-
-async function fetchSharedMomentum(signal) {
-  const usp = new URLSearchParams();
-  usp.set('threshold', String(MOMENTUM_THRESHOLD_PCT));
-  const res = await fetch(`/api/cache/momentum/ten-day?${usp.toString()}`, { signal });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json();
-  if (!json || json.ok !== true || !json.data) {
-    throw new Error((json && json.error) || 'shared momentum cache failed');
-  }
-  return json.data;
-}
-
-async function startSharedMomentumScan(signal) {
-  const usp = new URLSearchParams();
-  usp.set('threshold', String(MOMENTUM_THRESHOLD_PCT));
-  const res = await fetch(`/api/cache/momentum/ten-day/scan?${usp.toString()}`, {
-    method: 'POST',
-    signal
-  });
-  if (!res.ok) throw new Error(`启动扫描失败: HTTP ${res.status}`);
-  const json = await res.json();
-  if (!json || json.ok !== true) throw new Error((json && json.error) || '启动扫描失败');
-  return json.data;
 }
 
 function handleMomentumPinToggle(code) {
@@ -1114,261 +845,56 @@ function mountMomentumChart(code) {
   momentumChartMgr.mountCharts(code);
 }
 
-function buildWatchHeaderCheckbox() {
-  const total = state.watchList.length;
-  const checkedCount = [...state.selected].filter((code) => state.watchList.includes(code)).length;
-  const input = el('input', {
-    type: 'checkbox',
-    id: 'watch-select-all',
-    title: '全选/取消全选',
-    checked: total > 0 && checkedCount === total,
-    on: {
-      click: (e) => e.stopPropagation(),
-      change: (e) => {
-        if (e.target.checked) handleSelectAll();
-        else handleSelectNone();
-      }
-    }
-  });
-  input.indeterminate = checkedCount > 0 && checkedCount < total;
-  return input;
-}
-
 function updateWatchHeaderCheckbox() {
-  const input = document.getElementById('watch-select-all');
-  if (!input) return;
-  const total = state.watchList.length;
-  const checkedCount = [...state.selected].filter((code) => state.watchList.includes(code)).length;
-  input.checked = total > 0 && checkedCount === total;
-  input.indeterminate = checkedCount > 0 && checkedCount < total;
+  updateWatchHeaderCheckboxView(state.watchList, state.selected);
 }
 
 function renderTable() {
-  // Destroy all live chart instances BEFORE we wipe #table-wrap. Each chart
-  // ctl is attached to a <div class="chart-host"> inside the current chart-row;
-  // clearing wrap.innerHTML detaches the host but leaves the ctl alive in
-  // chartInstanceMap. The next renderInlineChartRow creates a fresh host, but
-  // mountChartForCode sees chartInstanceMap.has(code) and skips re-creating
-  // the ctl — leaving the new host empty. Destroy up front so the loop after
-  // table-build can recreate cleanly.
-  for (const code of [...state.expandedCodes]) {
-    const inst = state.chartInstances.get(code);
-    const ctl = chartInstanceMap.get(code);
-    if (ctl) {
-      rememberRange(inst, ctl, '_visibleRange');
-      try { ctl.destroy(); } catch { /* ignore */ }
-      chartInstanceMap.delete(code);
-    }
-    const intradayCtl = intradayChartCtlMap.get(code);
-    if (intradayCtl) {
-      rememberRange(inst, intradayCtl, '_intradayVisibleRange');
-      try { intradayCtl.destroy(); } catch { /* ignore */ }
-      intradayChartCtlMap.delete(code);
-    }
-  }
-
   const wrap = document.getElementById('table-wrap');
   if (!wrap) return;
-  wrap.innerHTML = '';
-  if (!state.watchList.length) {
-    wrap.appendChild(el('div', { class: 'empty' }, '空空如也。先在上方输入代码添加吧～'));
-    return;
-  }
-
-  const table = el('table', { class: 'watch-table' });
-  const hasFuturesInList = (state.watchList || []).some(isFutureCode);
-  const thead = el(
-    'thead',
-    {},
-    el(
-      'tr',
-      {},
-      el('th', { class: 'col-check', 'data-field': 'check', title: '勾选用于批量删除/导出' }, buildWatchHeaderCheckbox()),
-      el('th', { class: 'col-sub', 'data-field': 'sub', title: '勾选订阅语音播报与价格提醒' }, '🔊 订阅'),
-      el('th', { class: 'code', 'data-field': 'code' }, '代码'),
-      el('th', { class: 'name', 'data-field': 'name' }, '名称'),
-      el('th', { class: 'num', 'data-field': 'price' }, '现价'),
-      el('th', { class: 'num', 'data-field': 'percent' }, '涨跌幅'),
-      el('th', { class: 'num', 'data-field': 'open' }, '开盘(涨幅)'),
-      el('th', { class: 'num', 'data-field': 'volume', title: hasFuturesInList ? '股票显示量比，期货显示成交量' : '量比' }, hasFuturesInList ? '量比 / 量' : '量比'),
-      el('th', { class: 'num', 'data-field': 'amount', title: hasFuturesInList ? '股票显示成交额，期货显示持仓量' : '成交额' }, hasFuturesInList ? '成交额 / 持仓' : '成交额'),
-      el('th', { class: 'col-op', 'data-field': 'op' }, '操作')
-    )
-  );
-  table.appendChild(thead);
-
-  const tbody = el('tbody', { id: 'watch-tbody' });
-  for (const code of state.watchList) {
-    const isActive = state.expandedCodes.has(code);
-    tbody.appendChild(renderRow(code, isActive));
-    if (isActive) {
-      tbody.appendChild(renderInlineChartRow(code));
-    }
-  }
-  table.appendChild(tbody);
-  wrap.appendChild(table);
-
-  for (const code of state.expandedCodes) {
-    mountChartForCode(code);
-  }
-}
-
-function renderRow(code, isActive) {
-  const q = state.quotes.get(code) || { code };
-  const dir = priceDirection(Number(q.changePercent));
-  const checkbox = el('input', {
-    type: 'checkbox',
-    'data-code': code,
-    checked: state.selected.has(code),
-    on: {
-      change: (e) => handleToggleSelect(code, e.target.checked),
-      click: (e) => e.stopPropagation()
-    }
-  });
-  const subCheckbox = el('input', {
-    type: 'checkbox',
-    'data-code-sub': code,
-    title: '订阅播报/提醒',
-    checked: state.subscribed.has(code),
-    on: {
-      change: (e) => handleToggleSubscribe(code, e.target.checked),
-      click: (e) => e.stopPropagation()
-    }
-  });
-  const isFuture = q.type === 'future' || isFutureCode(code);
-  const displayCode = isFuture ? code.toUpperCase() : code;
-  const priceDecimals = isFuture && q.priceTick && q.priceTick < 0.01 ? 3 : 2;
-  return el(
-    'tr',
-    {
-      'data-code': code,
-      class: isActive ? 'active' : null,
-      title: isActive ? '点击关闭 K 线' : '点击查看 K 线',
-      role: 'button',
-      tabindex: '0',
-      'aria-expanded': isActive ? 'true' : 'false',
-      on: {
-        click: (e) => handleRowClick(code, e),
-        keydown: (e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON')) return;
-            e.preventDefault();
-            handleRowClick(code, e);
-          }
+  renderTableView(wrap, {
+    watchList: state.watchList,
+    quotesMap: state.quotes,
+    selectedSet: state.selected,
+    subscribedSet: state.subscribed,
+    expandedCodes: state.expandedCodes,
+    chartInstances: state.chartInstances,
+    beforeRerenderClean: () => {
+      for (const code of [...state.expandedCodes]) {
+        const inst = state.chartInstances.get(code);
+        const ctl = chartInstanceMap.get(code);
+        if (ctl) {
+          rememberRange(inst, ctl, '_visibleRange');
+          try { ctl.destroy(); } catch { /* ignore */ }
+          chartInstanceMap.delete(code);
+        }
+        const intradayCtl = intradayChartCtlMap.get(code);
+        if (intradayCtl) {
+          rememberRange(inst, intradayCtl, '_intradayVisibleRange');
+          try { intradayCtl.destroy(); } catch { /* ignore */ }
+          intradayChartCtlMap.delete(code);
         }
       }
     },
-    el('td', { class: 'col-check', 'data-field': 'check' }, checkbox),
-    el('td', { class: 'col-sub', 'data-field': 'sub' }, subCheckbox),
-    el('td', { class: 'code', 'data-field': 'code' }, displayCode),
-    el('td', { class: 'name', 'data-field': 'name' }, q.name || '...'),
-    el('td', { class: `num ${dir}`, 'data-field': 'price' }, formatNumber(q.price, priceDecimals)),
-    el('td', { class: `num ${dir}`, 'data-field': 'percent' }, formatPercent(q.changePercent)),
-    el('td', { class: 'num', 'data-field': 'open' }, formatPriceWithPercent(q.open, q.openChangePercent)),
-    el('td', { class: 'num', 'data-field': 'volume', title: isFuture ? '成交量' : '量比' }, isFuture ? (q.volume ? `${Math.round(q.volume).toLocaleString('en-US')}` : '-') : formatNumber(q.volumeRatio)),
-    el('td', { class: 'num', 'data-field': 'amount', title: isFuture ? '持仓量' : '成交额' }, isFuture ? (q.openInterest ? `持仓 ${Math.round(q.openInterest).toLocaleString('en-US')}` : '-') : formatAmount(q.amount)),
-    el(
-      'td',
-      { class: 'col-op', 'data-field': 'op' },
-      el(
-        'button',
-        {
-          class: 'btn-link',
-          on: {
-            click: (e) => {
-              e.stopPropagation();
-              handleRemove(code);
-            }
-          }
-        },
-        '删除'
-      )
-    )
-  );
-}
-
-function renderInlineChartRow(code) {
-  const inst = state.chartInstances.get(code);
-  if (!inst) {
-    return el('tr', { 'data-empty-for': code, class: 'chart-row' });
-  }
-  const q = state.quotes.get(code) || {};
-  const tr = el('tr', { class: 'chart-row', 'data-chart-for': code });
-  const td = el('td', { colspan: '10', class: 'chart-td' });
-
-  const title = el(
-    'div',
-    { class: 'chart-inline-header' },
-    el('strong', {}, q.name || code),
-    el('span', { class: 'chart-inline-code' }, code),
-    el('button', {
-      class: 'chart-reload',
-      id: `chart-reload-${code}`,
-      title: '跳过缓存，从网络强制重新拉取',
-      on: { click: (e) => { e.stopPropagation(); handleForceReloadChart(code); } }
-    }, '🔄 重新加载'),
-    el('button', {
-      class: 'chart-close',
-      title: '关闭',
-      on: { click: (e) => { e.stopPropagation(); closeChart(code); } }
-    }, '× 关闭')
-  );
-
-  const tabs = el('div', { class: 'period-tabs' });
-  for (const p of Object.keys(PERIODS)) {
-    tabs.appendChild(el('button', {
-      class: 'period-tab' + (p === inst.period ? ' active' : ''),
-      'data-period': p,
-      on: { click: (e) => { e.stopPropagation(); handlePeriodChange(p, code); } }
-    }, PERIOD_LABELS[p]));
-  }
-
-  const status = el('div', { class: 'chart-status', id: `chart-status-${code}` });
-  updateChartStatusForCode(code, status);
-
-  const intradayStatus = el('div', { class: 'chart-status', id: `intraday-status-${code}` });
-  updateIntradayStatusForCode(code, intradayStatus);
-
-  const intradayHost = el('div', {
-    class: 'intraday-chart-host',
-    id: `intraday-chart-host-${code}`
+    callbacks: {
+      onSelectAll: handleSelectAll,
+      onSelectNone: handleSelectNone,
+      onToggleSelect: handleToggleSelect,
+      onToggleSubscribe: handleToggleSubscribe,
+      onRemove: handleRemove,
+      onRowClick: handleRowClick,
+      onPeriodChange: handlePeriodChange,
+      onForceReload: handleForceReloadChart,
+      onCloseChart: closeChart,
+      onUpdateChartStatus: updateChartStatusForCode,
+      onUpdateIntradayStatus: updateIntradayStatusForCode,
+      onAfterMountCharts: () => {
+        for (const code of state.expandedCodes) {
+          mountChartForCode(code);
+        }
+      }
+    }
   });
-
-  const host = el('div', {
-    class: 'chart-host',
-    id: `chart-host-${code}`
-  });
-
-  const split = el(
-    'div',
-    { class: 'chart-split' },
-    el(
-      'section',
-      { class: 'chart-pane chart-pane-intraday' },
-      el(
-        'div',
-        { class: 'chart-pane-title' },
-        el('span', {}, '分时图'),
-        el('span', { class: 'intraday-legend intraday-legend-price' }, '价格'),
-        el('span', { class: 'intraday-legend intraday-legend-average' }, '均价')
-      ),
-      intradayStatus,
-      intradayHost
-    ),
-    el(
-      'section',
-      { class: 'chart-pane chart-pane-kline' },
-      el('div', { class: 'chart-pane-title' }, 'K线图'),
-      status,
-      host
-    )
-  );
-
-  td.appendChild(title);
-  td.appendChild(tabs);
-  td.appendChild(split);
-  tr.appendChild(td);
-  return tr;
 }
 
 function renderStatus() {
@@ -2954,45 +2480,8 @@ function getRefreshCodes() {
 // Patch the data cells of an existing
 // <tr data-code="..."> in place. The row's <td> order is fixed by renderRow():
 // [check, sub, code, name, price, percent, openPct, volumeRatio, amount, op].
-// We update cells 3..8 (0-indexed). The checkbox/sub-checkbox/op cells and
-// the chart-row below are left untouched — those only need rebuilding on
-// structural changes (add/remove/expand/period-change).
 function updateRowQuoteCells(code) {
-  const row = document.querySelector(`#watch-tbody tr[data-code="${code}"]`);
-  if (!row) return;
-  const q = state.quotes.get(code);
-  if (!q) return;
-  const allCells = row.querySelectorAll('td');
-  if (allCells.length < 9) return;
-  const dir = priceDirection(Number(q.changePercent));
-  const isFuture = q.type === 'future' || isFutureCode(code);
-  const priceDecimals = isFuture && q.priceTick && q.priceTick < 0.01 ? 3 : 2;
-
-  const getCell = (field, fallbackIndex) => row.querySelector(`td[data-field="${field}"]`) || allCells[fallbackIndex];
-
-  const nameCell = getCell('name', 3);
-  if (nameCell) nameCell.textContent = q.name || '...';
-
-  const priceCell = getCell('price', 4);
-  if (priceCell) {
-    priceCell.textContent = formatNumber(q.price, priceDecimals);
-    priceCell.className = `num ${dir}`;
-  }
-
-  const percentCell = getCell('percent', 5);
-  if (percentCell) {
-    percentCell.textContent = formatPercent(q.changePercent);
-    percentCell.className = `num ${dir}`;
-  }
-
-  const openCell = getCell('open', 6);
-  if (openCell) openCell.textContent = formatPriceWithPercent(q.open, q.openChangePercent);
-
-  const volCell = getCell('volume', 7);
-  if (volCell) volCell.textContent = isFuture ? (q.volume ? `${Math.round(q.volume).toLocaleString('en-US')}` : '-') : formatNumber(q.volumeRatio);
-
-  const amtCell = getCell('amount', 8);
-  if (amtCell) amtCell.textContent = isFuture ? (q.openInterest ? `持仓 ${Math.round(q.openInterest).toLocaleString('en-US')}` : '-') : formatAmount(q.amount);
+  updateRowQuoteCellsView(code, state.quotes.get(code));
 }
 
 function mergeQuotesIntoMomentumItems() {

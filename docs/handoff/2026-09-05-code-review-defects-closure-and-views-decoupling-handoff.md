@@ -2,7 +2,7 @@
 
 > **交接日期**：2026-09-05  
 > **基线分支**：`main`  
-> **验证状态**：638 / 638 单测全绿（`npm test`），56 / 56 Playwright E2E 全绿（`npm run e2e`），ESLint 0 错误 0 警告（`npm run lint`），生产构建顺利完成（`npm run build`）  
+> **验证状态**：648 / 648 单测全绿（`npm test`），56 / 56 Playwright E2E 全绿（`npm run e2e`），ESLint 0 错误 0 警告（`npm run lint`），生产构建顺利完成（`npm run build`）  
 > **前序文档**：  
 > - [`docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md`](./2026-09-04-code-review-defects-and-architecture-refactor-handoff.md)  
 > - [`STATUS.md`](../../STATUS.md) | [`AGENTS.md`](../../AGENTS.md)
@@ -14,9 +14,9 @@
 针对 [`docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md`](./2026-09-04-code-review-defects-and-architecture-refactor-handoff.md) 提出的各项缺陷与架构优化建议，我们进行了系统性逐行审计与核验：
 
 1. **客观存在性核验**：
-   - 虽然早期提交实现了科创板/创业板 ST 涨跌幅纠正、内存 LRU 访问标记与 futures VWAP 计算，但审查报告中指出的多项**深层架构缺陷、UX/交互缺陷和 A11y 缺陷客观存在**；
-   - `src/js/app.js` 依然膨胀至 3584+ 行，集中堆砌了大量的 DOM 渲染、排序计算、语音栏与预警栏渲染逻辑；
-   - 10 日动量表格仍然依赖脆弱的 `allCells[4..9]` 数字硬编码索引；
+   - 虽然早期提交实现了科创板/创业板 ST 涨跌幅纠正、内存 LRU 访问标记与 futures VWAP 计算，但审查报告中指出的多项**深层架构缺陷（4.1.1 God Object 巨石）、UX/交互缺陷和 A11y 缺陷客观存在**；
+   - `src/js/app.js` 依然膨胀至 3200+ 行，集中堆砌了大量的 DOM 渲染、表格挂载、顶栏/工具栏状态、自选股监控表及动量扫描调度；
+   - 10 日动量表格此前仍然依赖脆弱的 `allCells[4..9]` 数字硬编码索引；
    - 标的删除仍然使用原生的阻塞式 `window.confirm(...)`；
    - 移动端 `<768px` 缺少对涨停看板和 10 日强势股表格的媒体查询适配，大表格在小屏被严重挤压；
    - 涨停看板表头与置顶操作缺乏完善的无障碍属性（`role="button"`, `tabindex="0"`, `aria-sort`）与键盘交互支持；
@@ -24,7 +24,8 @@
 
 2. **全量修复成果**：
    - 针对上述问题已完成全量闭环修复与重构，且未破坏任何现有外部导出与兼容性。
-   - 所有单测增至 **638 项全部通过**，Playwright E2E **56 项 100% 通过**，ESLint 零告警。
+   - `app.js` 巨石代码大幅瘦身，抽离为清晰的 `views/` 视图层与 `services/` 业务层。
+   - 所有单测扩充至 **648 项全部通过**，Playwright E2E **56 项 100% 通过**，ESLint 零告警，`npm run ci` 全绿。
 
 ---
 
@@ -39,13 +40,18 @@
   - 遮罩层点击安全关闭，关闭时自动恢复触发元素的焦点；
   - 配套编写 `tests/modal.test.js`，覆盖确认、取消、ESC 键、Enter 键与遮罩点击 5 项测试。
 
-### 2.2 视图解耦与模块化重构 (`src/js/views/`)
-- **问题**：`src/js/app.js` 包含大量直接操作 DOM 拼接的视图组件，违反职责单一原则。
+### 2.2 视图与服务解耦（彻底击碎 `app.js` God Object 巨石）
+- **问题**：`src/js/app.js` 曾集中包含整个监控页的顶栏、工具栏、自选股表格、动量扫描调度和动量看板拼装，文件体量过大且职责严重混杂。
 - **解决方案**：
-  - **`src/js/views/voiceBarView.js`**：抽离语音设置栏的渲染、字段重排操作、状态同步逻辑，提供纯粹的 DOM 装配与事件接口。
+  - **`src/js/views/headerView.js`**：抽离标题、自选股刷新频率下拉、自动刷新按钮及状态文字更新、主题切换按钮绑定。
+  - **`src/js/views/toolbarView.js`**：抽离自选股代码输入框（含回车监听、错误晃动动效）、添加按钮、立即刷新按钮、批量删除、批量启用/静音语音、自选股 CSV/文本导出按钮构建与状态同步。
+  - **`src/js/views/monitorTableView.js`**：抽离自选股监控表格核心渲染、全选复选框计算与状态更新、单行渲染（无障碍属性 `role="button"`, `aria-expanded`）、内嵌图表行展开/收起、行内局部单元格 `updateRowQuoteCells` 精准 Patch。
+  - **`src/js/services/momentumScanner.js`**：抽离 10 日涨幅扫描的候选池分析、并发分批调度、服务端共享缓存轮询、钉选标的合并与排序。
+  - **`src/js/views/momentumView.js`**：提供 `renderMomentumSectionView`，抽离 10 日强势股面板装配与行内图表控制器。
+  - **`src/js/views/voiceBarView.js`**：抽离语音设置栏的渲染、字段重排操作、状态同步逻辑。
   - **`src/js/views/alertBarView.js`**：抽离价格预警栏的阈值输入、开关、通知权限申请提示逻辑。
-  - **`src/js/views/momentumView.js`**：抽离 10 日强势股板块的面板渲染、纯函数排序 (`sortMomentumItems`)、指标计算与过滤 (`computeTenDayMomentum`)、单元格局部更新 (`updateMomentumQuoteCellsView`) 以及行内图表展开控制器。
-  - `src/js/app.js` 仅保留编排逻辑与全局生命周期，并维持对测试用例公开函数的向后兼容重新导出。
+  - `src/js/app.js` 瘦身 510+ 行，仅保留应用生命周期编排，并通过 re-export 保持对既有测试用例（`tests/app.test.js` 35 项导出）100% 向后兼容。
+  - 新增 `tests/monitorTableView.test.js` 与 `tests/momentumScanner.test.js` 单元测试。
 
 ### 2.3 表格更新语义化解耦 (`data-field`)
 - **问题**：在 `updateMomentumQuoteCells` 等函数中，使用 `const allCells = row.querySelectorAll('td')` 并用 `allCells[4]`、`allCells[5]` 赋值。一旦未来调整列顺序，将导致毁灭性的错位。
@@ -86,7 +92,7 @@ npm run lint
 
 # 2. 单元测试
 npm test
-# 输出：638 / 638 passed (100%)
+# 输出：648 / 648 passed (100%)
 
 # 3. 端到端自动化测试
 npm run e2e

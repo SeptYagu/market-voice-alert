@@ -60,11 +60,15 @@
 - ✅ **自定义非阻塞确认模态框 (`src/js/modal.js`)**：
   - 移除原生阻塞式 `window.confirm(...)`，实现主题自动适配、键盘焦点陷阱（Tab 循环、Escape 取消、Enter 确认）、遮罩点击关闭的异步非阻塞确认弹窗；
   - 编写专用单元测试 `tests/modal.test.js`，5 项单测全部通过。
-- ✅ **大文件巨石与视图组件解耦 (`src/js/views/`)**：
+- ✅ **大文件巨石与视图/服务层彻底解耦 (`src/js/views/` 与 `src/js/services/`)**：
+  - 抽离 `src/js/views/headerView.js`：封装顶栏标题、刷新频率下拉、自动刷新按钮及状态更新、主题切换；
+  - 抽离 `src/js/views/toolbarView.js`：封装自选股输入框（带回车监听与报错动效）、添加按钮、立即刷新、批量删除/静音/启用与 CSV 导出；
+  - 抽离 `src/js/views/monitorTableView.js`：封装自选股监控表格核心渲染、全选控制、无障碍单行渲染、内嵌图表行展开及局部单元格 Patch；
+  - 抽离 `src/js/services/momentumScanner.js`：封装 10 日涨幅扫描调度、并发候选股分析、共享缓存轮询与钉选排序合并；
+  - 抽离 `src/js/views/momentumView.js`：封装 10 日强势股面板装配 (`renderMomentumSectionView`)、纯函数排序、指标计算与过滤、单元格局部更新及行内图表展开；
   - 抽离 `src/js/views/voiceBarView.js`：封装语音设置栏渲染、字段动态调序与事件处理；
   - 抽离 `src/js/views/alertBarView.js`：封装价格预警栏渲染、阈值输入与通知权限申请；
-  - 抽离 `src/js/views/momentumView.js`：封装 10 日强势股面板渲染、纯函数排序、指标计算与过滤、单元格局部更新及行内图表展开；
-  - `src/js/app.js` 全面精简，仅作为协调控制器并保持所有既有外部引用的向后兼容重导出。
+  - `src/js/app.js` 巨石瘦身 510+ 行，仅作为生命周期协调控制器并保持所有既有外部引用的向后兼容重导出。
 - ✅ **表格更新脱敏与语义化定位 (`data-field`)**：
   - 彻底废除 `allCells[4..9]` 等脆弱硬编码下标，为自选股与 10 日强势股表格所有 `th` / `td` 注入 `data-field` 语义标记，改用 `td[data-field="..."]` 精准 Patch。
 - ✅ **移动端完整响应式适配 (`src/style.css`)**：
@@ -74,7 +78,7 @@
   - 为置顶/收藏按钮补齐动态 `aria-label`。
 - ✅ **北交所无前缀代码鲁棒性 (`src/js/kline.js`)**：
   - `getPriceLimit` 强化对无 `bj` 前缀的 6 位纯数字北交所代码（如 `83xxxx`, `43xxxx`, `92xxxx`）正确识别为 30% 涨跌幅限制，新增针对性测试用例。
-- ✅ **测试与质量**：单元测试增至 638 项全部 PASS；Playwright 端到端测试 56/56 项 100% 通过；ESLint 0 错误 0 警告；Vite 生产构建成功。
+- ✅ **测试与质量**：单元测试增至 648 项全部 PASS；Playwright 端到端测试 56/56 项 100% 通过；ESLint 0 错误 0 警告；Vite 生产构建成功；`npm run ci` 全绿。
 - 详见交接文档：[`docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md`](docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md)。
 
 ## 备份
