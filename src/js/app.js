@@ -18,19 +18,14 @@ import {
   getSubscribedCodes,
   setSubscribedCodes,
   getLimitUpSettings,
-  patchLimitUpSettings,
   getMomentumPinnedCodes,
-  setMomentumPinnedCodes,
-  getLimitUpPinnedCodes,
-  setLimitUpPinnedCodes
+  getLimitUpPinnedCodes
 } from './storage.js';
 import { fetchQuotes, fetchKline, fetchIntraday, onKlineUpdated } from './api.js';
-import { normalizeCode } from './parser.js';
-import { parseFutureInput, isFutureCode } from './futures/instrument.js';
+import { isFutureCode } from './futures/instrument.js';
 import {
   PERIOD_LABELS,
   DEFAULT_PERIOD,
-  isValidPeriod,
   getLastKlineDate
 } from './kline.js';
 import {
@@ -54,12 +49,26 @@ import {
   isNotificationSupported
 } from './alert.js';
 import { createHashRouter, navigate } from './router.js';
-import { fetchLimitUpList, fetchLimitUpReasons, fetchLimitUpMetadataBatch, clearLimitUpMetadataCache } from './limitUpApi.js';
-import { buildLimitUpGroups, mergeLiveTicks, sortLimitUpGroupItems } from './limitUp.js';
-import { renderLimitUpPage } from './limitUpView.js';
+import {
+  createLimitUpController,
+  applyLimitUpFetchResult
+} from './controllers/limitUpController.js';
+import { createMomentumController } from './controllers/momentumController.js';
+import {
+  parseBatchInput,
+  buildExportText,
+  buildExportCsv,
+  downloadText
+} from './services/batchExportService.js';
+import {
+  computeTenDayMomentum,
+  sortMomentumItems,
+  getMomentumReasonText,
+  MOMENTUM_LOOKBACK_TRADING_DAYS,
+  MOMENTUM_THRESHOLD_PCT
+} from './services/momentumMath.js';
 import {
   fetchTradeCalendar,
-  getAdjacentTradingDates,
   resolveLatestTradingDate
 } from './tradeCalendar.js';
 import { getBeijingDate, formatDateTime } from './time.js';
@@ -76,10 +85,7 @@ import {
 import {
   LIMIT_UP_REFRESH_OPTIONS,
   formatNumber,
-  priceDirection,
   formatPercent,
-  formatAmount,
-  stripPrefix,
   makeExportFilename,
   intradaySourceLabel
 } from './format.js';
@@ -97,24 +103,9 @@ import {
   updateRowQuoteCells as updateRowQuoteCellsView
 } from './views/monitorTableView.js';
 import {
-  computeTenDayMomentum,
-  sortMomentumItems,
-  getMomentumReasonText,
   buildMomentumHeaderCheckbox,
-  renderMomentumChartRow,
-  renderMomentumSectionView,
-  updateMomentumQuoteCells as updateMomentumQuoteCellsView,
-  MOMENTUM_LOOKBACK_TRADING_DAYS,
-  MOMENTUM_THRESHOLD_PCT
+  renderMomentumChartRow
 } from './views/momentumView.js';
-import {
-  fetchSharedMomentum,
-  startSharedMomentumScan,
-  fetchMomentumUniverse,
-  scanMomentumCandidate,
-  mergePinnedMomentumItems as mergePinnedMomentumItemsService,
-  MOMENTUM_SCAN_CONCURRENCY
-} from './services/momentumScanner.js';
 
 export {
   LIMIT_UP_REFRESH_OPTIONS,
@@ -136,6 +127,12 @@ export {
   MOMENTUM_LOOKBACK_TRADING_DAYS,
   MOMENTUM_THRESHOLD_PCT
 };
+export {
+  parseBatchInput,
+  buildExportText,
+  buildExportCsv
+};
+export { applyLimitUpFetchResult };
 export {
   renderHeaderView,
   renderToolbarView,
@@ -298,72 +295,6 @@ export function normalizeAlertSettings(input) {
   };
 }
 
-export function parseBatchInput(input) {
-  if (!input || typeof input !== 'string') return [];
-  const tokens = input.split(/[,， ]+/);
-  const seen = new Set();
-  const out = [];
-  for (const tok of tokens) {
-    const norm = normalizeFuture(tok) || normalizeCode(tok);
-    if (norm && !seen.has(norm)) {
-      seen.add(norm);
-      out.push(norm);
-    }
-  }
-  return out;
-}
-
-function normalizeFuture(input) {
-  if (!input || typeof input !== 'string') return null;
-  const inst = parseFutureInput(input);
-  if (inst) return inst.symbol.toLowerCase();
-  const raw = input.trim().toLowerCase();
-  if (/^nf\d{4}$/.test(raw)) return raw;
-  return null;
-}
-
-
-
-export function buildExportText(codes) {
-  return codes.map(stripPrefix).filter(Boolean).join('\n');
-}
-
-export function buildExportCsv(codes, quotesMap) {
-  const header = ['代码', '名称', '现价', '涨跌幅(%)', '开盘价', '成交量', '成交额/持仓量', '类型'];
-  const rows = [header.join(',')];
-  for (const code of codes || []) {
-    if (!code) continue;
-    const q = quotesMap && typeof quotesMap.get === 'function' ? quotesMap.get(code) : null;
-    const isFuture = q ? (q.type === 'future' || isFutureCode(code)) : isFutureCode(code);
-    const displayCode = isFuture ? code.toUpperCase() : stripPrefix(code);
-    let rawName = (q && q.name) ? String(q.name) : displayCode;
-    if (/^[=+\-@\t\r]/.test(rawName)) rawName = `'${rawName}`;
-    const name = `"${rawName.replace(/"/g, '""')}"`;
-    const decimals = isFuture && q && q.priceTick && q.priceTick < 0.01 ? 3 : 2;
-    const price = q && Number.isFinite(Number(q.price)) ? Number(q.price).toFixed(decimals) : '';
-    const pct = q && Number.isFinite(Number(q.changePercent)) ? Number(q.changePercent).toFixed(2) : '';
-    const open = q && Number.isFinite(Number(q.open)) ? Number(q.open).toFixed(decimals) : '';
-    const vol = q && Number.isFinite(Number(q.volume)) ? Math.round(Number(q.volume)) : '';
-    const amount = q && Number.isFinite(Number(q.amount)) ? Number(q.amount) : '';
-    const type = isFuture ? '期货' : '股票';
-    rows.push([displayCode, name, price, pct, open, vol, amount, type].join(','));
-  }
-  return '\uFEFF' + rows.join('\r\n');
-}
-
-function downloadText(text, filename) {
-  if (typeof document === 'undefined' || typeof URL === 'undefined') return;
-  const mime = filename.endsWith('.csv') ? 'text/csv;charset=utf-8;' : 'text/plain;charset=utf-8';
-  const blob = new Blob([text], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
 
 const state = {
   watchList: [],
@@ -509,6 +440,35 @@ export const momentumChartMgr = new ChartRowManager({
   onStateChange: () => renderMomentumSection()
 });
 export const momentumChartCtlMap = momentumChartMgr.klineCtlMap;
+
+export const limitUpCtrl = createLimitUpController({
+  getState: () => state,
+  limitUpChartMgr,
+  onNavigate: (path) => navigate(path),
+  onAddToWatchList: (code, opts = {}) => {
+    const wasInList = state.watchList.includes(code);
+    addToWatchList(code);
+    state.watchList = getWatchList();
+    if (!opts.silent) {
+      flashInfo(wasInList ? `已在监控列表：${code}` : `已加入监控：${code}`);
+      navigate('#/');
+      refreshNow();
+      renderData();
+    }
+  },
+  flashInfo: (msg) => flashInfo(msg),
+  refreshNow: () => refreshNow(),
+  renderData: () => renderData(),
+  isDataAutoRefreshAllowedNow: () => isDataAutoRefreshAllowedNow(),
+  preloadKlineForCodes: (codes) => preloadKlineForCodes(codes)
+});
+
+export const momentumCtrl = createMomentumController({
+  getState: () => state,
+  momentumChartMgr,
+  onToggleSubscribe: (code, checked) => handleToggleSubscribe(code, checked)
+});
+
 let appRouter = null;
 
 function el(tag, attrs = {}, ...children) {
@@ -516,7 +476,6 @@ function el(tag, attrs = {}, ...children) {
   for (const [k, v] of Object.entries(attrs)) {
     if (v === null || v === undefined || v === false) continue;
     if (k === 'class') node.className = v;
-    else if (k === 'html') node.innerHTML = v;
     else if (k === 'on' && typeof v === 'object') {
       for (const [ev, fn] of Object.entries(v)) node.addEventListener(ev, fn);
     } else if (k.startsWith('data-') || k === 'type' || k === 'value' || k === 'placeholder' || k === 'title' || k === 'id') {
@@ -619,263 +578,18 @@ function updateAlertHint() {
   updateAlertHintView(state.subscribed.size);
 }
 
-function renderMomentumSection() {
-  const wrap = document.getElementById('momentum-section');
-  if (!wrap) return;
-  renderMomentumSectionView(wrap, {
-    momentumState: state.momentum,
-    subscribedCodes: state.subscribed,
-    defaultPeriod: DEFAULT_PERIOD,
-    beforeRerenderClean: () => {
-      for (const code of state.momentum.expandedCodes || []) {
-        const inst = state.momentum.chartInstances.get(code);
-        const ctl = momentumChartCtlMap.get(code);
-        rememberRange(inst, ctl, '_visibleRange');
-        if (ctl) {
-          try { ctl.destroy(); } catch { /* ignore */ }
-          momentumChartCtlMap.delete(code);
-        }
-      }
-    },
-    callbacks: {
-      onScan: handleMomentumScan,
-      onStop: stopMomentumScan,
-      onSelectAllChange: handleMomentumSelectAllChange,
-      onToggleSelect: handleMomentumToggleSelect,
-      onToggleSubscribe: handleToggleSubscribe,
-      onPinToggle: handleMomentumPinToggle,
-      onRowClick: handleMomentumRowClick,
-      onPeriodChange: handleMomentumKlinePeriodChange,
-      onForceReload: handleMomentumForceReloadChart,
-      onCloseChart: closeMomentumChart,
-      onAfterMountCharts: () => {
-        for (const code of state.momentum.expandedCodes || []) {
-          mountMomentumChart(code);
-        }
-      }
-    }
-  });
-}
-
-function handleMomentumSelectAllChange(checked, codes) {
-  if (checked) {
-    state.momentum.selectedCodes = new Set(codes);
-  } else {
-    for (const code of codes) state.momentum.selectedCodes.delete(code);
-  }
-  renderMomentumSection();
-}
-
-function handleMomentumToggleSelect(code, checked) {
-  if (!code) return;
-  if (checked) state.momentum.selectedCodes.add(code);
-  else state.momentum.selectedCodes.delete(code);
-  renderMomentumSection();
-}
-
-function handleMomentumRowClick(code, e) {
-  const target = e && e.target;
-  if (target && target.tagName === 'INPUT') return;
-  if (target && target.tagName === 'BUTTON') return;
-  if (target && target.closest && target.closest('.momentum-chart-row')) return;
-  if (state.momentum.expandedCodes.has(code)) closeMomentumChart(code);
-  else openMomentumChart(code);
-}
-
-let momentumPollTimer = null;
-
-function stopMomentumScan() {
-  if (momentumPollTimer) {
-    clearTimeout(momentumPollTimer);
-    momentumPollTimer = null;
-  }
-  if (state.momentum.abort) {
-    try { state.momentum.abort.abort(); } catch { /* ignore */ }
-  }
-  state.momentum.abort = null;
-  state.momentum.loading = false;
-  state.momentum.serverScanning = false;
-  state.momentum.message = '已停止页面轮询；服务端任务可继续在后台完成';
-  renderMomentumSection();
-}
-
-function mergePinnedMomentumItems(nextItems) {
-  return mergePinnedMomentumItemsService(nextItems, state.momentum.pinnedCodes, state.momentum.items);
-}
-
-function _mergeMomentumQuotesSafely(items) {
-  for (const item of items || []) {
-    if (!item || !item.code) continue;
-    const existing = state.quotes.get(item.code);
-    if (existing) {
-      state.quotes.set(item.code, {
-        ...item,
-        ...existing,
-        price: Number.isFinite(Number(item.price)) ? Number(item.price) : existing.price,
-        changePercent: Number.isFinite(Number(item.changePercent)) ? Number(item.changePercent) : existing.changePercent,
-        amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : existing.amount,
-        type: 'stock'
-      });
-    } else {
-      state.quotes.set(item.code, { ...item, type: 'stock' });
-    }
-  }
-}
-
-async function handleMomentumScan(options = {}) {
-  if (state.momentum.loading) return;
-  if (state.momentum.abort) {
-    try { state.momentum.abort.abort(); } catch { /* ignore */ }
-  }
-  const abort = new AbortController();
-  state.momentum.abort = abort;
-  state.momentum.loading = true;
-  if (!options || options.poll !== true) state.momentum.serverScanning = false;
-  state.momentum.message = null;
-  state.momentum.error = null;
-  state.momentum.scanned = 0;
-  state.momentum.total = 0;
-  renderMomentumSection();
-  try {
-    if (!options || options.poll !== true) {
-      await startSharedMomentumScan(abort.signal);
-      state.momentum.serverScanning = true;
-    }
-    let cached = null;
-    try {
-      cached = await fetchSharedMomentum(abort.signal);
-    } catch (e) {
-      if (e && e.name === 'AbortError') throw e;
-      cached = null;
-    }
-    if (cached && Array.isArray(cached.items)) {
-      state.momentum.total = cached.universeSize || cached.items.length;
-      state.momentum.scanned = cached.scanned || state.momentum.total;
-      state.momentum.items = mergePinnedMomentumItems(cached.items);
-      if (cached.status === 'scanning') {
-        state.momentum.serverScanning = true;
-        state.momentum.message = '服务端扫描中，稍后自动刷新';
-        if (momentumPollTimer) clearTimeout(momentumPollTimer);
-        momentumPollTimer = setTimeout(() => {
-          momentumPollTimer = null;
-          if (state.momentum.serverScanning && !state.momentum.loading) handleMomentumScan({ poll: true });
-        }, 5000);
-        return;
-      }
-      state.momentum.serverScanning = false;
-      if (cached.status === 'empty') {
-        state.momentum.error = cached.message || '等待服务端定时扫描生成结果';
-        return;
-      }
-      if (cached.status === 'error') {
-        state.momentum.error = cached.error || '后端全市场扫描失败，已保留部分结果';
-        return;
-      }
-      if (cached.status === 'partial') {
-        state.momentum.message = cached.message || '部分股票数据源刷新失败；当前仅展示有效结果';
-      }
-      _mergeMomentumQuotesSafely(state.momentum.items);
-      state.momentum.lastUpdate = new Date();
-      return;
-    }
-
-    const universe = await fetchMomentumUniverse({
-      signal: abort.signal,
-      watchList: state.watchList,
-      limitUpItems: state.limitUp.items
-    });
-    if (!universe.length) throw new Error('没有可扫描的股票池');
-    state.momentum.total = universe.length;
-    renderMomentumSection();
-    const found = [];
-    let cursor = 0;
-    const worker = async () => {
-      while (cursor < universe.length) {
-        const idx = cursor;
-        cursor += 1;
-        if (abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
-        const candidate = universe[idx];
-        try {
-          const item = await scanMomentumCandidate(candidate, {
-            signal: abort.signal,
-            limitUpItems: state.limitUp.items
-          });
-          if (item) found.push(item);
-        } catch (e) {
-          if (e && e.name === 'AbortError') throw e;
-        } finally {
-          state.momentum.scanned += 1;
-          if (state.momentum.scanned % 25 === 0 || state.momentum.scanned === state.momentum.total) {
-            renderMomentumSection();
-          }
-        }
-      }
-    };
-    const workerCount = Math.min(MOMENTUM_SCAN_CONCURRENCY, universe.length);
-    await Promise.all(Array.from({ length: workerCount }, worker));
-    state.momentum.items = mergePinnedMomentumItems(found);
-    _mergeMomentumQuotesSafely(state.momentum.items);
-    state.momentum.lastUpdate = new Date();
-  } catch (e) {
-    state.momentum.serverScanning = false;
-    if (e && e.name !== 'AbortError') state.momentum.error = e.message || String(e);
-  } finally {
-    if (state.momentum.abort === abort) state.momentum.abort = null;
-    state.momentum.loading = false;
-    renderMomentumSection();
-  }
-}
-
-function handleMomentumPinToggle(code) {
-  if (!code) return;
-  const pins = new Set(state.momentum.pinnedCodes);
-  if (pins.has(code)) pins.delete(code);
-  else pins.add(code);
-  state.momentum.pinnedCodes = pins;
-  setMomentumPinnedCodes([...pins]);
-  state.momentum.items = pins.has(code)
-    ? mergePinnedMomentumItems(state.momentum.items)
-    : state.momentum.items.filter((it) => it.code !== code || !it.pinnedOnly);
-  renderMomentumSection();
-}
-
-function openMomentumChart(code) {
-  if (!code || state.momentum.expandedCodes.has(code)) return;
-  state.momentum.expandedCodes.add(code);
-  state.momentum.chartInstances.set(code, createChartState(DEFAULT_PERIOD));
-  renderMomentumSection();
-  momentumChartMgr.loadKline(code);
-}
-
-function closeMomentumChart(code) {
-  if (!code || !state.momentum.expandedCodes.has(code)) return;
-  state.momentum.expandedCodes.delete(code);
-  momentumChartMgr.destroyCharts(code);
-  const inst = state.momentum.chartInstances.get(code);
-  if (inst && inst.abort) {
-    try { inst.abort.abort(); } catch { /* ignore */ }
-  }
-  state.momentum.chartInstances.delete(code);
-  renderMomentumSection();
+export function renderMomentumSection() {
+  momentumCtrl.render();
 }
 
 export function closeAllMomentumCharts() {
-  for (const code of [...state.momentum.expandedCodes]) {
-    closeMomentumChart(code);
-  }
+  momentumCtrl.closeAllCharts();
 }
 
-function handleMomentumKlinePeriodChange(code, period) {
-  momentumChartMgr.handlePeriodChange(period, code);
+export function stopMomentumScan() {
+  momentumCtrl.stopScan();
 }
 
-function handleMomentumForceReloadChart(code) {
-  momentumChartMgr.loadKline(code, { force: true });
-}
-
-function mountMomentumChart(code) {
-  momentumChartMgr.mountCharts(code);
-}
 
 function updateWatchHeaderCheckbox() {
   updateWatchHeaderCheckboxView(state.watchList, state.selected);
@@ -1106,12 +820,6 @@ function preloadKlineForCodes(codes) {
   setTimeout(runNextBatch, 0);
 }
 
-// Phase 8: 预拉涨停看板前 N 个涨停股的 1d K 线
-function preloadLimitUpTopCharts(n = 10) {
-  if (!Array.isArray(state.limitUp.items) || !state.limitUp.items.length) return;
-  const top = state.limitUp.items.slice(0, n);
-  preloadKlineForCodes(top.map(it => it.code));
-}
 
 async function handleRemove(code) {
   const quote = state.quotes.get(code);
@@ -1191,627 +899,37 @@ function handleRefreshNow() {
   refreshNow();
 }
 
-function fetchLimitUpListNow() {
-  // User-initiated refresh should always hit the network, never the 30s
-  // aktools cache. Periodic timer-driven fetches still use the cache.
-  clearLimitUpMetadataCache();
-  state.limitUp.forceRefreshOnce = isLimitUpDateToday();
-  return limitUpFetch();
-}
-
-async function ensureLimitUpTradingDate(
-  rawDate = state.limitUp.selectedDate || getBeijingDate(),
-  requestSeq = null
-) {
-  state.limitUp.calendarLoading = true;
-  try {
-    const dates = await fetchTradeCalendar();
-    const target = rawDate || getBeijingDate();
-    const resolved = resolveLatestTradingDate(target, dates);
-    const adj = getAdjacentTradingDates(resolved, dates);
-    if (requestSeq !== null && requestSeq !== state.limitUp.requestSeq) {
-      return resolved;
-    }
-    state.tradingDates = dates;
-    state.limitUp.tradingDates = dates;
-    state.limitUp.selectedDate = resolved;
-    state.limitUp.latestTradingDate = adj.latest;
-    state.limitUp.previousTradingDate = adj.previous;
-    state.limitUp.nextTradingDate = adj.next;
-    return resolved;
-  } finally {
-    if (requestSeq === null || requestSeq === state.limitUp.requestSeq) {
-      state.limitUp.calendarLoading = false;
-    }
-  }
-}
-
-function refreshLimitUpDateMeta() {
-  const dates = state.limitUp.tradingDates;
-  const adj = getAdjacentTradingDates(
-    state.limitUp.selectedDate || getBeijingDate(),
-    dates,
-    getBeijingDate()
-  );
-  state.limitUp.selectedDate = adj.current;
-  state.limitUp.latestTradingDate = adj.latest;
-  state.limitUp.previousTradingDate = adj.previous;
-  state.limitUp.nextTradingDate = adj.next;
-}
-
 function isLimitUpDateToday(date = state.limitUp.selectedDate) {
-  return date === getBeijingDate();
+  return limitUpCtrl.isDateToday(date);
 }
 
-function updateLimitUpStatusBar() {
-  if (!limitUpRootEl) return;
-  const statusEl = limitUpRootEl.querySelector('#lu-status');
-  if (!statusEl) return;
-  const parts = [];
-  const total = (state.limitUp.groups || []).reduce((s, g) => s + (g.items ? g.items.length : 0), 0);
-  parts.push(`共 ${total} 只涨停`);
-  if (state.limitUp.loading) parts.push('加载中...');
-  if (state.limitUp.error) parts.push(`错误: ${state.limitUp.error}`);
-  if (state.limitUp.consecutiveEmptyFetches > 0 && state.limitUp.lastNonEmptyAt) {
-    const ts = state.limitUp.lastNonEmptyAt.toLocaleTimeString();
-    parts.push(`缓存自 ${ts} · 已空 ${state.limitUp.consecutiveEmptyFetches} 次`);
-  } else if (state.limitUp.lastUpdate) {
-    parts.push(`更新于 ${state.limitUp.lastUpdate.toLocaleTimeString()}`);
-  }
-  statusEl.textContent = parts.join(' · ');
-}
-
-function patchLimitUpQuoteCells() {
-  if (!limitUpRootEl) return false;
-  const groupsSection = limitUpRootEl.querySelector('#lu-groups');
-  if (!groupsSection) return false;
-
-  const items = state.limitUp.items || [];
-  const existingRows = groupsSection.querySelectorAll('tr[data-code]');
-  if (existingRows.length !== items.length) {
-    return false;
-  }
-  if (!items.length) {
-    updateLimitUpStatusBar();
-    return true;
-  }
-
-  const itemMap = new Map(items.map((it) => [it.code, it]));
-  for (const [code, item] of itemMap) {
-    const row = groupsSection.querySelector(`tr[data-code="${code}"]`);
-    if (!row) return false;
-    const dir = priceDirection(Number(item.changePercent));
-    const pCell = row.querySelector('td[data-field="price"]') || row.querySelector('.lu-price');
-    if (pCell) pCell.textContent = formatNumber(item.price);
-    const pctCell = row.querySelector('td[data-field="percent"]') || row.querySelector('.lu-pct');
-    if (pctCell) {
-      pctCell.textContent = formatPercent(item.changePercent);
-      pctCell.className = `lu-pct num ${dir}`;
-    }
-    const openCell = row.querySelector('td[data-field="open"]') || row.querySelector('.lu-open');
-    if (openCell) openCell.textContent = formatNumber(item.open);
-    const ratioCell = row.querySelector('td[data-field="ratio"]') || row.querySelector('.lu-ratio');
-    if (ratioCell) ratioCell.textContent = formatNumber(item.volumeRatio);
-    const amtCell = row.querySelector('td[data-field="amount"]') || row.querySelector('.lu-amount');
-    if (amtCell) amtCell.textContent = formatAmount(item.amount);
-    const countCell = row.querySelector('td[data-field="count"]') || row.querySelector('.lu-count');
-    if (countCell && item.limitUpCount !== undefined) countCell.textContent = `${item.limitUpCount} 板`;
-    const finalCell = row.querySelector('td[data-field="final"]') || row.querySelector('.lu-final');
-    if (finalCell && item.lastLimitTime) finalCell.textContent = item.lastLimitTime;
-    const breakCell = row.querySelector('td[data-field="break"]') || row.querySelector('.lu-break');
-    if (breakCell && item.breakCount !== undefined) breakCell.textContent = String(item.breakCount);
-    const reasonCell = row.querySelector('td[data-field="reason"]') || row.querySelector('.lu-reason');
-    if (reasonCell && item.reason) {
-      reasonCell.textContent = item.reason;
-      if (item.interpretation) reasonCell.title = item.interpretation;
-    }
-  }
-  updateLimitUpStatusBar();
-  return true;
-}
 
 function rerenderLimitUpPage() {
-  if (!limitUpRootEl) return;
-  // Phase 8 fix: renderLimitUpPage 会 root.innerHTML='' 清空所有 DOM 节点,
-  // 但 limitUpChartCtlMap 中的 ctl 仍引用旧 host 节点 — 在脱离 DOM 的元素上画图看不见。
-  // 必须在 rerender 之前 destroy 所有 ctl, 然后 mount 到新 host。
-  const wasExpandedCodes = new Set(state.limitUp.expandedCodes);
-  for (const code of wasExpandedCodes) {
-    const inst = state.limitUp.chartInstances.get(code);
-    rememberRange(inst, limitUpChartCtlMap.get(code), '_visibleRange');
-    rememberRange(inst, limitUpIntradayChartCtlMap.get(code), '_intradayVisibleRange');
-    _destroyLimitUpChart(code);
-  }
-  renderLimitUpPage(limitUpRootEl, state.limitUp, {
-    navigateTo: (path) => navigate(path),
-    addToWatchListAndNavigate: handleLimitUpAddAndNavigate,
-    onRefreshChange: handleLimitUpRefreshChange,
-    fetchList: fetchLimitUpListNow,
-    onLiveTickUpdate: applyLiveTicksToLimitUp,
-    onSortChange: handleLimitUpSortChange,
-    sortGroup: handleLimitUpGroupSort,
-    toggleAutoRefresh: handleLimitUpAutoRefreshToggle,
-    togglePin: handleLimitUpPinToggle,
-    toggleSelect: handleLimitUpToggleSelect,
-    selectAll: handleLimitUpSelectAll,
-    selectNone: handleLimitUpSelectNone,
-    addSelectedAndNavigate: handleLimitUpAddSelectedAndNavigate,
-    openKline: handleLimitUpOpenKline,
-    closeKline: handleLimitUpCloseKline,
-    changeKlinePeriod: handleLimitUpKlinePeriodChange,
-    onDateChange: handleLimitUpDateChange,
-    reloadKline: _handleLimitUpForceReloadChart
-  });
-  // Re-mount chart instances for any newly-rendered (or re-rendered) chart rows.
-  // buildInlineChartRow creates a fresh host; mountLimitUpChart attaches
-  // the chart ctl to that host using the cached klineData.
-  for (const code of wasExpandedCodes) {
-    if (state.limitUp.expandedCodes.has(code)) {
-      mountLimitUpChart(code);
-    }
-  }
+  limitUpCtrl.render();
 }
 
-export function applyLimitUpFetchResult(luState, items) {
-  const prev = luState || {};
-  const now = new Date();
-  const sortKey = prev.sortKey || 'amount';
-  if (Array.isArray(items) && items.length > 0) {
-    const next = {
-      ...prev,
-      sortKey,
-      items,
-      lastNonEmptyItems: items,
-      lastNonEmptyAt: now,
-      consecutiveEmptyFetches: 0
-    };
-    return { ...next, groups: buildLimitUpGroupsForState(next) };
-  }
-  const cached = Array.isArray(prev.lastNonEmptyItems) ? prev.lastNonEmptyItems : [];
-  const displayItems = cached.length ? cached : [];
-  const next = {
-    ...prev,
-    sortKey,
-    items: displayItems,
-    consecutiveEmptyFetches: (Number(prev.consecutiveEmptyFetches) || 0) + 1
-  };
-  return { ...next, groups: buildLimitUpGroupsForState(next) };
-}
-
-function buildLimitUpGroupsForState(luState = state.limitUp) {
-  const s = luState || {};
-  const baseSort = s.sortKey || 'amount';
-  const groups = buildLimitUpGroups(s.items || [], baseSort);
-  const groupSort = s.groupSort || {};
-  return groups.map((g) => {
-    const sort = groupSort[g.key] || { key: baseSort, direction: 'desc' };
-    return {
-      ...g,
-      items: sortLimitUpGroupItems(g.items, sort.key || baseSort, sort.direction || 'desc')
-    };
-  });
-}
-
-async function limitUpFetch() {
-  if (state.limitUp.loading) return;
-  if (state.limitUp.abort) {
-    try { state.limitUp.abort.abort(); } catch { /* ignore */ }
-  }
-  const requestSeq = state.limitUp.requestSeq + 1;
-  state.limitUp.requestSeq = requestSeq;
-  const controller = new AbortController();
-  state.limitUp.abort = controller;
-  state.limitUp.loading = true;
-  state.limitUp.error = null;
-  if (!state.limitUp.items.length || !limitUpRootEl || !limitUpRootEl.firstElementChild) {
-    rerenderLimitUpPage();
-  } else {
-    updateLimitUpStatusBar();
-  }
-  try {
-    const date = await ensureLimitUpTradingDate(
-      state.limitUp.selectedDate || getBeijingDate(),
-      requestSeq
-    );
-    if (requestSeq !== state.limitUp.requestSeq || state.limitUp.selectedDate !== date) return;
-    const forceRefresh = !!state.limitUp.forceRefreshOnce;
-    state.limitUp.forceRefreshOnce = false;
-    const rawItems = await fetchLimitUpList({ signal: controller.signal, date, sharedCache: true, includeBroken: true, forceRefresh });
-    if (requestSeq !== state.limitUp.requestSeq || state.limitUp.selectedDate !== date) return;
-    state.limitUp.lastUpdate = new Date();
-    state.limitUp = applyLimitUpFetchResult(state.limitUp, rawItems);
-    if (!patchLimitUpQuoteCells()) {
-      rerenderLimitUpPage();
-    }
-    if (isLimitUpDateToday(date)) {
-      enrichLimitUpItemsWithQuotes(rawItems, controller.signal)
-        .then((quoteEnriched) => {
-          if (requestSeq !== state.limitUp.requestSeq || state.limitUp.selectedDate !== date) return;
-          const quoteMap = new Map(quoteEnriched.map((it) => [it.code, it]));
-          state.limitUp.items = state.limitUp.items.map((it) => {
-            const q = quoteMap.get(it.code);
-            return q ? {
-              ...it,
-              price: q.price,
-              change: q.change,
-              changePercent: q.changePercent,
-              amount: q.amount,
-              open: q.open,
-              openChangePercent: q.openChangePercent,
-              volumeRatio: q.volumeRatio
-            } : it;
-          });
-          state.limitUp.groups = buildLimitUpGroupsForState();
-          if (!patchLimitUpQuoteCells()) {
-            rerenderLimitUpPage();
-          }
-        })
-        .catch(() => { /* best-effort live quote enrichment */ });
-    }
-    kickoffLimitUpMetadataFetch(rawItems, date, requestSeq);
-    kickoffLimitUpReasonsFetch(date, forceRefresh, requestSeq);
-    // Phase 8: 涨停看板首次拉取后预拉前 10 个 K 线
-    if (rawItems.length) {
-      preloadLimitUpTopCharts(10);
-    }
-  } catch (e) {
-    if (requestSeq === state.limitUp.requestSeq && e && e.name !== 'AbortError') {
-      state.limitUp.error = e.message || String(e);
-    }
-  } finally {
-    if (requestSeq === state.limitUp.requestSeq) {
-      if (state.limitUp.abort === controller) state.limitUp.abort = null;
-      state.limitUp.loading = false;
-      updateLimitUpStatusBar();
-    }
-  }
-}
-
-async function enrichLimitUpItemsWithQuotes(items, signal) {
-  if (!Array.isArray(items) || !items.length) return [];
-  try {
-    const quotes = await fetchQuotes(items.map((it) => it.code), { signal });
-    const quoteMap = new Map(quotes.map((q) => [q.code, q]));
-    return items.map((it) => {
-      const q = quoteMap.get(it.code);
-      if (!q) return it;
-      return {
-        ...it,
-        price: Number.isFinite(Number(q.price)) && Number(q.price) > 0 ? Number(q.price) : it.price,
-        change: Number.isFinite(Number(q.change)) ? Number(q.change) : it.change,
-        changePercent: Number.isFinite(Number(q.changePercent)) ? Number(q.changePercent) : it.changePercent,
-        prevClose: Number.isFinite(Number(q.prevClose)) ? Number(q.prevClose) : it.prevClose,
-        open: Number.isFinite(Number(q.open)) ? Number(q.open) : it.open,
-        openChangePercent: Number.isFinite(Number(q.openChangePercent)) ? Number(q.openChangePercent) : it.openChangePercent,
-        volumeRatio: Number.isFinite(Number(q.volumeRatio)) ? Number(q.volumeRatio) : it.volumeRatio,
-        amount: Number.isFinite(Number(q.amount)) && Number(q.amount) > 0 ? Number(q.amount) : it.amount
-      };
-    });
-  } catch (e) {
-    if (e && e.name === 'AbortError') throw e;
-    return items;
-  }
-}
-
-function hasLimitUpMetadata(item) {
-  if (!item) return false;
-  return (
-    item.limitUpCount !== undefined &&
-    item.firstLimitTime !== undefined &&
-    item.lastLimitTime !== undefined &&
-    item.breakCount !== undefined
-  );
-}
-
-function kickoffLimitUpMetadataFetch(items, date, requestSeq = state.limitUp.requestSeq) {
-  if (!Array.isArray(items) || !items.length) return;
-  const codes = items.filter((it) => !hasLimitUpMetadata(it)).map((it) => it.code).filter(Boolean);
-  if (!codes.length) return;
-  fetchLimitUpMetadataBatch(codes, { date })
-    .then((metaMap) => {
-      if (requestSeq !== state.limitUp.requestSeq || state.limitUp.selectedDate !== date) return;
-      if (!metaMap || !metaMap.size) return;
-      if (!state.limitUp.items.length) return;
-      let changed = false;
-      const merged = state.limitUp.items.map((it) => {
-        const m = metaMap.get(it.code);
-        if (!m) return it;
-        changed = true;
-        return { ...it, ...m };
-      });
-      if (!changed) return;
-      state.limitUp.items = merged;
-      state.limitUp.groups = buildLimitUpGroupsForState();
-      if (!patchLimitUpQuoteCells()) {
-        rerenderLimitUpPage();
-      }
-    })
-    .catch(() => { /* best-effort; ignore */ });
-}
-
-function kickoffLimitUpReasonsFetch(date, forceRefresh = false, requestSeq = state.limitUp.requestSeq) {
-  fetchLimitUpReasons({ date, sharedCache: true, forceRefresh })
-    .then((reasonMap) => {
-      if (requestSeq !== state.limitUp.requestSeq || state.limitUp.selectedDate !== date) return;
-      if (!reasonMap) return;
-      state.limitUp.reasonMap = reasonMap;
-      if (!state.limitUp.items.length) return;
-      let changed = false;
-      const merged = state.limitUp.items.map((it) => {
-        const r = reasonMap.get(it.code);
-        if (!r) return it;
-        if (it.reason === r.reason && it.interpretation === r.interpretation) return it;
-        changed = true;
-        return { ...it, reason: r.reason, interpretation: r.interpretation };
-      });
-      if (!changed) return;
-      state.limitUp.items = merged;
-      state.limitUp.groups = buildLimitUpGroupsForState();
-      if (!patchLimitUpQuoteCells()) {
-        rerenderLimitUpPage();
-      }
-    })
-    .catch(() => { /* best-effort; ignore */ });
-}
-
-function handleLimitUpDateChange(newDate) {
-  // YYYY-MM-DD string (HTML5 <input type="date">) or null = today
-  closeAllLimitUpCharts();
-  clearLimitUpMetadataCache();
-  state.limitUp.requestSeq += 1;
-  if (state.limitUp.abort) {
-    try { state.limitUp.abort.abort(); } catch { /* ignore */ }
-    state.limitUp.abort = null;
-  }
-  state.limitUp.selectedDate = newDate || getBeijingDate();
-  state.limitUp.forceRefreshOnce = state.limitUp.selectedDate === getBeijingDate();
-  state.limitUp.items = [];
-  state.limitUp.groups = buildLimitUpGroupsForState();
-  state.limitUp.lastNonEmptyItems = [];
-  state.limitUp.lastNonEmptyAt = null;
-  state.limitUp.consecutiveEmptyFetches = 0;
-  state.limitUp.reasonMap = new Map();
-  state.limitUp.error = null;
-  state.limitUp.loading = true;
-  rerenderLimitUpPage();
-  state.limitUp.loading = false;
-  limitUpFetch();
+function limitUpFetch() {
+  return limitUpCtrl.fetch();
 }
 
 function applyLiveTicksToLimitUp() {
-  if (!state.limitUp.items.length) return;
-  if (!isLimitUpDateToday()) return;
-  const merged = mergeLiveTicks(state.limitUp.items, state.quotes);
-  if (merged === state.limitUp.items) return;
-  state.limitUp.items = merged;
-  state.limitUp.groups = buildLimitUpGroupsForState();
-  if (!patchLimitUpQuoteCells()) {
-    rerenderLimitUpPage();
-  }
+  limitUpCtrl.applyLiveTicks();
 }
 
-function startLimitUpTimer({ immediate = true } = {}) {
-  stopLimitUpTimer({ abort: false });
-  if (!state.limitUp.autoRefreshEnabled) {
-    state.limitUp.autoRefreshPausedBySchedule = false;
-    rerenderLimitUpPage();
-    return;
-  }
-  if (!isDataAutoRefreshAllowedNow()) {
-    state.limitUp.autoRefreshPausedBySchedule = true;
-    rerenderLimitUpPage();
-    return;
-  }
-  const interval = state.limitUp.refreshInterval;
-  if (!interval || interval < 1000) return;
-  state.limitUp.autoRefreshPausedBySchedule = false;
-  if (immediate) limitUpFetch();
-  state.limitUp.timer = setInterval(() => {
-    limitUpFetch();
-  }, interval);
+function startLimitUpTimer(opts) {
+  limitUpCtrl.startTimer(opts);
 }
 
-function stopLimitUpTimer({ abort = true } = {}) {
-  if (state.limitUp.timer) {
-    clearInterval(state.limitUp.timer);
-    state.limitUp.timer = null;
-  }
-  if (abort && state.limitUp.abort) {
-    try { state.limitUp.abort.abort(); } catch { /* ignore */ }
-    state.limitUp.abort = null;
-  }
-}
-
-function handleLimitUpRefreshChange(newIntervalMs) {
-  state.limitUp.refreshInterval = newIntervalMs;
-  patchLimitUpSettings({ refreshInterval: newIntervalMs });
-  if (state.limitUp.autoRefreshEnabled) startLimitUpTimer({ immediate: false });
-}
-
-function handleLimitUpAutoRefreshToggle(enabled) {
-  state.limitUp.autoRefreshEnabled = !!enabled;
-  if (enabled) startLimitUpTimer();
-  else {
-    stopLimitUpTimer();
-    state.limitUp.autoRefreshPausedBySchedule = false;
-  }
-  rerenderLimitUpPage();
-}
-
-function handleLimitUpAddAndNavigate(code) {
-  if (!code) return;
-  const wasInList = state.watchList.includes(code);
-  addToWatchList(code);
-  state.watchList = getWatchList();
-  flashInfo(wasInList ? `已在监控列表：${code}` : `已加入监控：${code}`);
-  navigate('#/');
-  refreshNow();
-  renderData();
-}
-
-function handleLimitUpSortChange(key) {
-  const allowed = ['count', 'pct', 'time', 'amount', 'price', 'open', 'volumeRatio', 'break'];
-  if (!allowed.includes(key)) return;
-  state.limitUp.sortKey = key;
-  state.limitUp.groups = buildLimitUpGroupsForState();
-  rerenderLimitUpPage();
-}
-
-function handleLimitUpGroupSort(groupKey, key) {
-  const allowed = ['count', 'pct', 'time', 'amount', 'price', 'open', 'volumeRatio', 'break'];
-  if (!groupKey || !allowed.includes(key)) return;
-  const current = (state.limitUp.groupSort && state.limitUp.groupSort[groupKey]) || null;
-  const direction = current && current.key === key && current.direction === 'desc' ? 'asc' : 'desc';
-  state.limitUp.groupSort = {
-    ...(state.limitUp.groupSort || {}),
-    [groupKey]: { key, direction }
-  };
-  state.limitUp.groups = buildLimitUpGroupsForState();
-  rerenderLimitUpPage();
-}
-
-function handleLimitUpPinToggle(code) {
-  if (!code) return;
-  const pins = new Set(state.limitUp.pinnedCodes || []);
-  if (pins.has(code)) pins.delete(code);
-  else pins.add(code);
-  state.limitUp.pinnedCodes = pins;
-  setLimitUpPinnedCodes([...pins]);
-  rerenderLimitUpPage();
-}
-
-function handleLimitUpToggleSelect(code, checked) {
-  if (!code) return;
-  if (checked) state.limitUp.selectedCodes.add(code);
-  else state.limitUp.selectedCodes.delete(code);
-  rerenderLimitUpPage();
-}
-
-function handleLimitUpSelectAll() {
-  state.limitUp.selectedCodes = new Set(state.limitUp.items.map((it) => it.code));
-  rerenderLimitUpPage();
-}
-
-function handleLimitUpSelectNone() {
-  state.limitUp.selectedCodes = new Set();
-  rerenderLimitUpPage();
-}
-
-function handleLimitUpAddSelectedAndNavigate() {
-  const codes = state.limitUp.selectedCodes;
-  if (!codes || !codes.size) return;
-  let added = 0;
-  for (const code of codes) {
-    if (!state.watchList.includes(code)) {
-      addToWatchList(code);
-      added++;
-    }
-  }
-  state.watchList = getWatchList();
-  state.limitUp.selectedCodes = new Set();
-  flashInfo(added > 0 ? `已加入监控 ${added} 只` : `已选标的已在监控列表`);
-  navigate('#/');
-  refreshNow();
-  renderData();
-}
-
-function handleLimitUpOpenKline(code) {
-  if (!code) return;
-  if (state.limitUp.expandedCodes.has(code)) {
-    // 关闭该 chart
-    closeLimitUpChart(code);
-    return;
-  }
-  state.limitUp.expandedCodes.add(code);
-  state.limitUp.chartInstances.set(code, createChartState(DEFAULT_PERIOD));
-  rerenderLimitUpPage();
-  loadLimitUpKline(code);
-}
-
-function closeLimitUpChart(code) {
-  if (!code || !state.limitUp.expandedCodes.has(code)) return;
-  state.limitUp.expandedCodes.delete(code);
-  const inst = state.limitUp.chartInstances.get(code);
-  if (inst) {
-    if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
-    if (inst.intradayAbort) try { inst.intradayAbort.abort(); } catch { /* ignore */ }
-    const ctl = limitUpChartCtlMap.get(code);
-    if (ctl) {
-      try { ctl.destroy(); } catch { /* ignore */ }
-    }
-    limitUpChartCtlMap.delete(code);
-    const intradayCtl = limitUpIntradayChartCtlMap.get(code);
-    if (intradayCtl) {
-      try { intradayCtl.destroy(); } catch { /* ignore */ }
-    }
-    limitUpIntradayChartCtlMap.delete(code);
-  }
-  state.limitUp.chartInstances.delete(code);
-  rerenderLimitUpPage();
+function stopLimitUpTimer(opts) {
+  limitUpCtrl.stopTimer(opts);
 }
 
 function closeAllLimitUpCharts() {
-  for (const code of [...state.limitUp.expandedCodes]) {
-    closeLimitUpChart(code);
-  }
+  limitUpCtrl.closeAllCharts();
 }
-
-// cb 兼容入口: 接受 (code) 或 () 关闭所有
-function handleLimitUpCloseKline(code) {
-  if (code) {
-    closeLimitUpChart(code);
-  } else {
-    closeAllLimitUpCharts();
-  }
-}
-
-function handleLimitUpKlinePeriodChange(p, code) {
-  if (!isValidPeriod(p)) return;
-  const inst = state.limitUp.chartInstances.get(code);
-  if (!inst || inst.period === p) return;
-  inst.period = p;
-  inst.klineData = null;
-  inst.loading = true;
-  inst.error = null;
-  inst.intradayData = null;
-  inst.intradayError = null;
-  inst._visibleRange = null;
-  inst._intradayVisibleRange = null;
-  if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
-  rerenderLimitUpPage();
-  loadLimitUpKline(code);
-}
-
-// Phase 8: 强制重新加载（涨停页）— 跳过 cache 直接 fetch
-function _handleLimitUpForceReloadChart(code) {
-  if (!code) return;
-  const inst = state.limitUp.chartInstances.get(code);
-  if (!inst) return;
-  inst.klineData = null;
-  inst.loading = true;
-  inst.error = null;
-  inst._visibleRange = null;
-  inst._intradayVisibleRange = null;
-  if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
-  rerenderLimitUpPage();
-  loadLimitUpKline(code);
-}
-
-function _destroyLimitUpChart(code) {
-  limitUpChartMgr.destroyCharts(code, { abort: false });
-}
-
-function mountLimitUpChart(code) {
-  limitUpChartMgr.mountCharts(code);
-}
-
 
 function applyLimitUpLiveTickToChart(code, quoteOrPrice) {
-  limitUpChartMgr.applyLiveTick(code, quoteOrPrice);
-}
-
-function loadLimitUpKline(code) {
-  limitUpChartMgr.loadKline(code);
+  limitUpCtrl.applyLiveTickToChart(code, quoteOrPrice);
 }
 
 function handleToggleSubscribe(code, checked) {
@@ -2055,7 +1173,7 @@ async function warmTradeCalendar() {
     const dates = await fetchTradeCalendar();
     state.tradingDates = dates;
     state.limitUp.tradingDates = dates;
-    refreshLimitUpDateMeta();
+    limitUpCtrl.refreshDateMeta();
     return dates;
   } catch {
     return state.tradingDates || state.limitUp.tradingDates || [];
@@ -2074,8 +1192,13 @@ function getDataRefreshSession() {
 
 function isDataAutoRefreshAllowedNow() {
   const dates = state.tradingDates || state.limitUp.tradingDates || [];
+  const expandedAnywhere = [
+    ...(state.expandedCodes || []),
+    ...(state.limitUp?.expandedCodes || []),
+    ...(state.momentum?.expandedCodes || [])
+  ];
   const hasFutures = (state.watchList || []).some(isFutureCode) ||
-    (state.chartRowManager && [...state.chartRowManager.rows.values()].some((r) => isFutureCode(r.code)));
+    expandedAnywhere.some(isFutureCode);
   if (hasFutures && isFuturesMarketOpen(new Date(), dates)) {
     return true;
   }
@@ -2539,34 +1662,11 @@ function updateRowQuoteCells(code) {
 }
 
 function mergeQuotesIntoMomentumItems() {
-  if (!Array.isArray(state.momentum.items) || !state.momentum.items.length) return false;
-  let changed = false;
-  state.momentum.items = state.momentum.items.map((it) => {
-    if (!it || !it.code) return it;
-    const q = state.quotes.get(it.code);
-    if (!q) return it;
-    changed = true;
-    const price = Number.isFinite(Number(q.price)) ? Number(q.price) : it.price;
-    const startClose = Number(it.startClose);
-    const gainPercent = (Number.isFinite(price) && Number.isFinite(startClose) && startClose > 0)
-      ? Number((((price - startClose) / startClose) * 100).toFixed(2))
-      : it.gainPercent;
-    return {
-      ...it,
-      name: q.name || it.name,
-      price,
-      gainPercent,
-      changePercent: Number.isFinite(Number(q.changePercent)) ? Number(q.changePercent) : it.changePercent,
-      amount: Number.isFinite(Number(q.amount)) ? Number(q.amount) : it.amount,
-      volumeRatio: Number.isFinite(Number(q.volumeRatio)) ? Number(q.volumeRatio) : it.volumeRatio,
-      industry: it.industry || q.industry || ''
-    };
-  });
-  return changed;
+  return momentumCtrl.mergeQuotesIntoItems();
 }
 
 function updateMomentumQuoteCells(code) {
-  updateMomentumQuoteCellsView(code, state.momentum.items || []);
+  momentumCtrl.updateQuoteCells(code);
 }
 
 function restartTimer() {
@@ -2713,6 +1813,7 @@ export function startApp(root) {
         // returns. Clear limitUpRootEl BEFORE renderMonitorPage so the
         // fetch's finally-block rerender is a no-op.
         limitUpRootEl = null;
+        limitUpCtrl.setRootEl(null);
         renderMonitorPage(r);
         applyDataRefreshSchedule();
       },
@@ -2721,26 +1822,8 @@ export function startApp(root) {
         closeAllCharts();
         closeAllMomentumCharts();
         limitUpRootEl = r;
-        renderLimitUpPage(r, state.limitUp, {
-          navigateTo: (path) => navigate(path),
-          addToWatchListAndNavigate: handleLimitUpAddAndNavigate,
-          onRefreshChange: handleLimitUpRefreshChange,
-          fetchList: fetchLimitUpListNow,
-          onLiveTickUpdate: applyLiveTicksToLimitUp,
-          onSortChange: handleLimitUpSortChange,
-          sortGroup: handleLimitUpGroupSort,
-          toggleAutoRefresh: handleLimitUpAutoRefreshToggle,
-          togglePin: handleLimitUpPinToggle,
-          toggleSelect: handleLimitUpToggleSelect,
-          selectAll: handleLimitUpSelectAll,
-          selectNone: handleLimitUpSelectNone,
-          addSelectedAndNavigate: handleLimitUpAddSelectedAndNavigate,
-          openKline: handleLimitUpOpenKline,
-          closeKline: handleLimitUpCloseKline,
-          changeKlinePeriod: handleLimitUpKlinePeriodChange,
-          onDateChange: handleLimitUpDateChange,
-          reloadKline: _handleLimitUpForceReloadChart
-        });
+        limitUpCtrl.setRootEl(r);
+        limitUpCtrl.render();
         limitUpFetch();
         applyDataRefreshSchedule();
       }

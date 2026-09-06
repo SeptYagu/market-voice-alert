@@ -7,17 +7,27 @@ import {
   priceDirection
 } from '../format.js';
 import { PERIODS, PERIOD_LABELS } from '../kline.js';
-import { chartTimeToDate } from '../time.js';
+import {
+  MOMENTUM_LOOKBACK_TRADING_DAYS,
+  MOMENTUM_THRESHOLD_PCT,
+  computeTenDayMomentum,
+  sortMomentumItems,
+  getMomentumReasonText
+} from '../services/momentumMath.js';
 
-export const MOMENTUM_LOOKBACK_TRADING_DAYS = 10;
-export const MOMENTUM_THRESHOLD_PCT = 45;
+export {
+  MOMENTUM_LOOKBACK_TRADING_DAYS,
+  MOMENTUM_THRESHOLD_PCT,
+  computeTenDayMomentum,
+  sortMomentumItems,
+  getMomentumReasonText
+};
 
 function el(tag, attrs, ...children) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
     if (v === null || v === undefined || v === false) continue;
     if (k === 'class') node.className = v;
-    else if (k === 'html') node.innerHTML = v;
     else if (k === 'on' && typeof v === 'object') {
       for (const [ev, fn] of Object.entries(v)) node.addEventListener(ev, fn);
     } else if (k === 'checked' && v) {
@@ -33,45 +43,6 @@ function el(tag, attrs, ...children) {
     node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
   }
   return node;
-}
-
-export function computeTenDayMomentum(klineData, lookbackDays = MOMENTUM_LOOKBACK_TRADING_DAYS) {
-  const items = klineData && Array.isArray(klineData.items) ? klineData.items : [];
-  if (items.length < 2) return null;
-  const last = items[items.length - 1];
-  const startIndex = Math.max(0, items.length - 1 - Math.max(1, Number(lookbackDays) || MOMENTUM_LOOKBACK_TRADING_DAYS));
-  const start = items[startIndex];
-  const startClose = Number(start && start.close);
-  const lastClose = Number(last && last.close);
-  if (!Number.isFinite(startClose) || !Number.isFinite(lastClose) || startClose <= 0 || lastClose <= 0) return null;
-  return {
-    gainPercent: (lastClose / startClose - 1) * 100,
-    startClose,
-    lastClose,
-    startDate: chartTimeToDate(start.time),
-    endDate: chartTimeToDate(last.time)
-  };
-}
-
-export function sortMomentumItems(items, pinnedCodes = new Set()) {
-  const pins = pinnedCodes || new Set();
-  return [...(Array.isArray(items) ? items : [])].sort((a, b) => {
-    const ap = pins.has(a.code) ? 1 : 0;
-    const bp = pins.has(b.code) ? 1 : 0;
-    if (ap !== bp) return bp - ap;
-    const ag = Number(a.gainPercent) || 0;
-    const bg = Number(b.gainPercent) || 0;
-    if (ag !== bg) return bg - ag;
-    const aa = Number(a.amount) || 0;
-    const ba = Number(b.amount) || 0;
-    if (aa !== ba) return ba - aa;
-    return String(a.code || '').localeCompare(String(b.code || ''));
-  });
-}
-
-export function getMomentumReasonText(item) {
-  if (!item) return '-';
-  return item.reason || item.limitStats || item.anomaly || `10日涨幅${formatPercent(item.gainPercent)}`;
 }
 
 export function buildMomentumHeaderCheckbox(items, selectedCodes, onSelectChange) {

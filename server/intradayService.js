@@ -7,7 +7,7 @@ import {
   fetchAktoolsIntradayTicks,
   fetchEastmoneyIntradayTrends
 } from './marketData.js';
-import { normalizeCodeParam, normalizeDateKey, parsePositiveNumber, sanitizeSegment } from './utils.js';
+import { normalizeCodeParam, normalizeDateKey, parsePositiveNumber } from './utils.js';
 
 const INTRADAY_TTL_MS = 10 * 1000;
 const SESSION_RANGES = Object.freeze([
@@ -250,7 +250,7 @@ export async function getCachedIntraday({
   const selectedDate = dateKeyToDash(dateKey);
   const allowLatest = allowLatestTickSource && !isHistoricalDate(dateKey);
   const safePrevClose = prevCloseKey(prevClose);
-  const safeName = sanitizeSegment(name) ? String(name) : code;
+  const safeName = code;
   const parts = ['intraday', code, `${dateKey}-${safePrevClose}.json`];
 
   if (!allowLatest) {

@@ -5,7 +5,7 @@ import {
   computeTenDayMomentum,
   sortMomentumItems,
   MOMENTUM_THRESHOLD_PCT
-} from '../views/momentumView.js';
+} from './momentumMath.js';
 
 export const MOMENTUM_SCAN_CONCURRENCY = 6;
 

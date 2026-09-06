@@ -45,11 +45,36 @@ export async function handleProxyRequest(req, res) {
     }
     let body = null;
     if (req.method !== 'HEAD') {
-      const ab = await upstream.arrayBuffer();
-      if (ab.byteLength > MAX_PROXY_BODY_BYTES) {
+      const cl = Number(upstream.headers.get('content-length'));
+      if (Number.isFinite(cl) && cl > MAX_PROXY_BODY_BYTES) {
         throw new Error(`Upstream response exceeded max body size of ${MAX_PROXY_BODY_BYTES} bytes`);
       }
-      body = Buffer.from(ab);
+      if (!upstream.body) {
+        body = Buffer.alloc(0);
+      } else {
+        const reader = upstream.body.getReader();
+        const chunks = [];
+        let total = 0;
+        let streamDone = false;
+        try {
+          while (!streamDone) {
+            const chunk = await reader.read();
+            if (chunk.done) {
+              streamDone = true;
+              break;
+            }
+            total += chunk.value.byteLength;
+            if (total > MAX_PROXY_BODY_BYTES) {
+              await reader.cancel();
+              throw new Error(`Upstream response exceeded max body size of ${MAX_PROXY_BODY_BYTES} bytes`);
+            }
+            chunks.push(chunk.value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        body = Buffer.concat(chunks.map((c) => Buffer.from(c)));
+      }
     }
     if (res.destroyed || res.writableEnded) return true;
     res.writeHead(upstream.status, headers);

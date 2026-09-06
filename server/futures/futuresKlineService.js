@@ -30,7 +30,7 @@ const AKTOOLS_BASE = (process.env.AKTOOLS_BASE || 'http://127.0.0.1:8888').repla
 async function fetchFuturesMinute(inst, period = '1') {
   // AKTools: futures_zh_minute_sina
   try {
-    const url = `${AKTOOLS_BASE}/api/public/futures_zh_minute_sina?symbol=${inst.symbol}&period=${period}`;
+    const url = `${AKTOOLS_BASE}/api/public/futures_zh_minute_sina?symbol=${encodeURIComponent(inst.symbol)}&period=${period}`;
     const res = await fetchWithTimeout(url, { timeoutMs: 5000 });
     if (res.ok) {
       const data = await res.json();
@@ -64,7 +64,7 @@ async function fetchFuturesMinute(inst, period = '1') {
 
   // Sina Fallback for futures minute
   try {
-    const url = `https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20_data=/InnerFuturesNewService.getMinLine?symbol=${inst.symbol}`;
+    const url = `https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20_data=/InnerFuturesNewService.getMinLine?symbol=${encodeURIComponent(inst.symbol)}`;
     const res = await fetchWithTimeout(url, {
       headers: { Referer: 'https://finance.sina.com.cn' },
       timeoutMs: 5000
@@ -119,7 +119,7 @@ async function fetchFuturesMinute(inst, period = '1') {
  */
 async function fetchFuturesDaily(inst) {
   try {
-    const url = `${AKTOOLS_BASE}/api/public/futures_zh_daily_sina?symbol=${inst.symbol}`;
+    const url = `${AKTOOLS_BASE}/api/public/futures_zh_daily_sina?symbol=${encodeURIComponent(inst.symbol)}`;
     const res = await fetchWithTimeout(url, { timeoutMs: 5000 });
     if (res.ok) {
       const data = await res.json();
@@ -149,7 +149,7 @@ async function fetchFuturesDaily(inst) {
 
   // Sina Fallback for futures daily: Sina returns [{ d: "2026-09-03", o, h, l, c, v, p, s }]
   try {
-    const url = `https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20_data=/InnerFuturesNewService.getDailyKLine?symbol=${inst.symbol}`;
+    const url = `https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20_data=/InnerFuturesNewService.getDailyKLine?symbol=${encodeURIComponent(inst.symbol)}`;
     const res = await fetchWithTimeout(url, {
       headers: { Referer: 'https://finance.sina.com.cn' },
       timeoutMs: 5000
@@ -430,7 +430,14 @@ export async function getCachedFuturesIntraday(symbolOrId, opts = {}) {
 
       let prevSettlement = null;
       try {
-        const daily = await fetchFuturesDaily(inst);
+        const dailyCacheKey = ['futures', 'kline', `${inst.symbol}-daily-prevsettle.json`];
+        const dailyCached = await getOrRefresh(
+          dailyCacheKey,
+          KLINE_HISTORICAL_TTL_MS,
+          () => fetchFuturesDaily(inst),
+          opts
+        );
+        const daily = dailyCached && dailyCached.data ? dailyCached.data : dailyCached;
         if (daily && daily.items && daily.items.length) {
           const targetSec = parseBeijingDateTimeToChartSeconds(targetTradingDay);
           const prevDayBar = daily.items.filter((b) => b.time < targetSec).pop();

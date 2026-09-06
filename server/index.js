@@ -340,9 +340,13 @@ async function sendStaticFile(req, res, filePath, { fallbackToIndex = true } = {
     const body = await readFile(target);
     const ext = extname(target).toLowerCase();
     const isIndex = ext === '.html';
+    const isHashedAsset = target.includes('/assets/') || target.includes('\\assets\\');
+    const cacheControl = isIndex
+      ? 'no-store'
+      : (isHashedAsset ? 'public, max-age=31536000, immutable' : 'public, max-age=3600');
     res.writeHead(200, {
       'content-type': MIME_TYPES[ext] || 'application/octet-stream',
-      'cache-control': isIndex ? 'no-store' : 'public, max-age=31536000, immutable'
+      'cache-control': cacheControl
     });
     if (req.method === 'HEAD') res.end();
     else res.end(body);

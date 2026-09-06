@@ -129,3 +129,20 @@ export function parsePositiveNumber(raw, fallback) {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
+
+export async function mapLimit(items, limit, fn, { yieldTick = false } = {}) {
+  const list = Array.isArray(items) ? items : [];
+  const out = new Array(list.length);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < list.length) {
+      const idx = cursor++;
+      out[idx] = await fn(list[idx], idx);
+      if (yieldTick) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, list.length) }, worker));
+  return out;
+}

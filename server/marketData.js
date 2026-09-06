@@ -9,7 +9,7 @@ import {
 import { parseTradeCalendar } from '../src/js/tradeCalendar.js';
 import { parseEastmoneyTrends } from '../src/js/api.js';
 import { parseTencent, toEastmoneySecId } from '../src/js/parser.js';
-import { fetchWithTimeout, normalizeCodeParam } from './utils.js';
+import { fetchWithTimeout, normalizeCodeParam, mapLimit } from './utils.js';
 
 const AKTOOLS_BASE = process.env.AKTOOLS_BASE || 'http://127.0.0.1:8888';
 const EASTMONEY_TRENDS_BASE = 'https://push2his.eastmoney.com/api/qt/stock/trends2/get';
@@ -67,19 +67,6 @@ export async function fetchAktoolsReasons(date, signal) {
 export async function fetchAktoolsSpot(signal) {
   const json = await fetchJson(publicUrl('stock_zh_a_spot_em'), signal, 5000);
   return parseAktoolsSpotList(json);
-}
-
-async function mapLimit(items, limit, fn) {
-  const out = new Array(items.length);
-  let cursor = 0;
-  const worker = async () => {
-    while (cursor < items.length) {
-      const index = cursor++;
-      out[index] = await fn(items[index], index);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
 }
 
 async function fetchTencentQuoteBatch(codes, signal) {

@@ -1,0 +1,722 @@
+// 涨停看板控制器（状态、数据抓取、筛选排序与图表交互）
+import {
+  fetchLimitUpList,
+  fetchLimitUpReasons,
+  fetchLimitUpMetadataBatch,
+  clearLimitUpMetadataCache
+} from '../limitUpApi.js';
+import { buildLimitUpGroups, mergeLiveTicks, sortLimitUpGroupItems } from '../limitUp.js';
+import { renderLimitUpPage } from '../limitUpView.js';
+import {
+  fetchTradeCalendar,
+  getAdjacentTradingDates,
+  resolveLatestTradingDate
+} from '../tradeCalendar.js';
+import { getBeijingDate } from '../time.js';
+import {
+  formatNumber,
+  priceDirection,
+  formatPercent,
+  formatAmount
+} from '../format.js';
+import { fetchQuotes } from '../api.js';
+import {
+  createChartState,
+  rememberRange
+} from './chartRowController.js';
+import {
+  setLimitUpPinnedCodes,
+  patchLimitUpSettings
+} from '../storage.js';
+import { DEFAULT_PERIOD, isValidPeriod } from '../kline.js';
+
+export function applyLimitUpFetchResult(luState, items) {
+  const prev = luState || {};
+  const now = new Date();
+  const sortKey = prev.sortKey || 'amount';
+  if (Array.isArray(items) && items.length > 0) {
+    const next = {
+      ...prev,
+      sortKey,
+      items,
+      lastNonEmptyItems: items,
+      lastNonEmptyAt: now,
+      consecutiveEmptyFetches: 0
+    };
+    return { ...next, groups: buildLimitUpGroupsForState(next) };
+  }
+  const cached = Array.isArray(prev.lastNonEmptyItems) ? prev.lastNonEmptyItems : [];
+  const displayItems = cached.length ? cached : [];
+  const next = {
+    ...prev,
+    sortKey,
+    items: displayItems,
+    consecutiveEmptyFetches: (Number(prev.consecutiveEmptyFetches) || 0) + 1
+  };
+  return { ...next, groups: buildLimitUpGroupsForState(next) };
+}
+
+export function buildLimitUpGroupsForState(luState) {
+  const s = luState || {};
+  const baseSort = s.sortKey || 'amount';
+  const groups = buildLimitUpGroups(s.items || [], baseSort);
+  const groupSort = s.groupSort || {};
+  return groups.map((g) => {
+    const sort = groupSort[g.key] || { key: baseSort, direction: 'desc' };
+    return {
+      ...g,
+      items: sortLimitUpGroupItems(g.items, sort.key || baseSort, sort.direction || 'desc')
+    };
+  });
+}
+
+export function hasLimitUpMetadata(item) {
+  if (!item) return false;
+  return (
+    item.limitUpCount !== undefined &&
+    item.firstLimitTime !== undefined &&
+    item.lastLimitTime !== undefined &&
+    item.breakCount !== undefined
+  );
+}
+
+export function createLimitUpController(appContext) {
+  const {
+    getState,
+    limitUpChartMgr,
+    onNavigate,
+    onAddToWatchList,
+    flashInfo,
+    refreshNow,
+    renderData,
+    isDataAutoRefreshAllowedNow,
+    preloadKlineForCodes
+  } = appContext;
+
+  let limitUpRootEl = null;
+
+  function getLimitUpState() {
+    return getState().limitUp;
+  }
+
+  function isLimitUpDateToday(date = getLimitUpState().selectedDate) {
+    return date === getBeijingDate();
+  }
+
+  function updateLimitUpStatusBar() {
+    if (!limitUpRootEl) return;
+    const statusEl = limitUpRootEl.querySelector('#lu-status');
+    if (!statusEl) return;
+    const lu = getLimitUpState();
+    const parts = [];
+    const total = (lu.groups || []).reduce((s, g) => s + (g.items ? g.items.length : 0), 0);
+    parts.push(`共 ${total} 只涨停`);
+    if (lu.loading) parts.push('加载中...');
+    if (lu.error) parts.push(`错误: ${lu.error}`);
+    if (lu.consecutiveEmptyFetches > 0 && lu.lastNonEmptyAt) {
+      const ts = lu.lastNonEmptyAt.toLocaleTimeString();
+      parts.push(`缓存自 ${ts} · 已空 ${lu.consecutiveEmptyFetches} 次`);
+    } else if (lu.lastUpdate) {
+      parts.push(`更新于 ${lu.lastUpdate.toLocaleTimeString()}`);
+    }
+    statusEl.textContent = parts.join(' · ');
+  }
+
+  function patchLimitUpQuoteCells() {
+    if (!limitUpRootEl) return false;
+    const groupsSection = limitUpRootEl.querySelector('#lu-groups');
+    if (!groupsSection) return false;
+
+    const lu = getLimitUpState();
+    const items = lu.items || [];
+    const existingRows = groupsSection.querySelectorAll('tr[data-code]');
+    if (existingRows.length !== items.length) {
+      return false;
+    }
+    if (!items.length) {
+      updateLimitUpStatusBar();
+      return true;
+    }
+
+    const itemMap = new Map(items.map((it) => [it.code, it]));
+    for (const [code, item] of itemMap) {
+      const row = groupsSection.querySelector(`tr[data-code="${code}"]`);
+      if (!row) return false;
+      const dir = priceDirection(Number(item.changePercent));
+      const pCell = row.querySelector('td[data-field="price"]') || row.querySelector('.lu-price');
+      if (pCell) pCell.textContent = formatNumber(item.price);
+      const pctCell = row.querySelector('td[data-field="percent"]') || row.querySelector('.lu-pct');
+      if (pctCell) {
+        pctCell.textContent = formatPercent(item.changePercent);
+        pctCell.className = `lu-pct num ${dir}`;
+      }
+      const openCell = row.querySelector('td[data-field="open"]') || row.querySelector('.lu-open');
+      if (openCell) openCell.textContent = formatNumber(item.open);
+      const ratioCell = row.querySelector('td[data-field="ratio"]') || row.querySelector('.lu-ratio');
+      if (ratioCell) ratioCell.textContent = formatNumber(item.volumeRatio);
+      const amtCell = row.querySelector('td[data-field="amount"]') || row.querySelector('.lu-amount');
+      if (amtCell) amtCell.textContent = formatAmount(item.amount);
+      const countCell = row.querySelector('td[data-field="count"]') || row.querySelector('.lu-count');
+      if (countCell && item.limitUpCount !== undefined) countCell.textContent = `${item.limitUpCount} 板`;
+      const finalCell = row.querySelector('td[data-field="final"]') || row.querySelector('.lu-final');
+      if (finalCell && item.lastLimitTime) finalCell.textContent = item.lastLimitTime;
+      const breakCell = row.querySelector('td[data-field="break"]') || row.querySelector('.lu-break');
+      if (breakCell && item.breakCount !== undefined) breakCell.textContent = String(item.breakCount);
+      const reasonCell = row.querySelector('td[data-field="reason"]') || row.querySelector('.lu-reason');
+      if (reasonCell && item.reason) {
+        reasonCell.textContent = item.reason;
+        if (item.interpretation) reasonCell.title = item.interpretation;
+      }
+    }
+    updateLimitUpStatusBar();
+    return true;
+  }
+
+  function rerenderLimitUpPage() {
+    if (!limitUpRootEl) return;
+    const lu = getLimitUpState();
+    const wasExpandedCodes = new Set(lu.expandedCodes);
+    for (const code of wasExpandedCodes) {
+      const inst = lu.chartInstances.get(code);
+      rememberRange(inst, limitUpChartMgr.klineCtlMap.get(code), '_visibleRange');
+      rememberRange(inst, limitUpChartMgr.intradayCtlMap.get(code), '_intradayVisibleRange');
+      _destroyLimitUpChart(code);
+    }
+    renderLimitUpPage(limitUpRootEl, lu, {
+      navigateTo: (path) => onNavigate(path),
+      addToWatchListAndNavigate: handleLimitUpAddAndNavigate,
+      onRefreshChange: handleLimitUpRefreshChange,
+      fetchList: fetchLimitUpListNow,
+      onLiveTickUpdate: applyLiveTicksToLimitUp,
+      onSortChange: handleLimitUpSortChange,
+      sortGroup: handleLimitUpGroupSort,
+      toggleAutoRefresh: handleLimitUpAutoRefreshToggle,
+      togglePin: handleLimitUpPinToggle,
+      toggleSelect: handleLimitUpToggleSelect,
+      selectAll: handleLimitUpSelectAll,
+      selectNone: handleLimitUpSelectNone,
+      addSelectedAndNavigate: handleLimitUpAddSelectedAndNavigate,
+      openKline: handleLimitUpOpenKline,
+      closeKline: handleLimitUpCloseKline,
+      changeKlinePeriod: handleLimitUpKlinePeriodChange,
+      onDateChange: handleLimitUpDateChange,
+      reloadKline: _handleLimitUpForceReloadChart
+    });
+    for (const code of wasExpandedCodes) {
+      if (lu.expandedCodes.has(code)) {
+        mountLimitUpChart(code);
+      }
+    }
+  }
+
+  async function ensureLimitUpTradingDate(
+    rawDate = getLimitUpState().selectedDate || getBeijingDate(),
+    requestSeq = null
+  ) {
+    const lu = getLimitUpState();
+    lu.calendarLoading = true;
+    try {
+      const dates = await fetchTradeCalendar();
+      const target = rawDate || getBeijingDate();
+      const resolved = resolveLatestTradingDate(target, dates);
+      const adj = getAdjacentTradingDates(resolved, dates);
+      if (requestSeq !== null && requestSeq !== lu.requestSeq) {
+        return resolved;
+      }
+      getState().tradingDates = dates;
+      lu.tradingDates = dates;
+      lu.selectedDate = resolved;
+      lu.latestTradingDate = adj.latest;
+      lu.previousTradingDate = adj.previous;
+      lu.nextTradingDate = adj.next;
+      return resolved;
+    } finally {
+      if (requestSeq === null || requestSeq === lu.requestSeq) {
+        lu.calendarLoading = false;
+      }
+    }
+  }
+
+  function refreshLimitUpDateMeta() {
+    const lu = getLimitUpState();
+    const dates = lu.tradingDates;
+    const adj = getAdjacentTradingDates(
+      lu.selectedDate || getBeijingDate(),
+      dates,
+      getBeijingDate()
+    );
+    lu.selectedDate = adj.current;
+    lu.latestTradingDate = adj.latest;
+    lu.previousTradingDate = adj.previous;
+    lu.nextTradingDate = adj.next;
+  }
+
+  function fetchLimitUpListNow() {
+    clearLimitUpMetadataCache();
+    const lu = getLimitUpState();
+    lu.forceRefreshOnce = isLimitUpDateToday();
+    return limitUpFetch();
+  }
+
+  async function limitUpFetch() {
+    const lu = getLimitUpState();
+    if (lu.loading) return;
+    if (lu.abort) {
+      try { lu.abort.abort(); } catch { /* ignore */ }
+    }
+    const requestSeq = lu.requestSeq + 1;
+    lu.requestSeq = requestSeq;
+    const controller = new AbortController();
+    lu.abort = controller;
+    lu.loading = true;
+    lu.error = null;
+    if (!lu.items.length || !limitUpRootEl || !limitUpRootEl.firstElementChild) {
+      rerenderLimitUpPage();
+    } else {
+      updateLimitUpStatusBar();
+    }
+    try {
+      const date = await ensureLimitUpTradingDate(
+        lu.selectedDate || getBeijingDate(),
+        requestSeq
+      );
+      if (requestSeq !== lu.requestSeq || lu.selectedDate !== date) return;
+      const forceRefresh = !!lu.forceRefreshOnce;
+      lu.forceRefreshOnce = false;
+      const rawItems = await fetchLimitUpList({
+        signal: controller.signal,
+        date,
+        sharedCache: true,
+        includeBroken: true,
+        forceRefresh
+      });
+      if (requestSeq !== lu.requestSeq || lu.selectedDate !== date) return;
+      lu.lastUpdate = new Date();
+      const updated = applyLimitUpFetchResult(lu, rawItems);
+      Object.assign(lu, updated);
+      if (!patchLimitUpQuoteCells()) {
+        rerenderLimitUpPage();
+      }
+      if (isLimitUpDateToday(date)) {
+        enrichLimitUpItemsWithQuotes(rawItems, controller.signal)
+          .then((quoteEnriched) => {
+            const currentLu = getLimitUpState();
+            if (requestSeq !== currentLu.requestSeq || currentLu.selectedDate !== date) return;
+            const quoteMap = new Map(quoteEnriched.map((it) => [it.code, it]));
+            currentLu.items = currentLu.items.map((it) => {
+              const q = quoteMap.get(it.code);
+              return q ? {
+                ...it,
+                price: q.price,
+                change: q.change,
+                changePercent: q.changePercent,
+                amount: q.amount,
+                open: q.open,
+                openChangePercent: q.openChangePercent,
+                volumeRatio: q.volumeRatio
+              } : it;
+            });
+            currentLu.groups = buildLimitUpGroupsForState(currentLu);
+            if (!patchLimitUpQuoteCells()) {
+              rerenderLimitUpPage();
+            }
+          })
+          .catch(() => { /* best-effort live quote enrichment */ });
+      }
+      kickoffLimitUpMetadataFetch(rawItems, date, requestSeq);
+      kickoffLimitUpReasonsFetch(date, forceRefresh, requestSeq);
+      if (rawItems.length && typeof preloadKlineForCodes === 'function') {
+        preloadKlineForCodes(rawItems.slice(0, 10).map((it) => it.code));
+      }
+    } catch (e) {
+      if (requestSeq === lu.requestSeq && e && e.name !== 'AbortError') {
+        lu.error = e.message || String(e);
+      }
+    } finally {
+      if (requestSeq === lu.requestSeq) {
+        if (lu.abort === controller) lu.abort = null;
+        lu.loading = false;
+        updateLimitUpStatusBar();
+      }
+    }
+  }
+
+
+  async function enrichLimitUpItemsWithQuotes(items, signal) {
+    if (!Array.isArray(items) || !items.length) return [];
+    try {
+      const quotes = await fetchQuotes(items.map((it) => it.code), { signal });
+      const quoteMap = new Map(quotes.map((q) => [q.code, q]));
+      return items.map((it) => {
+        const q = quoteMap.get(it.code);
+        if (!q) return it;
+        return {
+          ...it,
+          price: Number.isFinite(Number(q.price)) && Number(q.price) > 0 ? Number(q.price) : it.price,
+          change: Number.isFinite(Number(q.change)) ? Number(q.change) : it.change,
+          changePercent: Number.isFinite(Number(q.changePercent)) ? Number(q.changePercent) : it.changePercent,
+          prevClose: Number.isFinite(Number(q.prevClose)) ? Number(q.prevClose) : it.prevClose,
+          open: Number.isFinite(Number(q.open)) ? Number(q.open) : it.open,
+          openChangePercent: Number.isFinite(Number(q.openChangePercent)) ? Number(q.openChangePercent) : it.openChangePercent,
+          volumeRatio: Number.isFinite(Number(q.volumeRatio)) ? Number(q.volumeRatio) : it.volumeRatio,
+          amount: Number.isFinite(Number(q.amount)) && Number(q.amount) > 0 ? Number(q.amount) : it.amount
+        };
+      });
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw e;
+      return items;
+    }
+  }
+
+  function kickoffLimitUpMetadataFetch(items, date, requestSeq = getLimitUpState().requestSeq) {
+    if (!Array.isArray(items) || !items.length) return;
+    const codes = items.filter((it) => !hasLimitUpMetadata(it)).map((it) => it.code).filter(Boolean);
+    if (!codes.length) return;
+    fetchLimitUpMetadataBatch(codes, { date })
+      .then((metaMap) => {
+        const lu = getLimitUpState();
+        if (requestSeq !== lu.requestSeq || lu.selectedDate !== date) return;
+        if (!metaMap || !metaMap.size) return;
+        if (!lu.items.length) return;
+        let changed = false;
+        const merged = lu.items.map((it) => {
+          const m = metaMap.get(it.code);
+          if (!m) return it;
+          changed = true;
+          return { ...it, ...m };
+        });
+        if (!changed) return;
+        lu.items = merged;
+        lu.groups = buildLimitUpGroupsForState(lu);
+        if (!patchLimitUpQuoteCells()) {
+          rerenderLimitUpPage();
+        }
+      })
+      .catch(() => { /* best-effort; ignore */ });
+  }
+
+  function kickoffLimitUpReasonsFetch(date, forceRefresh = false, requestSeq = getLimitUpState().requestSeq) {
+    fetchLimitUpReasons({ date, sharedCache: true, forceRefresh })
+      .then((reasonMap) => {
+        const lu = getLimitUpState();
+        if (requestSeq !== lu.requestSeq || lu.selectedDate !== date) return;
+        if (!reasonMap) return;
+        lu.reasonMap = reasonMap;
+        if (!lu.items.length) return;
+        let changed = false;
+        const merged = lu.items.map((it) => {
+          const r = reasonMap.get(it.code);
+          if (!r) return it;
+          if (it.reason === r.reason && it.interpretation === r.interpretation) return it;
+          changed = true;
+          return { ...it, reason: r.reason, interpretation: r.interpretation };
+        });
+        if (!changed) return;
+        lu.items = merged;
+        lu.groups = buildLimitUpGroupsForState(lu);
+        if (!patchLimitUpQuoteCells()) {
+          rerenderLimitUpPage();
+        }
+      })
+      .catch(() => { /* best-effort; ignore */ });
+  }
+
+  function handleLimitUpDateChange(newDate) {
+    closeAllLimitUpCharts();
+    clearLimitUpMetadataCache();
+    const lu = getLimitUpState();
+    lu.requestSeq += 1;
+    if (lu.abort) {
+      try { lu.abort.abort(); } catch { /* ignore */ }
+      lu.abort = null;
+    }
+    lu.selectedDate = newDate || getBeijingDate();
+    lu.forceRefreshOnce = lu.selectedDate === getBeijingDate();
+    lu.items = [];
+    lu.groups = buildLimitUpGroupsForState(lu);
+    lu.lastNonEmptyItems = [];
+    lu.lastNonEmptyAt = null;
+    lu.consecutiveEmptyFetches = 0;
+    lu.reasonMap = new Map();
+    lu.error = null;
+    lu.loading = true;
+    rerenderLimitUpPage();
+    lu.loading = false;
+    limitUpFetch();
+  }
+
+  function applyLiveTicksToLimitUp() {
+    const lu = getLimitUpState();
+    if (!lu.items.length) return;
+    if (!isLimitUpDateToday()) return;
+    const merged = mergeLiveTicks(lu.items, getState().quotes);
+    if (merged === lu.items) return;
+    lu.items = merged;
+    lu.groups = buildLimitUpGroupsForState(lu);
+    if (!patchLimitUpQuoteCells()) {
+      rerenderLimitUpPage();
+    }
+  }
+
+  function startLimitUpTimer({ immediate = true } = {}) {
+    stopLimitUpTimer({ abort: false });
+    const lu = getLimitUpState();
+    if (!lu.autoRefreshEnabled) {
+      lu.autoRefreshPausedBySchedule = false;
+      rerenderLimitUpPage();
+      return;
+    }
+    if (!isDataAutoRefreshAllowedNow()) {
+      lu.autoRefreshPausedBySchedule = true;
+      rerenderLimitUpPage();
+      return;
+    }
+    const interval = lu.refreshInterval;
+    if (!interval || interval < 1000) return;
+    lu.autoRefreshPausedBySchedule = false;
+    if (immediate) limitUpFetch();
+    lu.timer = setInterval(() => {
+      limitUpFetch();
+    }, interval);
+  }
+
+  function stopLimitUpTimer({ abort = true } = {}) {
+    const lu = getLimitUpState();
+    if (lu.timer) {
+      clearInterval(lu.timer);
+      lu.timer = null;
+    }
+    if (abort && lu.abort) {
+      try { lu.abort.abort(); } catch { /* ignore */ }
+      lu.abort = null;
+    }
+  }
+
+  function handleLimitUpRefreshChange(newIntervalMs) {
+    const lu = getLimitUpState();
+    lu.refreshInterval = newIntervalMs;
+    patchLimitUpSettings({ refreshInterval: newIntervalMs });
+    if (lu.autoRefreshEnabled) startLimitUpTimer({ immediate: false });
+  }
+
+  function handleLimitUpAutoRefreshToggle(enabled) {
+    const lu = getLimitUpState();
+    lu.autoRefreshEnabled = !!enabled;
+    if (enabled) startLimitUpTimer();
+    else {
+      stopLimitUpTimer();
+      lu.autoRefreshPausedBySchedule = false;
+    }
+    rerenderLimitUpPage();
+  }
+
+  function handleLimitUpAddAndNavigate(code) {
+    if (!code) return;
+    onAddToWatchList(code);
+  }
+
+  function handleLimitUpSortChange(key) {
+    const allowed = ['count', 'pct', 'time', 'amount', 'price', 'open', 'volumeRatio', 'break'];
+    if (!allowed.includes(key)) return;
+    const lu = getLimitUpState();
+    lu.sortKey = key;
+    lu.groups = buildLimitUpGroupsForState(lu);
+    rerenderLimitUpPage();
+  }
+
+  function handleLimitUpGroupSort(groupKey, key) {
+    const allowed = ['count', 'pct', 'time', 'amount', 'price', 'open', 'volumeRatio', 'break'];
+    if (!groupKey || !allowed.includes(key)) return;
+    const lu = getLimitUpState();
+    const current = (lu.groupSort && lu.groupSort[groupKey]) || null;
+    const direction = current && current.key === key && current.direction === 'desc' ? 'asc' : 'desc';
+    lu.groupSort = {
+      ...(lu.groupSort || {}),
+      [groupKey]: { key, direction }
+    };
+    lu.groups = buildLimitUpGroupsForState(lu);
+    rerenderLimitUpPage();
+  }
+
+  function handleLimitUpPinToggle(code) {
+    if (!code) return;
+    const lu = getLimitUpState();
+    const pins = new Set(lu.pinnedCodes || []);
+    if (pins.has(code)) pins.delete(code);
+    else pins.add(code);
+    lu.pinnedCodes = pins;
+    setLimitUpPinnedCodes([...pins]);
+    rerenderLimitUpPage();
+  }
+
+  function handleLimitUpToggleSelect(code, checked) {
+    if (!code) return;
+    const lu = getLimitUpState();
+    if (checked) lu.selectedCodes.add(code);
+    else lu.selectedCodes.delete(code);
+    rerenderLimitUpPage();
+  }
+
+  function handleLimitUpSelectAll() {
+    const lu = getLimitUpState();
+    lu.selectedCodes = new Set(lu.items.map((it) => it.code));
+    rerenderLimitUpPage();
+  }
+
+  function handleLimitUpSelectNone() {
+    const lu = getLimitUpState();
+    lu.selectedCodes = new Set();
+    rerenderLimitUpPage();
+  }
+
+  function handleLimitUpAddSelectedAndNavigate() {
+    const lu = getLimitUpState();
+    const codes = lu.selectedCodes;
+    if (!codes || !codes.size) return;
+    let added = 0;
+    const state = getState();
+    for (const code of codes) {
+      if (!state.watchList.includes(code)) {
+        onAddToWatchList(code, { silent: true });
+        added++;
+      }
+    }
+    lu.selectedCodes = new Set();
+    flashInfo(added > 0 ? `已加入监控 ${added} 只` : '已选标的已在监控列表');
+    onNavigate('#/');
+    refreshNow();
+    renderData();
+  }
+
+  function handleLimitUpOpenKline(code) {
+    if (!code) return;
+    const lu = getLimitUpState();
+    if (lu.expandedCodes.has(code)) {
+      closeLimitUpChart(code);
+      return;
+    }
+    lu.expandedCodes.add(code);
+    lu.chartInstances.set(code, createChartState(DEFAULT_PERIOD));
+    rerenderLimitUpPage();
+    loadLimitUpKline(code);
+  }
+
+  function closeLimitUpChart(code) {
+    const lu = getLimitUpState();
+    if (!code || !lu.expandedCodes.has(code)) return;
+    lu.expandedCodes.delete(code);
+    const inst = lu.chartInstances.get(code);
+    if (inst) {
+      if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
+      if (inst.intradayAbort) try { inst.intradayAbort.abort(); } catch { /* ignore */ }
+      const ctl = limitUpChartMgr.klineCtlMap.get(code);
+      if (ctl) {
+        try { ctl.destroy(); } catch { /* ignore */ }
+      }
+      limitUpChartMgr.klineCtlMap.delete(code);
+      const intradayCtl = limitUpChartMgr.intradayCtlMap.get(code);
+      if (intradayCtl) {
+        try { intradayCtl.destroy(); } catch { /* ignore */ }
+      }
+      limitUpChartMgr.intradayCtlMap.delete(code);
+    }
+    lu.chartInstances.delete(code);
+    rerenderLimitUpPage();
+  }
+
+  function closeAllLimitUpCharts() {
+    const lu = getLimitUpState();
+    for (const code of [...lu.expandedCodes]) {
+      closeLimitUpChart(code);
+    }
+  }
+
+  function handleLimitUpCloseKline(code) {
+    if (code) closeLimitUpChart(code);
+    else closeAllLimitUpCharts();
+  }
+
+  function handleLimitUpKlinePeriodChange(p, code) {
+    if (!isValidPeriod(p)) return;
+    const lu = getLimitUpState();
+    const inst = lu.chartInstances.get(code);
+    if (!inst || inst.period === p) return;
+    inst.period = p;
+    inst.klineData = null;
+    inst.loading = true;
+    inst.error = null;
+    inst.intradayData = null;
+    inst.intradayError = null;
+    inst._visibleRange = null;
+    inst._intradayVisibleRange = null;
+    if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
+    rerenderLimitUpPage();
+    loadLimitUpKline(code);
+  }
+
+  function _handleLimitUpForceReloadChart(code) {
+    if (!code) return;
+    const lu = getLimitUpState();
+    const inst = lu.chartInstances.get(code);
+    if (!inst) return;
+    inst.klineData = null;
+    inst.loading = true;
+    inst.error = null;
+    inst._visibleRange = null;
+    inst._intradayVisibleRange = null;
+    if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
+    rerenderLimitUpPage();
+    loadLimitUpKline(code);
+  }
+
+  function _destroyLimitUpChart(code) {
+    limitUpChartMgr.destroyCharts(code, { abort: false });
+  }
+
+  function mountLimitUpChart(code) {
+    limitUpChartMgr.mountCharts(code);
+  }
+
+  function applyLimitUpLiveTickToChart(code, quoteOrPrice) {
+    limitUpChartMgr.applyLiveTick(code, quoteOrPrice);
+  }
+
+  function loadLimitUpKline(code) {
+    limitUpChartMgr.loadKline(code);
+  }
+
+  return {
+    setRootEl: (el) => { limitUpRootEl = el; },
+    getRootEl: () => limitUpRootEl,
+    render: rerenderLimitUpPage,
+    fetch: limitUpFetch,
+    fetchListNow: fetchLimitUpListNow,
+    applyLiveTicks: applyLiveTicksToLimitUp,
+    startTimer: startLimitUpTimer,
+    stopTimer: stopLimitUpTimer,
+    closeChart: closeLimitUpChart,
+    closeAllCharts: closeAllLimitUpCharts,
+    mountChart: mountLimitUpChart,
+    loadKline: loadLimitUpKline,
+    applyLiveTickToChart: applyLimitUpLiveTickToChart,
+    ensureTradingDate: ensureLimitUpTradingDate,
+    refreshDateMeta: refreshLimitUpDateMeta,
+    isDateToday: isLimitUpDateToday,
+    handleRefreshChange: handleLimitUpRefreshChange,
+    handleAutoRefreshToggle: handleLimitUpAutoRefreshToggle,
+    handleDateChange: handleLimitUpDateChange,
+    handleSortChange: handleLimitUpSortChange,
+    handleGroupSort: handleLimitUpGroupSort,
+    handlePinToggle: handleLimitUpPinToggle,
+    handleToggleSelect: handleLimitUpToggleSelect,
+    handleSelectAll: handleLimitUpSelectAll,
+    handleSelectNone: handleLimitUpSelectNone,
+    handleAddAndNavigate: handleLimitUpAddAndNavigate,
+    handleAddSelectedAndNavigate: handleLimitUpAddSelectedAndNavigate,
+    handleOpenKline: handleLimitUpOpenKline,
+    handleCloseKline: handleLimitUpCloseKline,
+    handleKlinePeriodChange: handleLimitUpKlinePeriodChange,
+    handleForceReloadChart: _handleLimitUpForceReloadChart,
+    destroyChart: _destroyLimitUpChart
+  };
+}

@@ -19,6 +19,9 @@ import { fetchKline, fetchIntraday } from '../api.js';
 import { chartTimeToDate, getBeijingDate } from '../time.js';
 import { isFutureCode } from '../futures/instrument.js';
 import { isLiveTradeDate } from '../marketSession.js';
+import { intradaySourceLabel } from '../format.js';
+
+export { intradaySourceLabel };
 
 export const MA_PERIODS = [5, 10, 20, 60];
 
@@ -147,9 +150,6 @@ export function formatKlineStatus(inst) {
   }
   return parts.join(' · ');
 }
-
-import { intradaySourceLabel } from '../format.js';
-export { intradaySourceLabel };
 
 export function formatIntradayStatus(inst) {
   if (!inst) return '';

@@ -66,7 +66,6 @@ function el(tag, attrs, ...children) {
   for (const [k, v] of Object.entries(attrs || {})) {
     if (v === null || v === undefined || v === false) continue;
     if (k === 'class') node.className = v;
-    else if (k === 'html') node.innerHTML = v;
     else if (k === 'on' && typeof v === 'object') {
       for (const [ev, fn] of Object.entries(v)) node.addEventListener(ev, fn);
     } else if (k === 'checked' && v) {

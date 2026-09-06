@@ -5,7 +5,8 @@
 股票期货实时监控助手 v2 - 单页 Web 应用
 
 **新窗口速读入口**：
-- [`docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md) — 2026-09-05 WorkBuddy 全量代码审查缺陷彻底闭环交接文档（最新）
+- [`docs/handoff/2026-09-05-workbuddy-round2-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-round2-code-review-defects-closure-handoff.md) — 2026-09-05 WorkBuddy 第二轮全量代码审查缺陷彻底闭环与控制器解耦交接文档（最新）
+- [`docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md) — 2026-09-05 WorkBuddy 第一轮全量代码审查缺陷彻底闭环交接文档
 - [`docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md`](docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md) — 2026-09-05 代码审查遗留缺陷全量闭环与视图组件解耦交接文档
 - [`docs/handoff/2026-09-04-aktools-data-source-architecture-and-stability-handoff.md`](docs/handoff/2026-09-04-aktools-data-source-architecture-and-stability-handoff.md) — 2026-09-04 AKTools 数据源稳定性根因分析、全功能评估与架构演进方案交接文档
 - [`docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md`](docs/handoff/2026-09-04-code-review-defects-and-architecture-refactor-handoff.md) — 2026-09-04 全面代码审查结论、缺陷清单与架构重构实施交接文档
@@ -64,7 +65,10 @@ project1/
 │   ├── style.css            # 全局样式 + 主题 CSS 变量
 │   ├── pages/               # 历史规划目录；当前 SPA 主要在 index.html + hash route 内渲染
 │   └── js/
-│       ├── app.js           # 主应用逻辑 + 路由 + 多 K 线图
+│       ├── app.js           # 主应用入口 + 路由集成 + 核心状态协调
+│       ├── controllers/     # 页面级业务控制器 (limitUpController, momentumController, chartRowController)
+│       ├── views/           # UI 视图渲染组件 (headerView, toolbarView, monitorTableView, momentumView, ...)
+│       ├── services/        # 业务服务与领域模型 (momentumScanner, momentumMath, batchExportService)
 │       ├── api.js           # 实时行情 API (Tencent/Eastmoney/Sina)
 │       ├── parser.js        # 数据解析器 + normalizeCode
 │       ├── storage.js       # localStorage 封装 + STORAGE_KEYS

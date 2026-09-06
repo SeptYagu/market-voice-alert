@@ -2,7 +2,7 @@
 
 > **新窗口从这里开始**：本文件记录了完整的重做计划、决策、当前阶段和下一步任务。无需阅读历史对话。
 >
-> **新窗口交接文档**：[`docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md) — 2026-09-05 WorkBuddy 全量代码审查缺陷彻底闭环交接文档（最新）。详见前序 [`docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md`](docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md)。
+> **新窗口交接文档**：[`docs/handoff/2026-09-05-workbuddy-round2-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-round2-code-review-defects-closure-handoff.md) — 2026-09-05 WorkBuddy 第二轮全量代码审查缺陷彻底闭环与控制器解耦交接文档（最新）。详见前序 [`docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md)。
 
 ## 项目定位
 
@@ -120,6 +120,34 @@
   - Playwright E2E 自动化测试：57 / 57 全部 PASS
   - Vite 生产打包：顺利构建
 - 详见交接文档：[`docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md)。
+
+## 2026-09-05 WorkBuddy 第二轮代码审查缺陷彻底闭环与控制器解耦状态
+
+- ✅ **3 项 Major 级核心缺陷全量闭环**：
+  - **M-1 & M-3 & Nit 4（动量数学算法统一抽取与依赖倒置）**：抽离 `src/js/services/momentumMath.js`，将 `computeTenDayMomentum`、`sortMomentumItems`、`getMomentumReasonText` 及参数常量（`MOMENTUM_LOOKBACK_TRADING_DAYS = 10`、`MOMENTUM_THRESHOLD_PCT = 45`）沉淀为领域公共模块，严格对齐 `>= 11` 根 Bar 判定与截断日逻辑；服务端 `momentumService.js` 与前端 `momentumScanner.js` 统一引用，彻底消除口径漂移与反向依赖；新增 `tests/momentumMath.test.js` 8 项单测全部通过。
+  - **M-2（`app.js` 上帝对象拆分与控制器化）**：
+    - 抽离 `src/js/controllers/limitUpController.js`：纳管涨停看板数据拉取、轮询定时器、报价 Cell 原地 Patch、图表管理及日期导航；
+    - 抽离 `src/js/controllers/momentumController.js`：纳管 10 日强势股全流程扫描、轮询监控、图表展开管理；
+    - 抽离 `src/js/services/batchExportService.js`：纳管自选股批量解析、文本与 CSV 导出；
+    - `src/js/app.js` 巨石净减少超 920 行代码，保持既有测试契约 100% 向后兼容。
+- ✅ **6 项 Minor 级缺陷彻底闭环**：
+  - **m-1（代理流式累积与超限熔断）**：`server/proxyService.js` 先检查 `content-length`，并使用 `reader.read()` 流式累计字节，超过 15MB 立即 `reader.cancel()` 中断，防止内存峰值击穿。
+  - **m-2（期货查询参数 encodeURIComponent）**：`server/futures/futuresKlineService.js` 针对 4 处 URL 参数统一转义。
+  - **m-3（`isDataAutoRefreshAllowedNow` 死分支修复）**：废除未定义的 `state.chartRowManager`，改用收集全体已展开图表中的境内期货标的精准判断夜盘时段。
+  - **m-4（期货昨结价 24h 缓存）**：`server/futures/futuresKlineService.js` 对 `fetchFuturesDaily` 接入 24h 日线缓存，杜绝每 10 秒刷新分时重复拉取日线。
+  - **m-5（清理 `el()` `html` XSS 隐患通道）**：清理 8 个视图文件中的 `node.innerHTML` 注入分支，实现零风险安全收敛。
+  - **m-6（服务端 `mapLimit` 统一归拢）**：在 `server/utils.js` 统一导出并发控制器，避免重复实现。
+- ✅ **4 项 Nit 优化项闭环**：
+  - **Nit 1**：`chartRowController.js` 规范文件顶部 import。
+  - **Nit 2**：`server/intradayService.js` 简化 `safeName = code`。
+  - **Nit 3**：`server/index.js` 区分 `/assets/*` 强缓存与根静态资源协商缓存。
+  - **Nit 4**：动量阈值与回看周期常量集中下沉。
+- ✅ **质量基线验证**：
+  - ESLint 代码规范：0 错误 0 警告
+  - QUnit 单元测试：660 / 660 全部 PASS（净增 8 项）
+  - Playwright E2E 自动化测试：57 / 57 全部 PASS
+  - Vite 生产打包：顺利构建
+- 详见交接文档：[`docs/handoff/2026-09-05-workbuddy-round2-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-round2-code-review-defects-closure-handoff.md)。
 
 ## 备份
 

@@ -2,11 +2,17 @@ import { readCache, writeCache } from './cacheStore.js';
 import { getKlineDataForMomentum } from './klineService.js';
 import { getCachedSpotLatest } from './spotService.js';
 import { getCachedTradeCalendar } from './calendarService.js';
-import { isFresh, normalizeDateKey, nowMs, parsePositiveNumber } from './utils.js';
+import { isFresh, normalizeDateKey, nowMs, parsePositiveNumber, mapLimit } from './utils.js';
+import {
+  computeTenDayMomentum,
+  klineDateKey,
+  MOMENTUM_LOOKBACK_TRADING_DAYS as LOOKBACK_DAYS,
+  MOMENTUM_THRESHOLD_PCT as DEFAULT_THRESHOLD
+} from '../src/js/services/momentumMath.js';
+
+export { computeTenDayMomentum };
 
 const MOMENTUM_TTL_MS = 5 * 60 * 1000;
-const DEFAULT_THRESHOLD = 45;
-const LOOKBACK_DAYS = 10;
 const CONCURRENCY = 32;
 const SCHEDULED_SCAN_TIMES = Object.freeze([
   Object.freeze({ hour: 8, minute: 0, label: 'pre-open' }),
@@ -15,11 +21,6 @@ const SCHEDULED_SCAN_TIMES = Object.freeze([
 const JOBS = new Map();
 let schedulerTimer = null;
 let schedulerStarted = false;
-
-function klineDateKey(value) {
-  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return match ? `${match[1]}${match[2]}${match[3]}` : '';
-}
 
 function dashDate(dateKey) {
   return /^\d{8}$/.test(String(dateKey || ''))
@@ -89,48 +90,6 @@ export function mergeLiveQuoteIntoDailyKline(data, quote, liveDateKey) {
   else if (!lastDate || lastDate < liveDateKey) items.push(bar);
   else return data;
   return { ...(data || {}), items };
-}
-
-export function computeTenDayMomentum(klineData, lookbackDays = LOOKBACK_DAYS, cutoffDate = '') {
-  const cutoffKey = normalizeDateKey(cutoffDate) || '';
-  const sourceItems = klineData && Array.isArray(klineData.items) ? klineData.items : [];
-  const items = cutoffKey
-    ? sourceItems.filter((item) => {
-      const itemDate = klineDateKey(item && item.time);
-      return itemDate && itemDate <= cutoffKey;
-    })
-    : sourceItems;
-  if (items.length < lookbackDays + 1) return null;
-  const end = items[items.length - 1];
-  const start = items[items.length - 1 - lookbackDays];
-  const startClose = Number(start.close);
-  const lastClose = Number(end.close);
-  if (!Number.isFinite(startClose) || !Number.isFinite(lastClose) || startClose <= 0) return null;
-  const gainPercent = (lastClose / startClose - 1) * 100;
-  return {
-    lookbackDays,
-    startTime: start.time,
-    endTime: end.time,
-    endDateKey: klineDateKey(end.time),
-    startClose,
-    lastClose,
-    gainPercent: Number(gainPercent.toFixed(2))
-  };
-}
-
-async function mapLimit(items, limit, fn) {
-  const out = [];
-  let cursor = 0;
-  const worker = async () => {
-    while (cursor < items.length) {
-      const idx = cursor;
-      cursor += 1;
-      out[idx] = await fn(items[idx], idx);
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
 }
 
 function cacheParts(dateKey, threshold) {
@@ -333,7 +292,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt }
         await progressWrite;
       }
     }
-  });
+  }, { yieldTick: true });
   await progressWrite;
   const freshFound = found
     .filter((item) => item.marketDate === latestMarketDate)
