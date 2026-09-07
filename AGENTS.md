@@ -5,7 +5,8 @@
 股票期货实时监控助手 v2 - 单页 Web 应用
 
 **新窗口速读入口**：
-- [`docs/handoff/2026-09-05-workbuddy-round2-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-round2-code-review-defects-closure-handoff.md) — 2026-09-05 WorkBuddy 第二轮全量代码审查缺陷彻底闭环与控制器解耦交接文档（最新）
+- [`docs/handoff/2026-09-07-workbuddy-round3-code-review-handoff.md`](docs/handoff/2026-09-07-workbuddy-round3-code-review-handoff.md) — 2026-09-07 WorkBuddy 第三轮代码审查交接文档：最新提交核验 + 整体复审（0 Critical / 0 Major / 2 Minor）（最新）
+- [`docs/handoff/2026-09-05-workbuddy-round2-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-round2-code-review-defects-closure-handoff.md) — 2026-09-05 WorkBuddy 第二轮全量代码审查缺陷彻底闭环与控制器解耦交接文档
 - [`docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md) — 2026-09-05 WorkBuddy 第一轮全量代码审查缺陷彻底闭环交接文档
 - [`docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md`](docs/handoff/2026-09-05-code-review-defects-closure-and-views-decoupling-handoff.md) — 2026-09-05 代码审查遗留缺陷全量闭环与视图组件解耦交接文档
 - [`docs/handoff/2026-09-04-aktools-data-source-architecture-and-stability-handoff.md`](docs/handoff/2026-09-04-aktools-data-source-architecture-and-stability-handoff.md) — 2026-09-04 AKTools 数据源稳定性根因分析、全功能评估与架构演进方案交接文档
