@@ -75,6 +75,7 @@ import { getBeijingDate, formatDateTime } from './time.js';
 import {
   DEFAULT_SMART_SCHEDULE,
   getMarketSession,
+  getSessionTransitionNotice,
   isAutoRefreshAllowedInSession,
   isVoiceAllowedInSession,
   normalizeSmartSchedule,
@@ -1312,12 +1313,18 @@ function applyVoiceSchedule() {
     return;
   }
   const session = getVoiceSession();
+  const prevSession = state.voiceLastSession;
   state.voiceLastSession = session;
   const allowed = isVoiceAllowedInSession(session, smart);
 
   if (state.voice.enabled && !allowed) {
     stopVoiceTimer();
     ttsCancel();
+    // Announce the scheduled pause itself (e.g. trading -> lunch / after-close).
+    const notice = getSessionTransitionNotice(prevSession, session, smart);
+    if (notice && isSpeechSupported()) {
+      ttsSpeak(notice, { volume: clampVolume(state.voice.volume) / 100 });
+    }
     state.voicePausedBySchedule = session === 'lunch' || session === 'pre-open' || session === 'closed';
     if (session === 'after-close' && smart.autoStopAfterClose) {
       state.voice = { ...state.voice, enabled: false };

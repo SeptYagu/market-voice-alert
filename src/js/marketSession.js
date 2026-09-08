@@ -41,6 +41,19 @@ export function isVoiceAllowedInSession(session, smartSchedule) {
   return isAutoRefreshAllowedInSession(session, smartSchedule);
 }
 
+// Returns the spoken reminder for a session transition, or null.
+// Only fires when the matching auto-pause option is on (the reminder
+// accompanies the pause/stop that the smart schedule performs).
+export function getSessionTransitionNotice(prevSession, nextSession, smartSchedule) {
+  if (!prevSession || prevSession === nextSession) return null;
+  if (prevSession !== 'trading') return null;
+  const cfg = normalizeSmartSchedule(smartSchedule);
+  if (!cfg.enabled) return null;
+  if (nextSession === 'lunch' && cfg.pauseLunchBreak) return '中午休市';
+  if (nextSession === 'after-close' && cfg.autoStopAfterClose) return '已收盘';
+  return null;
+}
+
 export function isAutoRefreshAllowedInSession(session, smartSchedule) {
   const cfg = normalizeSmartSchedule(smartSchedule);
   if (!cfg.enabled) return true;

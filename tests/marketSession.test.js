@@ -2,6 +2,7 @@ import {
   getMarketSession,
   isAutoRefreshAllowedInSession,
   isVoiceAllowedInSession,
+  getSessionTransitionNotice,
   normalizeSmartSchedule,
   isFuturesMarketOpen,
   isLiveTradeDate
@@ -45,6 +46,24 @@ QUnit.module('marketSession', () => {
     t.equal(isAutoRefreshAllowedInSession('lunch', cfg), false);
     t.equal(isAutoRefreshAllowedInSession('after-close', cfg), false);
     t.equal(isAutoRefreshAllowedInSession('opening-auction', cfg), false);
+  });
+
+  QUnit.test('getSessionTransitionNotice announces lunch break and close', (t) => {
+    const cfg = normalizeSmartSchedule({});
+    t.equal(getSessionTransitionNotice('trading', 'lunch', cfg), '中午休市');
+    t.equal(getSessionTransitionNotice('trading', 'after-close', cfg), '已收盘');
+    // No reminder when not transitioning out of trading.
+    t.equal(getSessionTransitionNotice(null, 'lunch', cfg), null, 'first run (no prev session)');
+    t.equal(getSessionTransitionNotice('trading', 'trading', cfg), null, 'same session');
+    t.equal(getSessionTransitionNotice('lunch', 'trading', cfg), null, 'lunch resume');
+    t.equal(getSessionTransitionNotice('trading', 'closed', cfg), null, 'non-trading day');
+    t.equal(getSessionTransitionNotice('trading', 'opening-auction', cfg), null);
+    // No reminder when the corresponding auto-pause option is off.
+    const lunchOn = normalizeSmartSchedule({ pauseLunchBreak: false });
+    t.equal(getSessionTransitionNotice('trading', 'lunch', lunchOn), null, 'pauseLunchBreak off');
+    const stopOff = normalizeSmartSchedule({ autoStopAfterClose: false });
+    t.equal(getSessionTransitionNotice('trading', 'after-close', stopOff), null, 'autoStopAfterClose off');
+    t.equal(getSessionTransitionNotice('trading', 'lunch', { enabled: false }), null, 'smart schedule off');
   });
 
   QUnit.test('isFuturesMarketOpen accurately identifies commodity sessions', (t) => {
