@@ -113,7 +113,7 @@ QUnit.module('alert.formatAlertMessage', () => {
         { code: 'sh600519', name: '贵州茅台', price: 1850, changePercent: 5.2, type: 'stock' },
         'up'
       ),
-      '贵州茅台 涨幅 5.20%，现价 1850.00 元'
+      '贵州茅台 涨幅 5.20，现价 1850.00 元'
     );
   });
 
@@ -123,7 +123,7 @@ QUnit.module('alert.formatAlertMessage', () => {
         { code: 'sz000001', name: '平安银行', price: 12, changePercent: -5.5, type: 'stock' },
         'down'
       ),
-      '平安银行 跌幅 5.50%，现价 12.00 元'
+      '平安银行 跌幅 5.50，现价 12.00 元'
     );
   });
 
@@ -133,7 +133,7 @@ QUnit.module('alert.formatAlertMessage', () => {
         { code: 'nf2105', price: 5200, changePercent: 6, type: 'future' },
         'up'
       ),
-      'nf2105 涨幅 6.00%，现价 5200.00'
+      'nf2105 涨幅 6.00，现价 5200.00'
     );
   });
 
@@ -143,7 +143,7 @@ QUnit.module('alert.formatAlertMessage', () => {
         { code: 't2412', name: '十年国债2412', price: 104.355, changePercent: 0.15, type: 'future', priceTick: 0.005 },
         'up'
       ),
-      '十年国债2412 涨幅 0.15%，现价 104.355'
+      '十年国债2412 涨幅 0.15，现价 104.355'
     );
   });
 

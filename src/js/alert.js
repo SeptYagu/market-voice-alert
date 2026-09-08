@@ -86,7 +86,8 @@ export function formatAlertMessage(quote, direction) {
   const label = direction === 'down' ? '跌幅' : '涨幅';
   const unit = quote.type === 'future' ? '' : ' 元';
   const decimals = quote.type === 'future' && quote.priceTick && quote.priceTick < 0.01 ? 3 : 2;
-  return `${name} ${label} ${Math.abs(pct).toFixed(2)}%，现价 ${price.toFixed(decimals)}${unit}`;
+  // No 「%」 suffix: TTS reads it as 「百分之」.
+  return `${name} ${label} ${Math.abs(pct).toFixed(2)}，现价 ${price.toFixed(decimals)}${unit}`;
 }
 
 export function evaluateAlerts(quotes, subscribedCodes, threshold, statesIn) {

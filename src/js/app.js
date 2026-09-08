@@ -1145,7 +1145,7 @@ function handleTestAlert() {
   }
   const direction = Number(target.changePercent) >= 0 ? 'up' : 'down';
   const message = formatQuoteSpeech(target, state.voice.fields) ||
-    `${target.name || target.code} ${direction === 'up' ? '涨' : '跌'} ${Math.abs(Number(target.changePercent)).toFixed(2)}%`;
+    `${target.name || target.code} ${direction === 'up' ? '涨' : '跌'} ${Math.abs(Number(target.changePercent)).toFixed(2)}`;
   if (isSpeechSupported()) {
     const volume = clampVolume(state.voice.volume) / 100;
     ttsSpeak(message, { volume });

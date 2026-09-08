@@ -19,7 +19,7 @@ QUnit.module('tts.formatQuoteSpeech', () => {
         changePercent: 2.35,
         type: 'stock'
       }),
-      '贵州茅台，现价 1850.00 元，涨 2.35%'
+      '贵州茅台，1850.00 元，涨 2.35'
     );
   });
 
@@ -32,7 +32,7 @@ QUnit.module('tts.formatQuoteSpeech', () => {
         changePercent: -1.2,
         type: 'stock'
       }),
-      '平安银行,现价 14.50 元,跌 1.20%'.replace(/,/g, '，')
+      '平安银行,14.50 元,跌 1.20'.replace(/,/g, '，')
     );
   });
 
@@ -45,7 +45,7 @@ QUnit.module('tts.formatQuoteSpeech', () => {
         changePercent: 0,
         type: 'stock'
       }),
-      '招商银行，现价 35.00 元，持平'
+      '招商银行，35.00 元，持平'
     );
   });
 
@@ -58,14 +58,14 @@ QUnit.module('tts.formatQuoteSpeech', () => {
         changePercent: 0.85,
         type: 'future'
       }),
-      '螺纹钢，现价 5200.00，涨 0.85%'
+      '螺纹钢，5200.00，涨 0.85'
     );
   });
 
   QUnit.test('falls back to code when name missing', (t) => {
     t.equal(
       formatQuoteSpeech({ code: 'sh600519', price: 100, changePercent: 1, type: 'stock' }),
-      'sh600519，现价 100.00 元，涨 1.00%'
+      'sh600519，100.00 元，涨 1.00'
     );
   });
 
@@ -80,7 +80,7 @@ QUnit.module('tts.formatQuoteSpeech', () => {
   QUnit.test('handles missing changePercent as 持平', (t) => {
     t.equal(
       formatQuoteSpeech({ code: 'sh600519', name: '茅台', price: 100, type: 'stock' }),
-      '茅台，现价 100.00 元，持平'
+      '茅台，100.00 元，持平'
     );
   });
 
@@ -90,7 +90,7 @@ QUnit.module('tts.formatQuoteSpeech', () => {
         { name: '贵州茅台', price: 1850, changePercent: 2.35, type: 'stock' },
         { name: false }
       ),
-      '现价 1850.00 元，涨 2.35%'
+      '1850.00 元，涨 2.35'
     );
   });
 
@@ -100,7 +100,7 @@ QUnit.module('tts.formatQuoteSpeech', () => {
         { name: '贵州茅台', price: 1850, changePercent: 2.35, type: 'stock' },
         { price: false }
       ),
-      '贵州茅台，涨 2.35%'
+      '贵州茅台，涨 2.35'
     );
   });
 
@@ -110,7 +110,7 @@ QUnit.module('tts.formatQuoteSpeech', () => {
         { name: '贵州茅台', price: 1850, changePercent: 2.35, type: 'stock' },
         { percent: false }
       ),
-      '贵州茅台，现价 1850.00 元'
+      '贵州茅台，1850.00 元'
     );
   });
 
@@ -140,7 +140,7 @@ QUnit.module('tts.formatQuoteSpeech', () => {
         { name: '茅台', price: 100, changePercent: 1, type: 'stock' },
         { name: 1, price: 'yes', percent: false }
       ),
-      '茅台，现价 100.00 元'
+      '茅台，100.00 元'
     );
   });
 
@@ -151,7 +151,7 @@ QUnit.module('tts.formatQuoteSpeech', () => {
         null,
         ['percent', 'name', 'price']
       ),
-      '涨 1.00%，茅台，现价 100.00 元'
+      '涨 1.00，茅台，100.00 元'
     );
   });
 
@@ -162,7 +162,7 @@ QUnit.module('tts.formatQuoteSpeech', () => {
         { name: true, price: false, percent: true },
         ['percent', 'price', 'name']
       ),
-      '涨 1.00%，茅台'
+      '涨 1.00，茅台'
     );
   });
 
@@ -173,7 +173,7 @@ QUnit.module('tts.formatQuoteSpeech', () => {
         null,
         'bad'
       ),
-      '茅台，现价 100.00 元，涨 1.00%'
+      '茅台，100.00 元，涨 1.00'
     );
     t.equal(
       formatQuoteSpeech(
@@ -181,7 +181,7 @@ QUnit.module('tts.formatQuoteSpeech', () => {
         null,
         []
       ),
-      '茅台，现价 100.00 元，涨 1.00%'
+      '茅台，100.00 元，涨 1.00'
     );
     t.equal(
       formatQuoteSpeech(
@@ -189,7 +189,7 @@ QUnit.module('tts.formatQuoteSpeech', () => {
         null,
         ['name', 'price']
       ),
-      '茅台，现价 100.00 元，涨 1.00%'
+      '茅台，100.00 元，涨 1.00'
     );
   });
 });

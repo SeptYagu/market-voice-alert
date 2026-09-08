@@ -120,15 +120,16 @@ export function formatQuoteSpeech(quote, fields, fieldsOrder) {
   const builders = {
     name: () => baseName,
     price: () => {
+      // No 「现价」 prefix and no 「%」 suffix: TTS reads % as 「百分之」.
       const unit = quote.type === 'future' ? '' : ' 元';
       const decimals = quote.type === 'future' && ((quote.priceTick && quote.priceTick < 0.01) || quote.priceDecimals === 3) ? 3 : 2;
-      return `现价 ${price.toFixed(decimals)}${unit}`;
+      return `${price.toFixed(decimals)}${unit}`;
     },
     percent: () => {
       const pct = Number(quote.changePercent);
       if (!Number.isFinite(pct) || pct === 0) return '持平';
-      if (pct > 0) return `涨 ${pct.toFixed(2)}%`;
-      return `跌 ${Math.abs(pct).toFixed(2)}%`;
+      if (pct > 0) return `涨 ${pct.toFixed(2)}`;
+      return `跌 ${Math.abs(pct).toFixed(2)}`;
     }
   };
 
