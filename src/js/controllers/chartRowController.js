@@ -21,8 +21,6 @@ import { isFutureCode } from '../futures/instrument.js';
 import { isLiveTradeDate } from '../marketSession.js';
 import { intradaySourceLabel } from '../format.js';
 
-export { intradaySourceLabel };
-
 export const MA_PERIODS = [5, 10, 20, 60];
 
 export function getPrevCloseForDate(items, date) {

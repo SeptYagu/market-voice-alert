@@ -55,7 +55,7 @@
 ### 3.1 [m-1] 代理上游流式读取与体积限制前置
 - **位置**：`server/proxyService.js`
 - **修复方案**：
-  - 先检查响应头 `content-length`，若超出 `MAX_PROXY_BODY_BYTES`（15MB）直接拒绝；
+  - 先检查响应头 `content-length`，若超出 `MAX_PROXY_BODY_BYTES`（10MB）直接拒绝；
   - 弃用全量 `upstream.arrayBuffer()`，改用 `upstream.body.getReader()` 流式分块累加，一旦累加字节超过上限立即 `reader.cancel()` 中断上游连接，防范内存峰值耗尽。
 
 ### 3.2 [m-2] 期货行情 URL 参数参数化转义

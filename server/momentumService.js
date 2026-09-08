@@ -412,6 +412,15 @@ export function startTenDayMomentumScan({ date, threshold: rawThreshold, reason 
       return data;
     })
     .catch(async (err) => {
+      const isCurrentJob = () => JOBS.get(jobKey)?.promise === job;
+      if (!isCurrentJob()) {
+        return {
+          status: 'error',
+          date: dateKey,
+          threshold,
+          error: err && err.message ? err.message : String(err)
+        };
+      }
       try {
         const lastSuccess = await readCache(successCacheParts(dateKey, threshold), { skipTouch: true }).catch(() => null);
         const prior = lastSuccess && lastSuccess.data
@@ -428,7 +437,9 @@ export function startTenDayMomentumScan({ date, threshold: rawThreshold, reason 
           items: prior && prior.data && Array.isArray(prior.data.items) ? prior.data.items : [],
           error: err && err.message ? err.message : String(err)
         };
-        await writeMomentumProgress(parts, data).catch(() => {});
+        if (isCurrentJob()) {
+          await writeMomentumProgress(parts, data).catch(() => {});
+        }
         return data;
       } catch {
         return {

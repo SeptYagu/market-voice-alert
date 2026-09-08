@@ -5,10 +5,10 @@ import {
   applyLiveTickToKlineChart,
   formatKlineStatus,
   formatIntradayStatus,
-  intradaySourceLabel,
   getPrevCloseForDate,
   ChartRowManager
 } from '../src/js/controllers/chartRowController.js';
+import { intradaySourceLabel } from '../src/js/format.js';
 
 QUnit.module('chartRowController.helpers', () => {
   QUnit.test('createChartState initializes default structure', (t) => {

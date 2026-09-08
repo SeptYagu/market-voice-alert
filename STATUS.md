@@ -131,7 +131,7 @@
     - 抽离 `src/js/services/batchExportService.js`：纳管自选股批量解析、文本与 CSV 导出；
     - `src/js/app.js` 巨石净减少超 920 行代码，保持既有测试契约 100% 向后兼容。
 - ✅ **6 项 Minor 级缺陷彻底闭环**：
-  - **m-1（代理流式累积与超限熔断）**：`server/proxyService.js` 先检查 `content-length`，并使用 `reader.read()` 流式累计字节，超过 15MB 立即 `reader.cancel()` 中断，防止内存峰值击穿。
+  - **m-1（代理流式累积与超限熔断）**：`server/proxyService.js` 先检查 `content-length`，并使用 `reader.read()` 流式累计字节，超过 10MB 立即 `reader.cancel()` 中断，防止内存峰值击穿。
   - **m-2（期货查询参数 encodeURIComponent）**：`server/futures/futuresKlineService.js` 针对 4 处 URL 参数统一转义。
   - **m-3（`isDataAutoRefreshAllowedNow` 死分支修复）**：废除未定义的 `state.chartRowManager`，改用收集全体已展开图表中的境内期货标的精准判断夜盘时段。
   - **m-4（期货昨结价 24h 缓存）**：`server/futures/futuresKlineService.js` 对 `fetchFuturesDaily` 接入 24h 日线缓存，杜绝每 10 秒刷新分时重复拉取日线。
@@ -149,15 +149,16 @@
   - Vite 生产打包：顺利构建
 - 详见交接文档：[`docs/handoff/2026-09-05-workbuddy-round2-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-round2-code-review-defects-closure-handoff.md)。
 
-## 2026-09-07 WorkBuddy 第三轮代码审查状态（最新提交核验 + 整体复审）
+## 2026-09-07 WorkBuddy 第三/四轮代码审查遗留债务闭环状态
 
-- ✅ **最新提交 `70f65eb` 逐项核验全部 PASS**：round-2 声称闭环的 M-1~M-3、m-1~m-6、Nit1-4 共 13 项经读码核验均真实落地，无虚假闭环、无回归。
-- ✅ **质量基线复跑**：ESLint 0/0；QUnit 660/660 PASS；服务端模块导入冒烟 PASS（E2E 本轮未重跑）。
-- ⚠️ **新发现（0 Critical / 0 Major / 2 Minor / 3 Nit）**：
-  - Minor：代理体积上限文档写 15MB、代码实为 10MB（`server/proxyService.js:6`），需统一；
-  - Minor：`app.js` 与 `limitUpController` 双份 `limitUpRootEl` 引用（双源真相），建议收敛到 controller 单一来源；
-  - Nit：`chartRowController.js` 为测试兼容 re-export `intradaySourceLabel`、`uncaughtException` 静默吞错无计数、代理/缓存 API `ACAO:*`（LAN 个人工具可接受）。
-- 详见交接文档：[`docs/handoff/2026-09-07-workbuddy-round3-code-review-handoff.md`](docs/handoff/2026-09-07-workbuddy-round3-code-review-handoff.md)。
+- ✅ **2 项 Minor 遗留缺陷彻底闭环**：
+  - **3-1（代理体积上限文档对齐）**：统一修正文档与 `STATUS.md` 中写为 15MB 的笔误，与代码实现 `server/proxyService.js:6`（`MAX_PROXY_BODY_BYTES = 10MB`）保持严格一致。
+  - **3-2（收敛 `limitUpRootEl` 消除双源真相）**：移除 `src/js/app.js` 中的冗余模块级 `let limitUpRootEl` 变量与路由赋值，统一通过 `limitUpCtrl.getRootEl()` 动态获取与维护，彻底闭环状态不一致隐患。
+- ✅ **2 项 Nit 优化与竞态守卫闭环**：
+  - **3-3（消除测试与控制器层级倒挂）**：移除 `src/js/controllers/chartRowController.js` 的 `intradaySourceLabel` re-export，测试文件 `tests/chartRowController.test.js` 直接从 `format.js` 引用。
+  - **3-6（动量扫描陈旧任务中止竞态守卫）**：在 `server/momentumService.js` 的 `catch` 块中加入 `JOBS.get(jobKey)?.promise === job` 守卫，防止已超时中止的旧任务异常写入脏覆盖新任务扫描进度。
+- ✅ **质量基线验证**：ESLint 0 错误 0 警告，QUnit 660/660 全部 PASS，Vite 生产构建成功。
+- 详见交接文档：[`docs/handoff/2026-09-07-workbuddy-round4-code-review-handoff.md`](docs/handoff/2026-09-07-workbuddy-round4-code-review-handoff.md)。
 
 ## 备份
 

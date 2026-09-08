@@ -373,7 +373,6 @@ const state = {
   }
 };
 
-let limitUpRootEl = null;
 let abortController = null;
 
 function resolveInitialTradeDate(code, data) {
@@ -1710,7 +1709,9 @@ function applyDataRefreshSchedule() {
   const prevMonitorPaused = state.autoRefreshPausedBySchedule;
   const prevLimitUpPaused = state.limitUp.autoRefreshPausedBySchedule;
 
-  if (state.autoRefreshEnabled && !limitUpRootEl) {
+  const hasLimitUpRoot = Boolean(limitUpCtrl.getRootEl());
+
+  if (state.autoRefreshEnabled && !hasLimitUpRoot) {
     if (!allowed) {
       stopMonitorTimer();
       state.autoRefreshPausedBySchedule = true;
@@ -1724,10 +1725,10 @@ function applyDataRefreshSchedule() {
     }
   } else {
     stopMonitorTimer();
-    if (!limitUpRootEl) state.autoRefreshPausedBySchedule = false;
+    if (!hasLimitUpRoot) state.autoRefreshPausedBySchedule = false;
   }
 
-  if (state.limitUp.autoRefreshEnabled && limitUpRootEl) {
+  if (state.limitUp.autoRefreshEnabled && hasLimitUpRoot) {
     if (!allowed) {
       stopLimitUpTimer({ abort: false });
       state.limitUp.autoRefreshPausedBySchedule = true;
@@ -1740,7 +1741,7 @@ function applyDataRefreshSchedule() {
     }
   } else {
     stopLimitUpTimer({ abort: false });
-    if (limitUpRootEl) state.limitUp.autoRefreshPausedBySchedule = false;
+    if (hasLimitUpRoot) state.limitUp.autoRefreshPausedBySchedule = false;
   }
 
   if (prevMonitorPaused !== state.autoRefreshPausedBySchedule) {
@@ -1810,9 +1811,8 @@ export function startApp(root) {
         stopLimitUpTimer();
         closeAllLimitUpCharts();
         // Race fix: an in-flight limitUpFetch() may resolve after this handler
-        // returns. Clear limitUpRootEl BEFORE renderMonitorPage so the
+        // returns. Clear limitUpCtrl root BEFORE renderMonitorPage so the
         // fetch's finally-block rerender is a no-op.
-        limitUpRootEl = null;
         limitUpCtrl.setRootEl(null);
         renderMonitorPage(r);
         applyDataRefreshSchedule();
@@ -1821,7 +1821,6 @@ export function startApp(root) {
         stopMonitorTimer();
         closeAllCharts();
         closeAllMomentumCharts();
-        limitUpRootEl = r;
         limitUpCtrl.setRootEl(r);
         limitUpCtrl.render();
         limitUpFetch();
@@ -1865,5 +1864,5 @@ export function stopApp() {
 }
 
 export function _internal() {
-  return { state, chartInstanceMap, get limitUpRootEl() { return limitUpRootEl; } };
+  return { state, chartInstanceMap, get limitUpRootEl() { return limitUpCtrl.getRootEl(); } };
 }
