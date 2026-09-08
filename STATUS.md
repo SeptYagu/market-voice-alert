@@ -2,7 +2,7 @@
 
 > **新窗口从这里开始**：本文件记录了完整的重做计划、决策、当前阶段和下一步任务。无需阅读历史对话。
 >
-> **新窗口交接文档**：[`docs/handoff/2026-09-07-workbuddy-round3-code-review-handoff.md`](docs/handoff/2026-09-07-workbuddy-round3-code-review-handoff.md) — 2026-09-07 WorkBuddy 第三轮代码审查交接文档：最新提交核验 + 整体复审（最新）。详见前序 [`docs/handoff/2026-09-05-workbuddy-round2-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-round2-code-review-defects-closure-handoff.md)。
+> **新窗口交接文档**：[`docs/handoff/2026-09-07-workbuddy-round4-code-review-handoff.md`](docs/handoff/2026-09-07-workbuddy-round4-code-review-handoff.md) — 2026-09-07 WorkBuddy 第四轮代码审查交接文档：最新提交 a91927c 核验 + 整体复审 round-4（0 Critical / 0 Major / 2 Minor 遗留）（最新）。详见前序 [`docs/handoff/2026-09-07-workbuddy-round3-code-review-handoff.md`](docs/handoff/2026-09-07-workbuddy-round3-code-review-handoff.md)。
 
 ## 项目定位
 
