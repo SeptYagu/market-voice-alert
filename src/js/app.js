@@ -40,6 +40,8 @@ import {
   speak as ttsSpeak,
   cancel as ttsCancel,
   formatQuoteSpeech,
+  formatQuoteSpeechDelta,
+  buildQuoteSpeechSegments,
   isSpeechSupported
 } from './tts.js';
 import {
@@ -324,6 +326,7 @@ const state = {
   tickFallback: null,
   voiceScheduleTimer: null,
   voiceLastSession: null,
+  voiceLastSpoken: new Map(),
   voicePausedBySchedule: false,
   tradingDates: [],
   limitUp: {
@@ -1136,9 +1139,10 @@ function handleTestAlert() {
   }
   // Pick the first subscribed code that has a loaded quote.
   let target = null;
+  let targetCode = null;
   for (const code of state.subscribed) {
     const q = state.quotes.get(code);
-    if (q && Number.isFinite(Number(q.changePercent))) { target = q; break; }
+    if (q && Number.isFinite(Number(q.changePercent))) { target = q; targetCode = code; break; }
   }
   if (!target) {
     flashError('订阅的标的暂无报价，请稍后再试');
@@ -1150,6 +1154,12 @@ function handleTestAlert() {
   if (isSpeechSupported()) {
     const volume = clampVolume(state.voice.volume) / 100;
     ttsSpeak(message, { volume });
+  }
+  // Seed the dedup memory so the next scheduled broadcast does not repeat
+  // what the manual test just announced.
+  const segs = buildQuoteSpeechSegments(target);
+  if (segs && targetCode) {
+    state.voiceLastSpoken.set(targetCode, { price: segs.price, percent: segs.percent });
   }
   if (isNotificationSupported() && state.notifPermission === 'granted') {
     showNotification('价格提醒（测试）', message);
@@ -1166,6 +1176,10 @@ async function handleRequestNotification() {
 
 function persistSubscribed() {
   setSubscribedCodes([...state.subscribed]);
+  // Prune dedup memory for codes no longer subscribed.
+  for (const code of [...state.voiceLastSpoken.keys()]) {
+    if (!state.subscribed.has(code)) state.voiceLastSpoken.delete(code);
+  }
 }
 
 async function warmTradeCalendar() {
@@ -1233,8 +1247,12 @@ function speakSubscribed() {
   for (const code of state.subscribed) {
     const q = state.quotes.get(code);
     if (!q) continue;
-    const text = formatQuoteSpeech(q, fields, fieldsOrder);
-    if (text) ttsSpeak(text, { volume });
+    // Dedup: skip codes whose price AND changePercent are unchanged since the
+    // last spoken broadcast; only changed fields are announced (name kept).
+    const { text, spoken } = formatQuoteSpeechDelta(q, state.voiceLastSpoken.get(code), fields, fieldsOrder);
+    if (!text) continue;
+    ttsSpeak(text, { volume });
+    if (spoken) state.voiceLastSpoken.set(code, spoken);
   }
 }
 
@@ -1256,6 +1274,9 @@ function processAlerts() {
 
 function startVoiceTimer() {
   stopVoiceTimer();
+  // Fresh dedup memory on (re)start so the first broadcast after enabling,
+  // an interval change, or a schedule pause/resume always speaks in full.
+  state.voiceLastSpoken.clear();
   if (!state.voice.enabled || !state.voice.interval) return;
   if (!isVoiceAllowedNow()) {
     state.voicePausedBySchedule = !!(state.voice.smartSchedule && state.voice.smartSchedule.enabled);

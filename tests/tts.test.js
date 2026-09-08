@@ -1,5 +1,7 @@
 import {
   formatQuoteSpeech,
+  formatQuoteSpeechDelta,
+  buildQuoteSpeechSegments,
   getDefaultVoiceOpts,
   isSpeechSupported,
   setSpeechAdapter,
@@ -191,6 +193,72 @@ QUnit.module('tts.formatQuoteSpeech', () => {
       ),
       '茅台，100.00 元，涨 1.00'
     );
+  });
+});
+
+QUnit.module('tts.formatQuoteSpeechDelta / buildQuoteSpeechSegments', () => {
+  const quote = { code: 'sz000001', name: '平安银行', price: 12.34, changePercent: 2.35, type: 'stock' };
+  const moved = { ...quote, price: 12.5, changePercent: 2.5 };
+
+  QUnit.test('first broadcast (no memory) speaks everything and returns memory', (t) => {
+    const r = formatQuoteSpeechDelta(quote, null);
+    t.equal(r.text, '平安银行，12.34 元，涨 2.35');
+    t.deepEqual(r.spoken, { price: '12.34 元', percent: '涨 2.35' });
+  });
+
+  QUnit.test('unchanged values are skipped entirely', (t) => {
+    const first = formatQuoteSpeechDelta(quote, null);
+    const r = formatQuoteSpeechDelta(quote, first.spoken);
+    t.equal(r.text, '');
+    t.equal(r.spoken, null);
+  });
+
+  QUnit.test('changed price only speaks price segment (name kept)', (t) => {
+    const first = formatQuoteSpeechDelta(quote, null);
+    const r = formatQuoteSpeechDelta({ ...quote, price: 12.4 }, first.spoken);
+    t.equal(r.text, '平安银行，12.40 元');
+    t.deepEqual(r.spoken, { price: '12.40 元' });
+    t.equal(r.spoken.percent, undefined, 'percent memory untouched');
+  });
+
+  QUnit.test('changed percent only speaks percent segment (name kept)', (t) => {
+    const first = formatQuoteSpeechDelta(quote, null);
+    const r = formatQuoteSpeechDelta({ ...quote, changePercent: 2.4 }, first.spoken);
+    t.equal(r.text, '平安银行，涨 2.40');
+    t.deepEqual(r.spoken, { percent: '涨 2.40' });
+  });
+
+  QUnit.test('recovers after a skip: change detected vs last spoken values', (t) => {
+    const first = formatQuoteSpeechDelta(quote, null);
+    t.equal(formatQuoteSpeechDelta(quote, first.spoken).text, '');
+    const r = formatQuoteSpeechDelta(moved, first.spoken);
+    t.equal(r.text, '平安银行，12.50 元，涨 2.50');
+  });
+
+  QUnit.test('disabled fields neither spoken nor tracked', (t) => {
+    const r1 = formatQuoteSpeechDelta(quote, null, { price: false });
+    t.equal(r1.text, '平安银行，涨 2.35');
+    t.deepEqual(r1.spoken, { percent: '涨 2.35' });
+    // Price moved while price field is off: nothing spoken.
+    const r2 = formatQuoteSpeechDelta({ ...quote, price: 13 }, r1.spoken, { price: false });
+    t.equal(r2.text, '');
+  });
+
+  QUnit.test('respects fieldsOrder', (t) => {
+    const r = formatQuoteSpeechDelta(quote, null, null, ['percent', 'name', 'price']);
+    t.equal(r.text, '涨 2.35，平安银行，12.34 元');
+  });
+
+  QUnit.test('invalid quotes return empty result', (t) => {
+    t.equal(formatQuoteSpeechDelta(null, null).text, '');
+    t.equal(formatQuoteSpeechDelta({}, null).text, '');
+    t.equal(formatQuoteSpeechDelta({ price: NaN, name: 'x' }, null).text, '');
+  });
+
+  QUnit.test('buildQuoteSpeechSegments exposes formatted values', (t) => {
+    t.deepEqual(buildQuoteSpeechSegments(quote), { name: '平安银行', price: '12.34 元', percent: '涨 2.35' });
+    t.equal(buildQuoteSpeechSegments(null), null);
+    t.equal(buildQuoteSpeechSegments({}), null);
   });
 });
 

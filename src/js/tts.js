@@ -107,40 +107,80 @@ function _normalizeFieldOrder(order) {
   return out;
 }
 
+function _buildSegments(quote) {
+  // Returns the formatted { name, price, percent } strings, or null when the
+  // quote lacks a usable price/name (keeps formatQuoteSpeech semantics).
+  const price = Number(quote.price);
+  if (!Number.isFinite(price)) return null;
+  const baseName = quote.name || quote.code;
+  if (!baseName) return null;
+
+  // No 「现价」 prefix and no 「%」 suffix: TTS reads % as 「百分之」.
+  const unit = quote.type === 'future' ? '' : ' 元';
+  const decimals = quote.type === 'future' && ((quote.priceTick && quote.priceTick < 0.01) || quote.priceDecimals === 3) ? 3 : 2;
+  const priceSeg = `${price.toFixed(decimals)}${unit}`;
+
+  const pct = Number(quote.changePercent);
+  const percentSeg = !Number.isFinite(pct) || pct === 0
+    ? '持平'
+    : pct > 0 ? `涨 ${pct.toFixed(2)}` : `跌 ${Math.abs(pct).toFixed(2)}`;
+
+  return { name: baseName, price: priceSeg, percent: percentSeg };
+}
+
 export function formatQuoteSpeech(quote, fields, fieldsOrder) {
   if (!quote || typeof quote !== 'object') return '';
-  const price = Number(quote.price);
-  if (!Number.isFinite(price)) return '';
-  const baseName = quote.name || quote.code;
-  if (!baseName) return '';
-
   const enabled = _normalizeFields(fields);
   const order = _normalizeFieldOrder(fieldsOrder);
-
-  const builders = {
-    name: () => baseName,
-    price: () => {
-      // No 「现价」 prefix and no 「%」 suffix: TTS reads % as 「百分之」.
-      const unit = quote.type === 'future' ? '' : ' 元';
-      const decimals = quote.type === 'future' && ((quote.priceTick && quote.priceTick < 0.01) || quote.priceDecimals === 3) ? 3 : 2;
-      return `${price.toFixed(decimals)}${unit}`;
-    },
-    percent: () => {
-      const pct = Number(quote.changePercent);
-      if (!Number.isFinite(pct) || pct === 0) return '持平';
-      if (pct > 0) return `涨 ${pct.toFixed(2)}`;
-      return `跌 ${Math.abs(pct).toFixed(2)}`;
-    }
-  };
+  const segs = _buildSegments(quote);
+  if (!segs) return '';
 
   const parts = [];
   for (const k of order) {
     if (!enabled[k]) continue;
-    parts.push(builders[k]());
+    parts.push(segs[k]);
   }
 
   if (!parts.length) return '';
   return parts.join('，');
+}
+
+// Dedup-aware variant used by the periodic broadcast: only the fields whose
+// formatted value changed since the last spoken broadcast are included (the
+// name is always kept so listeners can tell which code is being announced).
+// `lastSpoken` is the previous { price, percent } map for this code, or null.
+// Returns { text, spoken } — text is '' when nothing changed (skip entirely);
+// spoken holds only the values actually included in this broadcast.
+export function formatQuoteSpeechDelta(quote, lastSpoken, fields, fieldsOrder) {
+  if (!quote || typeof quote !== 'object') return { text: '', spoken: null };
+  const enabled = _normalizeFields(fields);
+  const order = _normalizeFieldOrder(fieldsOrder);
+  const segs = _buildSegments(quote);
+  if (!segs) return { text: '', spoken: null };
+
+  const changedPrice = enabled.price && (!lastSpoken || lastSpoken.price !== segs.price);
+  const changedPercent = enabled.percent && (!lastSpoken || lastSpoken.percent !== segs.percent);
+  if (!changedPrice && !changedPercent) return { text: '', spoken: null };
+
+  const include = { name: enabled.name, price: changedPrice, percent: changedPercent };
+  const parts = [];
+  for (const k of order) {
+    if (!include[k]) continue;
+    parts.push(segs[k]);
+  }
+  if (!parts.length) return { text: '', spoken: null };
+
+  const spoken = {};
+  if (changedPrice) spoken.price = segs.price;
+  if (changedPercent) spoken.percent = segs.percent;
+  return { text: parts.join('，'), spoken };
+}
+
+// Exposes the raw formatted segments so callers (e.g. the manual test
+// broadcast) can seed the dedup memory with what was just spoken.
+export function buildQuoteSpeechSegments(quote) {
+  if (!quote || typeof quote !== 'object') return null;
+  return _buildSegments(quote);
 }
 
 export function _internal() {
