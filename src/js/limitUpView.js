@@ -299,7 +299,7 @@ function buildInlineChartRow(item, ctx) {
   return el('tr', { class: 'lu-chart-row', 'data-chart-for': item.code }, td);
 }
 
-function buildGroup(g, ctx) {
+function buildGroup(g, ctx, emptyRows = false) {
   const section = el('section', { class: 'lu-group', 'data-group': g.key });
   const head = el(
     'header',
@@ -333,7 +333,7 @@ function buildGroup(g, ctx) {
     );
     table.appendChild(thead);
     const tbody = el('tbody', {});
-    for (const it of g.items) {
+    for (const it of emptyRows ? [] : g.items) {
       tbody.appendChild(buildRow(it, ctx));
       if (ctx.expandedCodes && ctx.expandedCodes.has(it.code)) {
         tbody.appendChild(buildInlineChartRow(it, ctx));
@@ -564,40 +564,104 @@ function buildHeader() {
   );
 }
 
-function buildGroups(state, cb) {
-  const wrap = el('section', { class: 'lu-groups', id: 'lu-groups' });
-  const pinnedCodes = state.pinnedCodes || new Set();
-  const ctx = {
-    selectedCodes: state.selectedCodes || new Set(),
-    // Phase 8: 多 chart 架构
-    expandedCodes: state.expandedCodes || new Set(),
-    chartInstances: state.chartInstances || new Map(),
-    groupSort: state.groupSort || {},
-    sortKey: state.sortKey || 'amount',
-    pinnedCodes,
-    cb
-  };
+export function getLimitUpViewGroups(state) {
+  const pins = state.pinnedCodes || new Set();
   const itemByCode = new Map();
-  for (const it of state.items || []) {
-    if (it && it.code) itemByCode.set(it.code, it);
+  for (const item of [...(state.items || []), ...(state.groups || []).flatMap(g => g.items || [])]) {
+    if (item?.code && !itemByCode.has(item.code)) itemByCode.set(item.code, item);
   }
-  for (const g of state.groups || []) {
-    for (const it of g.items || []) {
-      if (it && it.code && !itemByCode.has(it.code)) itemByCode.set(it.code, it);
+  const sort = state.groupSort?.pinned || { key: state.sortKey || 'amount', direction: 'desc' };
+  return [{ key: 'pinned', label: '置顶股票', items: sortLimitUpGroupItems(
+    [...pins].map(code => itemByCode.get(code)).filter(Boolean), sort.key, sort.direction
+  ) }, ...(state.groups || []).map(g => ({ ...g, items: (g.items || []).filter(item => !pins.has(item.code)) }))];
+}
+
+function viewContext(state, cb) {
+  return { selectedCodes: state.selectedCodes || new Set(), expandedCodes: state.expandedCodes || new Set(),
+    chartInstances: state.chartInstances || new Map(), groupSort: state.groupSort || {},
+    sortKey: state.sortKey || 'amount', pinnedCodes: state.pinnedCodes || new Set(), cb };
+}
+
+const pageIndexes = new WeakMap();
+
+function patchRow(row, item, ctx) {
+  const active = ctx.expandedCodes.has(item.code);
+  const pinned = ctx.pinnedCodes.has(item.code);
+  row.classList.toggle('lu-active', active);
+  row.classList.toggle('lu-pinned-row', pinned);
+  row.setAttribute('aria-expanded', String(active));
+  row.querySelector('input[data-row-code]').checked = ctx.selectedCodes.has(item.code);
+  const pin = row.querySelector('.pin-btn');
+  pin.classList.toggle('active', pinned);
+  pin.textContent = pinned ? '取消固定' : '固定';
+  pin.title = pin.textContent;
+  pin.setAttribute('aria-label', `${pin.textContent} ${item.name || item.code}`);
+  const values = { count: `${item.limitUpCount || 0} 板`, price: formatNumber(item.price),
+    percent: formatPercent(item.changePercent), open: formatNumber(item.open), ratio: formatNumber(item.volumeRatio),
+    amount: formatAmount(item.amount), final: item.lastLimitTime || '-', break: String(item.breakCount || 0), reason: item.reason || '—' };
+  for (const [field, value] of Object.entries(values)) row.querySelector(`[data-field="${field}"]`).textContent = value;
+  row.querySelector('[data-field="percent"]').className = `lu-pct num ${Number(item.changePercent) > 0 ? 'up' : Number(item.changePercent) < 0 ? 'down' : 'flat'}`;
+  row.querySelector('[data-field="reason"]').title = item.interpretation || '无龙虎榜信息';
+  const name = row.querySelector('[data-field="name"]');
+  name.textContent = item.name || '-';
+  if (item.isST) name.appendChild(el('span', { class: 'lu-st-badge', title: 'ST / *ST 股票' }, 'ST'));
+}
+
+function reconcileGroups(index, state) {
+  const ctx = index.ctx;
+  const groups = getLimitUpViewGroups(state);
+  const wanted = new Set(groups.flatMap(g => g.items.map(item => item.code)));
+  for (const [code, row] of index.rows) {
+    if (!wanted.has(code)) { row.remove(); index.rows.delete(code); }
+  }
+  for (const [code, row] of index.charts) {
+    if (!wanted.has(code) || !ctx.expandedCodes.has(code)) { row.remove(); index.charts.delete(code); }
+  }
+  for (const [key, group] of index.groups) {
+    if (!groups.some(g => g.key === key)) { group.remove(); index.groups.delete(key); }
+  }
+  let groupCursor = index.wrap.firstElementChild;
+  for (const g of groups) {
+    let section = index.groups.get(g.key);
+    const sort = ctx.groupSort[g.key] || { key: ctx.sortKey, direction: 'desc' };
+    const sortKey = JSON.stringify(sort);
+    if (!section) {
+      section = buildGroup(g, ctx, true);
+      index.groups.set(g.key, section);
+    } else if (g.items.length && !section.querySelector('tbody')) {
+      section.appendChild(buildGroup(g, ctx, true).querySelector('.lu-group-body'));
+    } else if (g.items.length && section.dataset.sort !== sortKey) {
+      const header = buildGroup(g, ctx, true).querySelector('thead');
+      section.querySelector('thead').replaceWith(header);
+    }
+    section.dataset.sort = sortKey;
+    section.querySelector('.lu-group-title').textContent = g.label;
+    section.querySelector('.lu-group-count').textContent = `${g.items.length} 只`;
+    if (section === groupCursor) groupCursor = groupCursor.nextElementSibling;
+    else index.wrap.insertBefore(section, groupCursor);
+    const body = section.querySelector('tbody');
+    if (!g.items.length) continue;
+    let cursor = body.firstElementChild;
+    const place = node => {
+      if (node === cursor) cursor = cursor.nextElementSibling;
+      else body.insertBefore(node, cursor);
+    };
+    for (const item of g.items) {
+      let row = index.rows.get(item.code);
+      if (!row) { row = buildRow(item, ctx); index.rows.set(item.code, row); }
+      else patchRow(row, item, ctx);
+      place(row);
+      if (ctx.expandedCodes.has(item.code)) {
+        let chart = index.charts.get(item.code);
+        if (!chart) { chart = buildInlineChartRow(item, ctx); index.charts.set(item.code, chart); }
+        for (const tab of chart.querySelectorAll('[data-period]')) {
+          tab.classList.toggle('active', tab.dataset.period === ctx.chartInstances.get(item.code)?.period);
+        }
+        place(chart);
+      }
     }
   }
-  const pinnedSort = ctx.groupSort.pinned || { key: ctx.sortKey || 'amount', direction: 'desc' };
-  const pinnedItems = sortLimitUpGroupItems(
-    [...pinnedCodes].map((code) => itemByCode.get(code)).filter(Boolean),
-    pinnedSort.key,
-    pinnedSort.direction
-  );
-  wrap.appendChild(buildGroup({ key: 'pinned', label: '置顶股票', items: pinnedItems }, ctx));
-  for (const g of state.groups || []) {
-    const items = pinnedCodes.size ? (g.items || []).filter((it) => !pinnedCodes.has(it.code)) : (g.items || []);
-    wrap.appendChild(buildGroup({ ...g, items }, ctx));
-  }
-  return wrap;
+  for (const g of groups) if (!g.items.length) index.groups.get(g.key).querySelector('.lu-group-body')?.remove();
 }
 
 // Public API: renderLimitUpPage(root, state, callbacks)
@@ -623,9 +687,17 @@ export function renderLimitUpPage(root, state, callbacks) {
   const cb = callbacks || {};
   const s = state || { groups: [], refreshInterval: 30000, sortKey: 'amount', selectedCodes: new Set() };
 
-  root.innerHTML = '';
-  root.appendChild(buildHeader());
-  root.appendChild(buildToolbar(s, cb));
-  root.appendChild(buildGroups(s, cb));
-  root.appendChild(buildStatusLine(s));
+  let index = pageIndexes.get(root);
+  if (!index || index.wrap.parentNode !== root) {
+    root.replaceChildren(buildHeader(), buildToolbar(s, cb));
+    const wrap = el('section', { class: 'lu-groups', id: 'lu-groups' });
+    root.append(wrap, buildStatusLine(s));
+    index = { wrap, ctx: viewContext(s, cb), rows: new Map(), charts: new Map(), groups: new Map() };
+    pageIndexes.set(root, index);
+  } else {
+    Object.assign(index.ctx, viewContext(s, cb));
+    root.children[1].replaceWith(buildToolbar(s, cb));
+    root.querySelector('#lu-status').replaceWith(buildStatusLine(s));
+  }
+  reconcileGroups(index, s);
 }

@@ -7,23 +7,16 @@ import {
   clearLimitUpMetadataCache
 } from '../limitUpApi.js';
 import { buildLimitUpGroups, mergeLiveTicks, sortLimitUpGroupItems } from '../limitUp.js';
-import { renderLimitUpPage } from '../limitUpView.js';
+import { renderLimitUpPage, getLimitUpViewGroups } from '../limitUpView.js';
 import {
   fetchTradeCalendar,
   getAdjacentTradingDates,
   resolveLatestTradingDate
 } from '../tradeCalendar.js';
 import { getBeijingDate } from '../time.js';
-import {
-  formatNumber,
-  priceDirection,
-  formatPercent,
-  formatAmount
-} from '../format.js';
 import { fetchQuotes } from '../api.js';
 import {
-  createChartState,
-  rememberRange
+  createChartState
 } from './chartRowController.js';
 import {
   setLimitUpPinnedCodes,
@@ -181,51 +174,7 @@ export function createLimitUpController(appContext) {
     const groupsSection = limitUpRootEl.querySelector('#lu-groups');
     if (!groupsSection) return false;
 
-    const lu = getLimitUpState();
-    const items = lu.items || [];
-
-    // Structural check BEFORE patching: group membership and per-group row
-    // order must match the freshly computed state. A quote-only change (e.g.
-    // a stock falling below the limit) can move it between groups or change
-    // sorting; patching just its cells would leave it in the wrong group with
-    // stale counts. Any mismatch bails out so the caller does a full rerender.
-    if (!limitUpRowsMatchDom(groupsSection, lu.groups || [], items, lu.pinnedCodes,
-      lu.groupSort?.pinned || { key: lu.sortKey || 'amount', direction: 'desc' })) return false;
-    if (!items.length) {
-      updateLimitUpStatusBar();
-      return true;
-    }
-
-    const itemMap = new Map(items.map((it) => [it.code, it]));
-    for (const [code, item] of itemMap) {
-      const row = groupsSection.querySelector(`tr[data-code="${code}"]`);
-      if (!row) return false;
-      const dir = priceDirection(Number(item.changePercent));
-      const pCell = row.querySelector('td[data-field="price"]') || row.querySelector('.lu-price');
-      if (pCell) pCell.textContent = formatNumber(item.price);
-      const pctCell = row.querySelector('td[data-field="percent"]') || row.querySelector('.lu-pct');
-      if (pctCell) {
-        pctCell.textContent = formatPercent(item.changePercent);
-        pctCell.className = `lu-pct num ${dir}`;
-      }
-      const openCell = row.querySelector('td[data-field="open"]') || row.querySelector('.lu-open');
-      if (openCell) openCell.textContent = formatNumber(item.open);
-      const ratioCell = row.querySelector('td[data-field="ratio"]') || row.querySelector('.lu-ratio');
-      if (ratioCell) ratioCell.textContent = formatNumber(item.volumeRatio);
-      const amtCell = row.querySelector('td[data-field="amount"]') || row.querySelector('.lu-amount');
-      if (amtCell) amtCell.textContent = formatAmount(item.amount);
-      const countCell = row.querySelector('td[data-field="count"]') || row.querySelector('.lu-count');
-      if (countCell && item.limitUpCount !== undefined) countCell.textContent = `${item.limitUpCount} 板`;
-      const finalCell = row.querySelector('td[data-field="final"]') || row.querySelector('.lu-final');
-      if (finalCell && item.lastLimitTime) finalCell.textContent = item.lastLimitTime;
-      const breakCell = row.querySelector('td[data-field="break"]') || row.querySelector('.lu-break');
-      if (breakCell && item.breakCount !== undefined) breakCell.textContent = String(item.breakCount);
-      const reasonCell = row.querySelector('td[data-field="reason"]') || row.querySelector('.lu-reason');
-      if (reasonCell && item.reason) {
-        reasonCell.textContent = item.reason;
-        if (item.interpretation) reasonCell.title = item.interpretation;
-      }
-    }
+    rerenderLimitUpPage();
     updateLimitUpStatusBar();
     return true;
   }
@@ -233,13 +182,9 @@ export function createLimitUpController(appContext) {
   function rerenderLimitUpPage() {
     if (!limitUpRootEl) return;
     const lu = getLimitUpState();
-    const wasExpandedCodes = new Set(lu.expandedCodes);
-    for (const code of wasExpandedCodes) {
-      const inst = lu.chartInstances.get(code);
-      rememberRange(inst, limitUpChartMgr.klineCtlMap.get(code), '_visibleRange');
-      rememberRange(inst, limitUpChartMgr.intradayCtlMap.get(code), '_intradayVisibleRange');
-      _destroyLimitUpChart(code);
-    }
+    const visible = new Set(getLimitUpViewGroups(lu).flatMap(g => g.items.map(item => item.code)));
+    for (const code of [...lu.selectedCodes]) if (!visible.has(code)) lu.selectedCodes.delete(code);
+    for (const code of [...lu.expandedCodes]) if (!visible.has(code)) closeLimitUpChart(code, { render: false });
     renderLimitUpPage(limitUpRootEl, lu, {
       navigateTo: (path) => onNavigate(path),
       addToWatchListAndNavigate: handleLimitUpAddAndNavigate,
@@ -260,7 +205,7 @@ export function createLimitUpController(appContext) {
       onDateChange: handleLimitUpDateChange,
       reloadKline: _handleLimitUpForceReloadChart
     });
-    for (const code of wasExpandedCodes) {
+    for (const code of lu.expandedCodes) {
       if (lu.expandedCodes.has(code)) {
         mountLimitUpChart(code);
       }
@@ -666,34 +611,19 @@ export function createLimitUpController(appContext) {
     loadLimitUpKline(code);
   }
 
-  function closeLimitUpChart(code) {
+  function closeLimitUpChart(code, { render = true } = {}) {
     const lu = getLimitUpState();
     if (!code || !lu.expandedCodes.has(code)) return;
     lu.expandedCodes.delete(code);
-    const inst = lu.chartInstances.get(code);
-    if (inst) {
-      if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
-      if (inst.intradayAbort) try { inst.intradayAbort.abort(); } catch { /* ignore */ }
-      const ctl = limitUpChartMgr.klineCtlMap.get(code);
-      if (ctl) {
-        try { ctl.destroy(); } catch { /* ignore */ }
-      }
-      limitUpChartMgr.klineCtlMap.delete(code);
-      const intradayCtl = limitUpChartMgr.intradayCtlMap.get(code);
-      if (intradayCtl) {
-        try { intradayCtl.destroy(); } catch { /* ignore */ }
-      }
-      limitUpChartMgr.intradayCtlMap.delete(code);
-    }
+    limitUpChartMgr.destroyCharts(code);
     lu.chartInstances.delete(code);
-    rerenderLimitUpPage();
+    if (render) rerenderLimitUpPage();
   }
 
   function closeAllLimitUpCharts() {
     const lu = getLimitUpState();
-    for (const code of [...lu.expandedCodes]) {
-      closeLimitUpChart(code);
-    }
+    for (const code of [...lu.expandedCodes]) closeLimitUpChart(code, { render: false });
+    rerenderLimitUpPage();
   }
 
   function handleLimitUpCloseKline(code) {
