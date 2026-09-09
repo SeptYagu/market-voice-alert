@@ -117,7 +117,9 @@ export function getFuturesSession(instrument, now = new Date(), tradingDates = [
           const prevIsTradingDay = hasCalendar
             ? tradingDates.includes(prevCalendarDay)
             : (prevDow >= 1 && prevDow <= 5);
-          if (prevIsTradingDay && shiftTradingDate(prevCalendarDay, 1, tradingDates) === targetTradingDay) {
+          const expectedNextDay = shiftCalendarDate(prevCalendarDay, prevDow === 5 ? 3 : 1);
+          if (prevIsTradingDay && targetTradingDay === expectedNextDay &&
+              shiftTradingDate(prevCalendarDay, 1, tradingDates) === targetTradingDay) {
             return { isTrading: true, sessionKind: 'night', sessionStatus: 'trading', tradingDay: targetTradingDay };
           }
         }

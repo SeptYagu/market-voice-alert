@@ -452,6 +452,8 @@ export function fetchKline(code, opts = {}) {
   }
 
   // 3. Cache miss: create shared promise with independent lifecycle
+  const writeToken = {};
+  klineWriteOwners.set(key, writeToken);
   const p = (async () => {
     try {
       const data = opts.sharedCache === true && !noCache
@@ -460,12 +462,13 @@ export function fetchKline(code, opts = {}) {
           return _fetchKlineFromNetwork(code, period, undefined);
         })
         : await _fetchKlineFromNetwork(code, period, undefined);
-      if (data && data.items && data.items.length) {
+      if (klineWriteOwners.get(key) === writeToken && data && data.items && data.items.length) {
         klineCacheSet(code, period, data);
         emitKlineUpdated(code, period, data);
       }
       return data;
     } finally {
+      if (klineWriteOwners.get(key) === writeToken) klineWriteOwners.delete(key);
       // Only remove our own entry: a concurrent request may have replaced it.
       if (inflightKline.get(key) === p) {
         inflightKline.delete(key);
@@ -520,6 +523,9 @@ async function _fetchKlineFromNetwork(code, period, signal) {
 }
 
 const inflightKline = new Map();
+// Shared by foreground and SWR requests: superseded responses may return to
+// their original caller, but cannot publish over a newer refresh.
+const klineWriteOwners = new Map();
 const _revalidatingKline = new Set();  // dedup SWR revalidations
 const _lastRevalidatedAt = new Map();
 const REVALIDATE_MIN_INTERVAL_MS = 30_000;
@@ -541,19 +547,26 @@ function _scheduleKlineRevalidate(code, period, opts = {}) {
   if (_revalidatingKline.has(key)) return;
   _revalidatingKline.add(key);
   _lastRevalidatedAt.set(key, now);
+  const writeToken = {};
+  klineWriteOwners.set(key, writeToken);
   setTimeout(() => {
+    if (klineWriteOwners.get(key) !== writeToken) {
+      _revalidatingKline.delete(key);
+      return;
+    }
     const refresh = opts.sharedCache === true
       ? _fetchKlineFromSharedCache(code, period, null).catch(() => _fetchKlineFromNetwork(code, period, null))
       : _fetchKlineFromNetwork(code, period, null);
     refresh
       .then((data) => {
-        if (data) {
+        if (klineWriteOwners.get(key) === writeToken && data) {
           klineCacheSet(code, period, data);
           emitKlineUpdated(code, period, data);
         }
       })
       .catch(() => { /* best-effort */ })
       .finally(() => {
+        if (klineWriteOwners.get(key) === writeToken) klineWriteOwners.delete(key);
         _revalidatingKline.delete(key);
       });
   }, 0);

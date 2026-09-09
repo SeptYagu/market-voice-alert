@@ -82,7 +82,7 @@ import {
   isVoiceAllowedInSession,
   normalizeSmartSchedule,
   isFuturesMarketOpen,
-  isFutureTrading,
+  getVoiceEligibleCodes,
   isLiveTradeDate
 } from './marketSession.js';
 
@@ -1226,11 +1226,10 @@ function isDataAutoRefreshAllowedNow() {
 
 function isVoiceAllowedNow() {
   const dates = state.tradingDates || state.limitUp.tradingDates || [];
-  const subscribedFutures = [...(state.subscribed || [])].filter(isFutureCode);
-  if (subscribedFutures.length && isFuturesMarketOpen(new Date(), dates, subscribedFutures)) {
-    return true;
-  }
   const smart = state.voice.smartSchedule || DEFAULT_SMART_SCHEDULE;
+  if (state.subscribed?.size) {
+    return getVoiceEligibleCodes(state.subscribed, smart, new Date(), dates).length > 0;
+  }
   const session = getVoiceSession();
   return isVoiceAllowedInSession(session, smart);
 }
@@ -1248,13 +1247,8 @@ function speakSubscribed() {
   const fields = state.voice.fields;
   const fieldsOrder = state.voice.fieldsOrder;
   const dates = state.tradingDates || state.limitUp.tradingDates || [];
-  const stockAllowed = isVoiceAllowedInSession(getVoiceSession(), state.voice.smartSchedule || DEFAULT_SMART_SCHEDULE);
-  for (const code of state.subscribed) {
-    if (isFutureCode(code)) {
-      if (!isFutureTrading(code, new Date(), dates)) continue;
-    } else {
-      if (!stockAllowed) continue;
-    }
+  const eligibleCodes = getVoiceEligibleCodes(state.subscribed, state.voice.smartSchedule, new Date(), dates);
+  for (const code of eligibleCodes) {
     const q = state.quotes.get(code);
     if (!q) continue;
     // Dedup: skip codes whose price AND changePercent are unchanged since the

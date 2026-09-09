@@ -1,5 +1,6 @@
 import { getBeijingClockParts, getBeijingDate } from './time.js';
 import { isTradingDate } from './tradeCalendar.js';
+import { isFutureCode } from './futures/instrument.js';
 
 export { getBeijingDate };
 
@@ -39,6 +40,14 @@ export function normalizeSmartSchedule(raw) {
 
 export function isVoiceAllowedInSession(session, smartSchedule) {
   return isAutoRefreshAllowedInSession(session, smartSchedule);
+}
+
+export function getVoiceEligibleCodes(codes, smartSchedule, now = new Date(), tradingDates = []) {
+  const cfg = normalizeSmartSchedule(smartSchedule);
+  const stockAllowed = isVoiceAllowedInSession(getMarketSession(now, tradingDates), cfg);
+  return [...codes].filter(code => !cfg.enabled || (isFutureCode(code)
+    ? isFutureTrading(code, now, tradingDates)
+    : stockAllowed));
 }
 
 // Returns the spoken reminder for a session transition, or null.

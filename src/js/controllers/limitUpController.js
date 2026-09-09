@@ -38,7 +38,7 @@ import {
  * 置顶分组感知（2026-09-09 审查修正）：limitUpView.buildGroups 始终在最前
  * 渲染一个 data-group="pinned" 的置顶分组（空置顶也渲染），且置顶股会从
  * 其原分组中剔除。因此比较时跳过首位置的 pinned 区，并把 expectedGroups
- * 中的置顶股从各组剔除后逐组比对；总行数（含 pinned 区行数）必须等于
+ * 中的置顶股从各组剔除后逐组比对；置顶区按独立排序配置校验代码序列；总行数必须等于
  * items.length。置顶/取消置顶引起的变化会自然导致计数不匹配而触发重绘。
  * @param {Element} groupsSection - 包含 #lu-groups 的容器元素
  * @param {Array<{key: string, items: Array<{code: string}>}>} expectedGroups
@@ -46,7 +46,7 @@ import {
  * @param {Set<string>|string[]} [pinnedCodes] - 当前置顶代码集合
  * @returns {boolean}
  */
-export function limitUpRowsMatchDom(groupsSection, expectedGroups, items, pinnedCodes) {
+export function limitUpRowsMatchDom(groupsSection, expectedGroups, items, pinnedCodes, pinnedSort = { key: 'amount', direction: 'desc' }) {
   if (!groupsSection) return false;
   const domGroups = Array.from(groupsSection.querySelectorAll('section.lu-group[data-group]'));
   const groups = expectedGroups || [];
@@ -54,6 +54,13 @@ export function limitUpRowsMatchDom(groupsSection, expectedGroups, items, pinned
 
   // 渲染器始终在最前渲染置顶分组；有置顶时普通组已剔除置顶股
   const hasPinnedSection = domGroups.length > 0 && domGroups[0].getAttribute('data-group') === 'pinned';
+  const itemByCode = new Map((items || []).map(item => [item.code, item]));
+  const pinnedItems = sortLimitUpGroupItems(
+    [...pins].map(code => itemByCode.get(code)).filter(Boolean), pinnedSort.key, pinnedSort.direction
+  );
+  const pinnedRows = hasPinnedSection ? [...domGroups[0].querySelectorAll('tr[data-code]')] : [];
+  if (pinnedRows.length !== pinnedItems.length ||
+      pinnedRows.some((row, index) => row.getAttribute('data-code') !== pinnedItems[index].code)) return false;
   const dataGroups = hasPinnedSection ? domGroups.slice(1) : domGroups;
   if (dataGroups.length !== groups.length) return false;
 
@@ -180,7 +187,8 @@ export function createLimitUpController(appContext) {
     // a stock falling below the limit) can move it between groups or change
     // sorting; patching just its cells would leave it in the wrong group with
     // stale counts. Any mismatch bails out so the caller does a full rerender.
-    if (!limitUpRowsMatchDom(groupsSection, lu.groups || [], items, lu.pinnedCodes)) return false;
+    if (!limitUpRowsMatchDom(groupsSection, lu.groups || [], items, lu.pinnedCodes,
+      lu.groupSort?.pinned || { key: lu.sortKey || 'amount', direction: 'desc' })) return false;
     if (!items.length) {
       updateLimitUpStatusBar();
       return true;
