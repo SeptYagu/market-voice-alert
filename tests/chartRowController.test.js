@@ -229,7 +229,9 @@ QUnit.module('ChartRowManager', () => {
     t.equal(getPrevCloseForDate(minutes, '2026-06-02'), 100, 'finds end of prior day close for minute bars');
   });
 
-  QUnit.test('handlePeriodChange aborts pending intraday request and clears selectedTradeDate', (t) => {
+  QUnit.test('handlePeriodChange aborts pending intraday request and clears selectedTradeDate', async (t) => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: true, data: { items: [] } }) });
     const instances = new Map();
     const mgr = new ChartRowManager({
       prefix: 'test-',
@@ -261,5 +263,8 @@ QUnit.module('ChartRowManager', () => {
     t.ok(intradayAborted, 'pending intraday abort called');
     t.equal(inst.intradayAbort, null, 'intradayAbort reference cleared');
     t.ok(klineAborted, 'pending kline abort called');
+    mgr.destroyAll();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    globalThis.fetch = originalFetch;
   });
 });

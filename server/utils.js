@@ -1,5 +1,9 @@
+import { pathToFileURL } from 'node:url';
+import { resolve, sep } from 'node:path';
 export const DEFAULT_PORT = 3001;
-export const CACHE_ROOT = new URL('../data/cache/', import.meta.url);
+export const CACHE_ROOT = process.env.MARKET_VOICE_CACHE_ROOT
+  ? pathToFileURL(resolve(process.env.MARKET_VOICE_CACHE_ROOT) + sep)
+  : new URL('../data/cache/', import.meta.url);
 export const DEFAULT_UPSTREAM_TIMEOUT_MS = 12_000;
 
 export function nowMs() {

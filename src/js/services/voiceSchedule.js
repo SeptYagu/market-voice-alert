@@ -18,7 +18,8 @@ export function decideVoiceSchedule({ codes, settings, now, tradingDates = [], p
   const pauseReason = allowed || !cfg.enabled ? null
     : session === 'lunch' || futureBreak ? 'break' : 'closed';
   let transitionNotice = null;
-  if (enabled && previous?.timerShouldRun && !allowed && cfg.enabled) {
+  const priorSubscriptionStillPresent = previous?.eligibleCodes?.some(code => list.includes(code));
+  if (enabled && previous?.timerShouldRun && priorSubscriptionStillPresent && !allowed && cfg.enabled) {
     if (pauseReason === 'break') transitionNotice = session === 'lunch' ? '中午休市' : '休市';
     else if (cfg.autoStopAfterClose) transitionNotice = '已收盘';
   }

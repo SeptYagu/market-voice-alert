@@ -327,8 +327,8 @@ export function createLimitUpController(appContext) {
           })
           .catch(() => { /* best-effort live quote enrichment */ });
       }
-      kickoffLimitUpMetadataFetch(rawItems, date, requestSeq);
-      kickoffLimitUpReasonsFetch(date, forceRefresh, requestSeq);
+      kickoffLimitUpMetadataFetch(rawItems, date, requestSeq, controller.signal);
+      kickoffLimitUpReasonsFetch(date, forceRefresh, requestSeq, controller.signal);
       if (rawItems.length && typeof preloadKlineForCodes === 'function') {
         preloadKlineForCodes(rawItems.slice(0, 10).map((it) => it.code));
       }
@@ -372,11 +372,11 @@ export function createLimitUpController(appContext) {
     }
   }
 
-  function kickoffLimitUpMetadataFetch(items, date, requestSeq = getLimitUpState().requestSeq) {
+  function kickoffLimitUpMetadataFetch(items, date, requestSeq = getLimitUpState().requestSeq, signal) {
     if (!Array.isArray(items) || !items.length) return;
     const codes = items.filter((it) => !hasLimitUpMetadata(it)).map((it) => it.code).filter(Boolean);
     if (!codes.length) return;
-    fetchLimitUpMetadataBatch(codes, { date })
+    fetchLimitUpMetadataBatch(codes, { date, signal })
       .then((metaMap) => {
         const lu = getLimitUpState();
         if (requestSeq !== lu.requestSeq || lu.selectedDate !== date) return;
@@ -399,8 +399,8 @@ export function createLimitUpController(appContext) {
       .catch(() => { /* best-effort; ignore */ });
   }
 
-  function kickoffLimitUpReasonsFetch(date, forceRefresh = false, requestSeq = getLimitUpState().requestSeq) {
-    fetchLimitUpReasons({ date, sharedCache: true, forceRefresh })
+  function kickoffLimitUpReasonsFetch(date, forceRefresh = false, requestSeq = getLimitUpState().requestSeq, signal) {
+    fetchLimitUpReasons({ date, sharedCache: true, forceRefresh, signal })
       .then((reasonMap) => {
         const lu = getLimitUpState();
         if (requestSeq !== lu.requestSeq || lu.selectedDate !== date) return;
@@ -495,6 +495,7 @@ export function createLimitUpController(appContext) {
       listScope.cancel();
       lu.requestSeq += 1;
       lu.loading = false;
+      lu.calendarLoading = false;
     }
     if (abort && lu.abort) {
       try { lu.abort.abort(); } catch { /* ignore */ }

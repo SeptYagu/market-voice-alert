@@ -309,7 +309,7 @@ export async function getCachedFuturesKline(symbolOrId, period = 'day', opts = {
         raw = await fetchFuturesDaily(inst);
         const dailyItems = raw.items ? [...raw.items] : [];
         try {
-          const q = await getCachedFuturesQuote(inst, { signal: opts.signal });
+          const q = await getCachedFuturesQuote(inst, { signal: opts.signal, now: opts.now });
           if (q && q.tradingDay && Number(q.price) > 0) {
             const targetSec = parseBeijingDateTimeToChartSeconds(q.tradingDay);
             const lastBar = dailyItems[dailyItems.length - 1];

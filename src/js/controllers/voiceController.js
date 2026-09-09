@@ -17,7 +17,7 @@ export function createVoiceController({ getSettings, saveSettings, getCodes, get
   const volume = () => Math.max(0, Math.min(100, Number(getSettings().volume) || 0)) / 100;
 
   function stopTimer() {
-    if (worker) { const old = worker; worker = null; old.onmessage = null; old.onerror = null; old.terminate(); }
+    if (worker) { const old = worker; worker = null; old.onmessage = null; old.onerror = null; try { old.terminate(); } catch { /* already stopped */ } }
     if (timer !== null) timers.clearInterval(timer);
     timer = null;
     runningInterval = null;
@@ -61,13 +61,16 @@ export function createVoiceController({ getSettings, saveSettings, getCodes, get
       };
       owner.postMessage({ type: 'start', interval: runningInterval });
     } catch {
+      stopTimer();
+      runningInterval = getSettings().interval;
       timer = timers.setInterval(speakSubscribed, runningInterval);
     }
   }
 
   function applySchedule() {
     const d = decision();
-    if (d.enabled !== getSettings().enabled) saveSettings({ enabled: d.enabled });
+    const settingsChanged = d.enabled !== getSettings().enabled;
+    if (settingsChanged) saveSettings({ enabled: d.enabled });
     if (!d.timerShouldRun) {
       const wasRunning = runningInterval !== null;
       stopTimer();
@@ -75,7 +78,7 @@ export function createVoiceController({ getSettings, saveSettings, getCodes, get
     } else if (runningInterval !== getSettings().interval) startTimer();
     if (d.transitionNotice && speech.supported()) speech.speak(d.transitionNotice, { volume: volume() });
     previous = d;
-    onChange({ paused: d.enabled && !d.timerShouldRun, decision: d });
+    onChange({ paused: d.enabled && !d.timerShouldRun, decision: d, settingsChanged });
     return d;
   }
 
@@ -103,6 +106,7 @@ export function createVoiceController({ getSettings, saveSettings, getCodes, get
     checker = null;
     previous = null;
     memory.clear();
+    speech.cancel();
   }
 
   function prune() {

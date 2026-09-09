@@ -1,15 +1,24 @@
 // Integration tests: require a reachable AKTools backend / upstream market
-// data source and a usable local cache. These are NOT part of `npm test`
+// data source. The runner provides a fresh temporary cache. These are NOT part of `npm test`
 // (which must stay offline and date-independent); run them explicitly with:
 //
 //   npm run test:integration
 //
-// Prerequisites: AKTools server (npm run server) reachable, network access,
+// Prerequisites: AKTools HTTP service at AKTOOLS_BASE (default port 8888), network access,
 // and data for the current trading session already produced. A failure here
 // may mean upstream data is unavailable or the session's data has not been
 // generated yet — it does not necessarily indicate a parser bug.
+import { chartTimeToDate } from '../../src/js/time.js';
 import { getCachedFuturesQuote, getCachedFuturesQuotes } from '../../server/futures/futuresQuoteService.js';
 import { getCachedFuturesKline, getCachedFuturesIntraday } from '../../server/futures/futuresKlineService.js';
+
+const integrationOptions = process.env.FUTURES_INTEGRATION_DATE ? { date: process.env.FUTURES_INTEGRATION_DATE } : {};
+function diagnose(label, data) {
+  console.log(JSON.stringify({ label, source: data?.source, stale: data?.stale,
+    targetTradingDay: data?.tradingDay || integrationOptions.date,
+    count: data?.items?.length, first: chartTimeToDate(data?.items?.[0]?.time),
+    last: chartTimeToDate(data?.items?.at(-1)?.time) }));
+}
 
 QUnit.module('Futures Backend Services (integration, live data)');
 
@@ -54,7 +63,8 @@ QUnit.test('getCachedFuturesKline returns valid non-empty daily items', async (a
 });
 
 QUnit.test('getCachedFuturesIntraday returns filtered intraday bars', async (assert) => {
-  const intraday = await getCachedFuturesIntraday('RB0');
+  const intraday = await getCachedFuturesIntraday('RB0', integrationOptions);
+  diagnose('RB0 intraday', intraday);
   assert.ok(intraday, 'intraday exists');
   assert.equal(intraday.symbol, 'RB0', 'symbol is RB0');
   assert.ok(Array.isArray(intraday.items), 'items is array');
@@ -66,11 +76,13 @@ QUnit.test('getCachedFuturesIntraday returns filtered intraday bars', async (ass
 
 QUnit.test('getCachedFuturesKline supports weekly and monthly periods without throwing', async (assert) => {
   const klineW = await getCachedFuturesKline('RB0', '1w');
+  diagnose('RB0 weekly', klineW);
   assert.ok(klineW, '1w kline exists');
   assert.equal(klineW.period, '1w');
   assert.ok(Array.isArray(klineW.items) && klineW.items.length > 0, '1w has bars');
 
   const klineM = await getCachedFuturesKline('RB0', '1M');
+  diagnose('RB0 monthly', klineM);
   assert.ok(klineM, '1M kline exists');
   assert.equal(klineM.period, '1M');
   assert.ok(Array.isArray(klineM.items) && klineM.items.length > 0, '1M has bars');

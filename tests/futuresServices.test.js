@@ -1,4 +1,6 @@
-import { _internal } from '../server/futures/futuresKlineService.js';
+import { readFile } from 'node:fs/promises';
+import { chartTimeToDate } from '../src/js/time.js';
+import { _internal, getCachedFuturesIntraday, getCachedFuturesKline } from '../server/futures/futuresKlineService.js';
 import { parseFutureInput } from '../server/futures/contractCatalog.js';
 
 // Offline unit tests only. Tests that hit the live AKTools/upstream data
@@ -8,44 +10,66 @@ import { parseFutureInput } from '../server/futures/contractCatalog.js';
 
 QUnit.module('Futures Backend Services (offline)');
 
-QUnit.test('Sina minute JSONP parsing correctly extracts baseDate and maps volume, openInterest & avgPrice', (assert) => {
-  const fixture = `/*<script>location.href='//sina.com';</script>*/\nvar _RB0=([["21:00","3144.000","3144.406","15805","1466859","3142.000","2026-09-04"],["21:01","3138.000","3143.011","12003","1466996"]]);`;
-  const match = fixture.match(/var\s+[^=]+=\s*\(?\s*(\[[\s\S]*\])/);
-  assert.ok(match, 'regex matches var _RB0=([ ... ])');
-  const arr = JSON.parse(match[1]);
-  assert.equal(arr.length, 2, 'parsed 2 rows');
-
-  const baseDate = arr[0] && arr[0][6] ? arr[0][6] : null;
-  assert.equal(baseDate, '2026-09-04', 'baseDate extracted from row[6]');
-
-  const row0 = arr[0];
-  const p = Number(row0[1]);
-  const avg = Number(row0[2]);
-  const bar0 = {
-    open: p,
-    high: p,
-    low: p,
-    close: p,
-    avgPrice: Number.isFinite(avg) && avg > 0 ? avg : null,
-    volume: Number(row0[3]) || 0,
-    openInterest: Number(row0[4]) || 0
-  };
-  assert.equal(bar0.close, 3144, 'close is 3144 (not openInterest)');
-  assert.equal(bar0.low, 3144, 'low is 3144 (not volume)');
-  assert.equal(bar0.avgPrice, 3144.406, 'avgPrice is row[2]');
-  assert.equal(bar0.volume, 15805, 'volume is row[3]');
-  assert.equal(bar0.openInterest, 1466859, 'openInterest is row[4]');
+QUnit.test('production Sina minute fallback parses recorded JSONP and field positions', async assert => {
+  const original = globalThis.fetch;
+  const fixture = await readFile(new URL('./fixtures/futures/sina_minute_rb0.txt', import.meta.url), 'utf8');
+  globalThis.fetch = async url => String(url).includes('getMinLine')
+    ? { ok: true, text: async () => fixture } : { ok: false, status: 503 };
+  try {
+    const result = await _internal.fetchFuturesMinute(parseFutureInput('RB0'));
+    assert.equal(result.source, 'sina-futures-minline');
+    assert.equal(result.items[0].close, 3144);
+    assert.equal(result.items[0].avgPrice, 3144.406);
+    assert.equal(result.items[0].volume, 15805);
+    assert.equal(result.items[0].openInterest, 1466859);
+    assert.equal(chartTimeToDate(result.items[0].time), '2026-09-04');
+  } finally { globalThis.fetch = original; }
 });
 
-QUnit.test('Sina daily JSONP parsing correctly matches parentheses and variable names', (assert) => {
-  const fixture = `/*<script>location.href='//sina.com';</script>*/\nvar _RB0=([{"d":"2026-09-04","o":"3145.000","h":"3158.000","l":"3137.000","c":"3156.000","v":"245269","p":"1467749","s":"3137.000"}]);`;
-  const match = fixture.match(/var\s+[^=]+=\s*\(?\s*(\[[\s\S]*\])/);
-  assert.ok(match, 'regex matches daily JSONP with parentheses');
-  const arr = JSON.parse(match[1]);
-  assert.equal(arr.length, 1);
-  assert.equal(arr[0].d, '2026-09-04');
-  assert.equal(Number(arr[0].c), 3156);
-  assert.equal(Number(arr[0].p), 1467749);
+QUnit.test('production Sina daily fallback parses recorded JSONP', async assert => {
+  const original = globalThis.fetch;
+  const fixture = await readFile(new URL('./fixtures/futures/sina_daily_rb0.txt', import.meta.url), 'utf8');
+  globalThis.fetch = async url => String(url).includes('getDailyKLine')
+    ? { ok: true, text: async () => fixture } : { ok: false, status: 503 };
+  try {
+    const result = await _internal.fetchFuturesDaily(parseFutureInput('RB0'));
+    assert.equal(result.source, 'sina-futures-dailykline');
+    const last = result.items.at(-1);
+    assert.equal(chartTimeToDate(last.time), '2026-09-03');
+    assert.equal(last.close, 3142);
+    assert.equal(last.openInterest, 1466483);
+  } finally { globalThis.fetch = original; }
+});
+
+QUnit.test('cached production futures services use fixed time, fixtures and disposable cache', async assert => {
+  const original = globalThis.fetch;
+  const minute = JSON.parse(await readFile(new URL('./fixtures/futures/aktools_minute_rb0.json', import.meta.url), 'utf8'));
+  const daily = JSON.parse(await readFile(new URL('./fixtures/futures/aktools_daily_rb0.json', import.meta.url), 'utf8'));
+  const requests = [];
+  globalThis.fetch = async url => {
+    const u = String(url); requests.push(u);
+    if (u.includes('tool_trade_date_hist_sina')) return { ok: true, json: async () =>
+      ['2026-08-31', '2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04', '2026-09-07'].map(trade_date => ({ trade_date })) };
+    if (u.includes('futures_zh_minute_sina')) return { ok: true, json: async () => minute };
+    if (u.includes('futures_zh_daily_sina')) return { ok: true, json: async () => daily };
+    // Explicit fixture outage for optional live quote synthesis; historical bars remain usable.
+    if (u.includes('hq.sinajs.cn') || u.includes('futures_zh_spot')) return { ok: false, status: 503 };
+    assert.ok(false, `Unexpected service fixture URL: ${u}`);
+    throw new Error('Unexpected fixture request');
+  };
+  const opts = { now: new Date('2026-09-04T10:00:00+08:00'), date: '2026-09-04', force: true };
+  try {
+    const intraday = await getCachedFuturesIntraday('RB0', opts);
+    assert.equal(intraday.tradingDay, '2026-09-04');
+    assert.ok(intraday.items.length > 0 && intraday.items.length <= 400);
+    assert.ok(intraday.items.every(item => item.avgPrice > 0));
+    for (const period of ['1w', '1M']) {
+      const kline = await getCachedFuturesKline('RB0', period, opts);
+      assert.equal(kline.period, period);
+      assert.ok(kline.items.length > 0);
+    }
+    assert.ok(requests.some(url => url.includes('futures_zh_minute_sina')));
+  } finally { globalThis.fetch = original; }
 });
 
 QUnit.test('aggregateDailyBarsToWeekly correctly aggregates daily bars into weekly bars', (assert) => {

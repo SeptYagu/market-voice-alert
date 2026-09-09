@@ -1,6 +1,8 @@
 # STATUS.md - 项目状态
 
-## A–E 全部完成目标（进行中）
+## A–E 全部完成目标（已完成）
+
+最新验收：[A–E 完成记录与验收矩阵](docs/handoff/2026-09-09-completion-goal-progress.md)。A–E 和 T1/T2 工程项均已实施：共享请求归属、合约会话决策、增量涨停 DOM、语音/监控控制器、离线缓存/网络/时钟隔离。最终门禁 709 单测、59 E2E、lint/build；真实行情联网 smoke 和真实设备长时间实播未执行。以下各条保留阶段历史，当前状态以本段和最新验收矩阵为准。
 
 E 已提取 monitorController，app 的后台分时回填也统一走 ChartRowManager 归属保护。704 单测、58 E2E、lint/build 通过；继续最后的 T1 与验收补齐。
 

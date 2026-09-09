@@ -569,7 +569,24 @@ QUnit.module('app.multi-chart state', () => {
   });
 });
 
+function isolatedChartRequests(hooks) {
+  let originalFetch;
+  hooks.beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = async url => {
+      if (!String(url).startsWith('/api/cache/')) throw new Error(`Unexpected chart fixture URL: ${url}`);
+      return { ok: true, json: async () => ({ ok: true, data: { items: [] } }) };
+    };
+  });
+  hooks.afterEach(async () => {
+    _closeAllCharts();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    globalThis.fetch = originalFetch;
+  });
+}
+
 QUnit.module('app.openChart / closeChart / closeAllCharts', (hooks) => {
+  isolatedChartRequests(hooks);
   hooks.afterEach(() => {
     _closeAllCharts();
   });
@@ -621,6 +638,7 @@ QUnit.module('app.openChart / closeChart / closeAllCharts', (hooks) => {
 });
 
 QUnit.module('app.handlePeriodChange (per-code)', (hooks) => {
+  isolatedChartRequests(hooks);
   hooks.afterEach(() => {
     _closeAllCharts();
   });
@@ -654,6 +672,7 @@ QUnit.module('app.handlePeriodChange (per-code)', (hooks) => {
 });
 
 QUnit.module('app.applyLiveTickToChartForCode', (hooks) => {
+  isolatedChartRequests(hooks);
   hooks.afterEach(() => {
     _closeAllCharts();
     _setChartInstance('sh600519', null);
@@ -723,6 +742,7 @@ QUnit.module('app.applyLiveTickToChartForCode', (hooks) => {
 });
 
 QUnit.module('app.applyLiveQuoteToIntradayForCode', (hooks) => {
+  isolatedChartRequests(hooks);
   hooks.afterEach(() => {
     _setIntradayChartInstance('sh600519', null);
     _closeAllCharts();
@@ -753,6 +773,7 @@ QUnit.module('app.applyLiveQuoteToIntradayForCode', (hooks) => {
 });
 
 QUnit.module('app.updateChartLastTickMulti', (hooks) => {
+  isolatedChartRequests(hooks);
   hooks.afterEach(() => {
     _closeAllCharts();
   });
@@ -772,6 +793,7 @@ QUnit.module('app.updateChartLastTickMulti', (hooks) => {
 });
 
 QUnit.module('app.mountChartForCode', (hooks) => {
+  isolatedChartRequests(hooks);
   hooks.afterEach(() => {
     _closeAllCharts();
     document.body.innerHTML = '';

@@ -46,10 +46,10 @@ export function getFuturesSession(instrument, now = new Date(), tradingDates = [
     if (timeMin >= auctionStart && timeMin < morningStart) {
       return { isTrading: false, sessionKind: 'day', sessionStatus: 'auction', tradingDay: beijingToday };
     }
-    if ((timeMin >= morningStart && timeMin <= 11 * 60 + 30) || (timeMin >= 13 * 60 && timeMin <= afternoonEnd)) {
+    if ((timeMin >= morningStart && timeMin < 11 * 60 + 30) || (timeMin >= 13 * 60 && timeMin < afternoonEnd)) {
       return { isTrading: true, sessionKind: 'day', sessionStatus: 'trading', tradingDay: beijingToday };
     }
-    if (timeMin > 11 * 60 + 30 && timeMin < 13 * 60) {
+    if (timeMin >= 11 * 60 + 30 && timeMin < 13 * 60) {
       return { isTrading: false, sessionKind: 'day', sessionStatus: 'break', tradingDay: beijingToday };
     }
     return { isTrading: false, sessionKind: 'none', sessionStatus: 'closed', tradingDay: latestTradingDay };
@@ -62,13 +62,13 @@ export function getFuturesSession(instrument, now = new Date(), tradingDates = [
       return { isTrading: false, sessionKind: 'day', sessionStatus: 'auction', tradingDay: beijingToday };
     }
     if (
-      (timeMin >= 9 * 60 && timeMin <= 10 * 60 + 15) ||
-      (timeMin >= 10 * 60 + 30 && timeMin <= 11 * 60 + 30) ||
-      (timeMin >= 13 * 60 + 30 && timeMin <= 15 * 60)
+      (timeMin >= 9 * 60 && timeMin < 10 * 60 + 15) ||
+      (timeMin >= 10 * 60 + 30 && timeMin < 11 * 60 + 30) ||
+      (timeMin >= 13 * 60 + 30 && timeMin < 15 * 60)
     ) {
       return { isTrading: true, sessionKind: 'day', sessionStatus: 'trading', tradingDay: beijingToday };
     }
-    if ((timeMin > 10 * 60 + 15 && timeMin < 10 * 60 + 30) || (timeMin > 11 * 60 + 30 && timeMin < 13 * 60 + 30)) {
+    if ((timeMin >= 10 * 60 + 15 && timeMin < 10 * 60 + 30) || (timeMin >= 11 * 60 + 30 && timeMin < 13 * 60 + 30)) {
       return { isTrading: false, sessionKind: 'day', sessionStatus: 'break', tradingDay: beijingToday };
     }
   }
@@ -99,7 +99,7 @@ export function getFuturesSession(instrument, now = new Date(), tradingDates = [
     // B. 次日凌晨 00:00 - 02:30 (跨午夜续段)
     if (timeMin < 3 * 60) {
       const currentMinAcross = 24 * 60 + timeMin;
-      if (currentMinAcross <= endMin) {
+      if (currentMinAcross < endMin) {
         // 续段归属：周二至周五凌晨归属当天；周六凌晨归属下一个交易日（下周一）。
         // 周日、周一凌晨前一晚无夜盘，休市。
         let targetTradingDay = null;

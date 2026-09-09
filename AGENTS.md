@@ -5,6 +5,7 @@
 股票期货实时监控助手 v2 - 单页 Web 应用
 
 **新窗口速读入口**：
+- [`docs/handoff/2026-09-09-completion-goal-progress.md`](docs/handoff/2026-09-09-completion-goal-progress.md) — A–E 全部剩余实施项完成记录、验收矩阵及测试边界（最新）
 - [`docs/handoff/2026-09-09-followup-review-and-remaining-stages.md`](docs/handoff/2026-09-09-followup-review-and-remaining-stages.md) — 最新提交复审、四项边界修复及 A–E 实际剩余项（最新）
 - [`docs/handoff/2026-09-09-code-review-defects-closure-and-session-model-handoff.md`](docs/handoff/2026-09-09-code-review-defects-closure-and-session-model-handoff.md) — 2026-09-09 缺陷闭环与期货会话模型收敛交接文档（最新）
 - [`docs/handoff/2026-09-08-r1-r7-t1-t2-fixed-handoff.md`](docs/handoff/2026-09-08-r1-r7-t1-t2-fixed-handoff.md) — 2026-09-08 R1-R7 与 T1/T2 修复闭环交接文档

@@ -13,13 +13,13 @@
     "start": "node server/index.js",
     "build": "vite build",
     "preview": "npm run build && npm run server",
-    "lint": "eslint \"src/**/*.js\" \"server/**/*.js\" \"tests/**/*.js\" \"e2e/**/*.js\" \"vite.config.js\" \"playwright.config.js\"",
+    "lint": "eslint \"src/**/*.js\" \"server/**/*.js\" \"tests/**/*.js\" \"e2e/**/*.js\" \"vite.config.js\" \"playwright.config.js\" \"scripts/**/*.mjs\"",
     "lint:fix": "eslint src server tests e2e vite.config.js playwright.config.js --fix",
-    "test": "qunit --require ./tests/_jsdom-setup.cjs \"tests/**/*.test.js\"",
+    "test": "node scripts/run-tests.mjs",
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
     "ci": "npm run lint && npm run test && npm run e2e && npm run build",
-    "test:integration": "qunit --require ./tests/_jsdom-setup.cjs \"tests/integration/*.js\""
+    "test:integration": "node scripts/run-tests.mjs --integration"
   },
   "dependencies": {
     "lightweight-charts": "^4.2.0"

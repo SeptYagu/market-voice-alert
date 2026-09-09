@@ -788,25 +788,7 @@ function handleAdd() {
 }
 
 // Phase 8: 后台预拉 N 只股票的 1d K 线 (限流: 每批 3 + 间隔 200ms)
-function preloadKlineForCodes(codes) {
-  if (!Array.isArray(codes) || !codes.length) return;
-  const period = DEFAULT_PERIOD;  // '1d'
-  const batches = [];
-  for (let i = 0; i < codes.length; i += 3) {
-    batches.push(codes.slice(i, i + 3));
-  }
-  let idx = 0;
-  function runNextBatch() {
-    if (idx >= batches.length) return;
-    const batch = batches[idx++];
-    Promise.allSettled(batch.map(code => fetchKline(code, { period, sharedCache: true }).catch(() => null)))
-      .then(() => {
-        if (idx < batches.length) setTimeout(runNextBatch, 200);
-      });
-  }
-  setTimeout(runNextBatch, 0);
-}
-
+function preloadKlineForCodes(codes) { monitorCtrl.preload(codes); }
 
 async function handleRemove(code) {
   const quote = state.quotes.get(code);
@@ -1190,7 +1172,11 @@ const voiceCtrl = createVoiceController({
   getQuotes: () => state.quotes,
   getTradingDates: () => state.tradingDates || [],
   speech: { supported: isSpeechSupported, speak: ttsSpeak, cancel: ttsCancel },
-  onChange: ({ paused }) => { state.voicePausedBySchedule = paused; renderVoiceBar(); renderStatus(); }
+  onChange: ({ paused, settingsChanged }) => {
+    state.voicePausedBySchedule = paused;
+    if (settingsChanged) renderVoiceBar();
+    renderStatus();
+  }
 });
 function startVoiceTimer() { voiceCtrl.startTimer(); }
 function restartVoiceTimer() { voiceCtrl.startTimer(); voiceCtrl.applySchedule(); }
@@ -1405,7 +1391,7 @@ function flashInfo(msg) {
 
 const monitorCtrl = createMonitorController({
   getState: () => state,
-  fetchQuotes,
+  fetchQuotes, fetchKline,
   storage: { get: getWatchList, add: addToWatchList, remove: removeFromWatchList },
   onRemove: code => {
     monitorChartMgr.destroyCharts(code);

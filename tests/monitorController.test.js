@@ -1,6 +1,28 @@
 import { createMonitorController } from '../src/js/controllers/monitorController.js';
 
 QUnit.module('Production monitor controller', () => {
+  QUnit.test('stop cancels preload batches and late calendar warmup', async assert => {
+    const scheduled = new Map(); let id = 0;
+    const state = { loading: false };
+    let warmComplete, requestComplete, calls = 0, applies = 0;
+    const controller = createMonitorController({ getState: () => state,
+      fetchKline: () => { calls++; return new Promise(resolve => { requestComplete = resolve; }); },
+      timers: { setTimeout: fn => { scheduled.set(++id, fn); return id; }, clearTimeout: key => scheduled.delete(key),
+        setInterval: fn => { scheduled.set(++id, fn); return id; }, clearInterval: key => scheduled.delete(key) } });
+    controller.startChecker(() => new Promise(resolve => { warmComplete = resolve; }), () => { applies++; });
+    await Promise.resolve();
+    controller.preload(['a']);
+    const runBatch = scheduled.get(id); scheduled.delete(id);
+    const loading = runBatch();
+    controller.stop();
+    requestComplete(); warmComplete();
+    await loading;
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(calls, 1);
+    assert.equal(applies, 0);
+    assert.equal(scheduled.size, 0);
+    assert.equal(controller.inspect().timerCount, 0);
+  });
   QUnit.test('stop/restart and removal ignore old response; timers clean up', async assert => {
     const pending = [];
     const timers = new Map(); let id = 0;

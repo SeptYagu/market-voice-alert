@@ -21,6 +21,23 @@ function harness(codes = ['sh600000']) {
 }
 
 QUnit.module('Production voice controller', () => {
+  QUnit.test('failed Worker postMessage terminates worker before fallback and stop clears queue', assert => {
+    let terminated = 0, cancelled = 0;
+    const scheduled = new Set();
+    const controller = createVoiceController({
+      getSettings: () => ({ enabled: true, interval: 1000, volume: 80, smartSchedule: { enabled: false } }),
+      saveSettings() {}, getCodes: () => ['sh600000'], getQuotes: () => new Map(), getTradingDates: () => [],
+      speech: { supported: () => true, speak() {}, cancel() { cancelled++; } },
+      createWorker: () => ({ terminate() { terminated++; }, postMessage() { throw new Error('bootstrap failed'); } }),
+      timers: { setInterval: fn => { scheduled.add(fn); return fn; }, clearInterval: fn => scheduled.delete(fn) }
+    });
+    controller.startTimer();
+    assert.equal(terminated, 1);
+    assert.equal(scheduled.size, 1);
+    controller.stop();
+    assert.equal(scheduled.size, 0);
+    assert.equal(cancelled, 1);
+  });
   QUnit.test('live chart date uses contract and injected holiday calendar', assert => {
     const now = new Date('2026-09-09T23:30:00+08:00');
     const dates = ['2026-09-09', '2026-09-10'];
@@ -82,6 +99,9 @@ QUnit.module('Production voice controller', () => {
       h.controller.speakSubscribed();
       assert.true(h.spoken.at(-1).includes('元'), 're-enabled field is announced');
       h.codes.length = 0;
+      const spokenBeforeUnsubscribe = h.spoken.length;
+      h.controller.applySchedule();
+      assert.equal(h.spoken.length, spokenBeforeUnsubscribe, "unsubscribing is not a market close");
       h.controller.prune();
       assert.equal(h.controller.inspect().memory.size, 0);
       h.controller.stop();

@@ -1,9 +1,11 @@
 import { getBeijingDate } from '../time.js';
 import { createRequestScope } from '../services/requestScope.js';
 
-export function createMonitorController({ getState, fetchQuotes, storage, onRemove = () => {},
+export function createMonitorController({ getState, fetchQuotes, fetchKline, storage, onRemove = () => {},
   onQuotes = () => {}, onRefresh = () => {}, onStatus = () => {}, clock = () => new Date(), timers = globalThis }) {
   const scope = createRequestScope();
+  const preloadScope = createRequestScope();
+  let preloadTimer = null;
   let timer = null;
   let interval = null;
   let checker = null;
@@ -57,7 +59,9 @@ export function createMonitorController({ getState, fetchQuotes, storage, onRemo
   }
   function stop() {
     lifecycle++;
-    stopTimer(); scope.cancel(); getState().loading = false;
+    stopTimer(); scope.cancel(); preloadScope.cancel(); getState().loading = false;
+    if (preloadTimer !== null) timers.clearTimeout(preloadTimer);
+    preloadTimer = null;
     if (checker !== null) timers.clearInterval(checker);
     checker = null;
   }
@@ -66,6 +70,20 @@ export function createMonitorController({ getState, fetchQuotes, storage, onRemo
     const owner = ++lifecycle;
     Promise.resolve().then(warm).catch(() => {}).finally(() => { if (owner === lifecycle) apply(); });
     checker = timers.setInterval(apply, 30000);
+  }
+  function preload(codes) {
+    if (!fetchKline || !codes?.length) return;
+    if (preloadTimer !== null) timers.clearTimeout(preloadTimer);
+    const token = preloadScope.begin();
+    let cursor = 0;
+    const next = async () => {
+      preloadTimer = null;
+      if (!preloadScope.isCurrent(token)) return;
+      const batch = codes.slice(cursor, cursor += 3);
+      await Promise.allSettled(batch.map(code => fetchKline(code, { period: '1d', sharedCache: true, signal: token.signal })));
+      if (preloadScope.isCurrent(token) && cursor < codes.length) preloadTimer = timers.setTimeout(next, 200);
+    };
+    preloadTimer = timers.setTimeout(next, 0);
   }
   function addCodes(codes) {
     const state = getState();
@@ -86,6 +104,6 @@ export function createMonitorController({ getState, fetchQuotes, storage, onRemo
     }
     state.watchList = storage.get();
   }
-  return { refresh, getRefreshCodes, startChecker, stop, stopTimer, applySchedule, addCodes, removeCodes,
-    inspect: () => ({ timerCount: Number(timer !== null) + Number(checker !== null) }) };
+  return { refresh, preload, getRefreshCodes, startChecker, stop, stopTimer, applySchedule, addCodes, removeCodes,
+    inspect: () => ({ timerCount: Number(timer !== null) + Number(checker !== null) + Number(preloadTimer !== null) }) };
 }
