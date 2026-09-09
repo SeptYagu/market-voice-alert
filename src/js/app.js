@@ -23,6 +23,7 @@ import {
 } from './storage.js';
 import { fetchQuotes, fetchKline, fetchIntraday, onKlineUpdated } from './api.js';
 import { isFutureCode } from './futures/instrument.js';
+import { getFuturesSession } from './futures/session.js';
 import {
   PERIOD_LABELS,
   DEFAULT_PERIOD,
@@ -40,8 +41,6 @@ import {
   speak as ttsSpeak,
   cancel as ttsCancel,
   formatQuoteSpeech,
-  formatQuoteSpeechDelta,
-  buildQuoteSpeechSegments,
   isSpeechSupported
 } from './tts.js';
 import {
@@ -55,6 +54,7 @@ import {
   createLimitUpController,
   applyLimitUpFetchResult
 } from './controllers/limitUpController.js';
+import { createVoiceController } from './controllers/voiceController.js';
 import { createMomentumController } from './controllers/momentumController.js';
 import {
   parseBatchInput,
@@ -77,12 +77,9 @@ import { getBeijingDate, formatDateTime } from './time.js';
 import {
   DEFAULT_SMART_SCHEDULE,
   getMarketSession,
-  resolveVoiceScheduleAction,
   isAutoRefreshAllowedInSession,
-  isVoiceAllowedInSession,
   normalizeSmartSchedule,
   isFuturesMarketOpen,
-  getVoiceEligibleCodes,
   isLiveTradeDate
 } from './marketSession.js';
 
@@ -158,6 +155,7 @@ export const DEFAULT_REFRESH = 10000;
 
 export const DEFAULT_VOICE_SETTINGS = Object.freeze({
   enabled: false,
+  manualDisabledDate: null,
   interval: 5000,
   volume: 80,
   fields: Object.freeze({ name: true, price: true, percent: true }),
@@ -243,6 +241,7 @@ export function normalizeVoiceSettings(input) {
       : clampVolume(src.volume);
   return {
     enabled: !!src.enabled,
+    manualDisabledDate: src.manualDisabledDate || null,
     interval,
     volume,
     fields: normalizeVoiceFields(src.fields),
@@ -323,11 +322,6 @@ const state = {
   alert: { ...DEFAULT_ALERT_SETTINGS },
   alertStates: {},
   notifPermission: 'default',
-  tickWorker: null,
-  tickFallback: null,
-  voiceScheduleTimer: null,
-  voiceLastSession: null,
-  voiceLastSpoken: new Map(),
   voicePausedBySchedule: false,
   tradingDates: [],
   limitUp: {
@@ -385,10 +379,8 @@ function resolveInitialTradeDate(code, data) {
   const today = getBeijingDate();
   const latestTrading = resolveLatestTradingDate(today, dates);
   const q = state.quotes.get(code);
+  if (isFutureCode(code)) return getFuturesSession(code, new Date(), dates).tradingDay;
   if (q && q.tradingDay) return q.tradingDay;
-  if (isFutureCode(code)) {
-    return (q && q.tradingDay) || latestTrading || today;
-  }
   const lastBarDate = data && data.items ? getLastKlineDate(data.items) : '';
   if (latestTrading && (!lastBarDate || lastBarDate <= latestTrading)) {
     return latestTrading;
@@ -402,6 +394,7 @@ export const monitorChartMgr = new ChartRowManager({
   klineHeight: 360,
   intradayHeight: 360,
   getTheme: getCurrentTheme,
+  getTradingDates: () => state.tradingDates || [],
   getChartInstances: () => state.chartInstances,
   getQuote: (code) => state.quotes.get(code),
   isExpanded: (code) => state.expandedCodes.has(code),
@@ -418,6 +411,7 @@ export const limitUpChartMgr = new ChartRowManager({
   klineHeight: 360,
   intradayHeight: 360,
   getTheme: getCurrentTheme,
+  getTradingDates: () => state.tradingDates || [],
   getChartInstances: () => state.limitUp.chartInstances,
   getQuote: (code) => state.quotes.get(code),
   isExpanded: (code) => state.limitUp.expandedCodes.has(code),
@@ -438,6 +432,7 @@ export const momentumChartMgr = new ChartRowManager({
   hasIntraday: false,
   klineHeight: 320,
   getTheme: getCurrentTheme,
+  getTradingDates: () => state.tradingDates || [],
   getChartInstances: () => state.momentum.chartInstances,
   getQuote: (code) => state.quotes.get(code),
   isExpanded: (code) => state.momentum.expandedCodes.has(code),
@@ -994,19 +989,7 @@ function handleVoiceEnabledChange(checked) {
     }
   }
 
-  state.voice = { ...state.voice, enabled: !!checked };
-  patchVoiceSettings({ enabled: state.voice.enabled });
-  if (state.voice.enabled) {
-    startVoiceTimer();
-    // Immediate first broadcast so the user gets instant feedback (the worker's
-    // setInterval would otherwise delay first tick by `interval` ms). Also
-    // captures this click as a user gesture for browsers that gate speech on
-    // gesture activation.
-    speakSubscribed();
-  } else {
-    stopVoiceTimer();
-    ttsCancel();
-  }
+  voiceCtrl.setEnabled(checked);
   renderVoiceBar();
   renderStatus();
 }
@@ -1049,6 +1032,7 @@ function handleVoiceFieldChange(key, checked) {
   }
   state.voice = { ...state.voice, fields: nextFields };
   patchVoiceSettings({ fields: nextFields });
+  voiceCtrl.resetFields();
   renderVoiceBar();
 }
 
@@ -1154,13 +1138,8 @@ function handleTestAlert() {
     `${target.name || target.code} ${direction === 'up' ? '涨' : '跌'} ${Math.abs(Number(target.changePercent)).toFixed(2)}`;
   if (isSpeechSupported()) {
     const volume = clampVolume(state.voice.volume) / 100;
-    ttsSpeak(message, { volume });
-  }
-  // Seed the dedup memory so the next scheduled broadcast does not repeat
-  // what the manual test just announced.
-  const segs = buildQuoteSpeechSegments(target);
-  if (segs && targetCode) {
-    state.voiceLastSpoken.set(targetCode, { price: segs.price, percent: segs.percent });
+    if (targetCode) voiceCtrl.speakManual(targetCode);
+    else ttsSpeak(message, { volume });
   }
   if (isNotificationSupported() && state.notifPermission === 'granted') {
     showNotification('价格提醒（测试）', message);
@@ -1177,10 +1156,7 @@ async function handleRequestNotification() {
 
 function persistSubscribed() {
   setSubscribedCodes([...state.subscribed]);
-  // Prune dedup memory for codes no longer subscribed.
-  for (const code of [...state.voiceLastSpoken.keys()]) {
-    if (!state.subscribed.has(code)) state.voiceLastSpoken.delete(code);
-  }
+  voiceCtrl.prune();
 }
 
 async function warmTradeCalendar() {
@@ -1193,11 +1169,6 @@ async function warmTradeCalendar() {
   } catch {
     return state.tradingDates || state.limitUp.tradingDates || [];
   }
-}
-
-function getVoiceSession() {
-  const dates = state.tradingDates || state.limitUp.tradingDates || [];
-  return getMarketSession(new Date(), dates);
 }
 
 function getDataRefreshSession() {
@@ -1224,51 +1195,6 @@ function isDataAutoRefreshAllowedNow() {
   return isAutoRefreshAllowedInSession(session, DATA_REFRESH_SCHEDULE);
 }
 
-function isVoiceAllowedNow() {
-  const dates = state.tradingDates || state.limitUp.tradingDates || [];
-  const smart = state.voice.smartSchedule || DEFAULT_SMART_SCHEDULE;
-  if (state.subscribed?.size) {
-    return getVoiceEligibleCodes(state.subscribed, smart, new Date(), dates).length > 0;
-  }
-  const session = getVoiceSession();
-  return isVoiceAllowedInSession(session, smart);
-}
-
-function speakSubscribed() {
-  if (!isSpeechSupported()) return;
-  if (!isVoiceAllowedNow()) {
-    state.voicePausedBySchedule = !!(state.voice.smartSchedule && state.voice.smartSchedule.enabled);
-    renderStatus();
-    return;
-  }
-  state.voicePausedBySchedule = false;
-  if (!state.subscribed.size) return;
-  const volume = clampVolume(state.voice.volume) / 100;
-  const fields = state.voice.fields;
-  const fieldsOrder = state.voice.fieldsOrder;
-  const dates = state.tradingDates || state.limitUp.tradingDates || [];
-  const eligibleCodes = getVoiceEligibleCodes(state.subscribed, state.voice.smartSchedule, new Date(), dates);
-  for (const code of eligibleCodes) {
-    const q = state.quotes.get(code);
-    if (!q) continue;
-    // Dedup: skip codes whose price AND changePercent are unchanged since the
-    // last spoken broadcast; only changed fields are announced (name kept).
-    const { text, spoken } = formatQuoteSpeechDelta(q, state.voiceLastSpoken.get(code), fields, fieldsOrder);
-    if (!text) continue;
-    ttsSpeak(text, { volume });
-    // Merge into the previous memory instead of replacing it: `spoken` only
-    // contains the fields announced THIS round, so a full replace would make
-    // later rounds think the untouched fields were never spoken and keep
-    // re-announcing them alternately.
-    if (spoken) {
-      state.voiceLastSpoken.set(code, {
-        ...state.voiceLastSpoken.get(code),
-        ...spoken
-      });
-    }
-  }
-}
-
 function processAlerts() {
   if (!state.alert.enabled) return;
   if (!state.subscribed.size) return;
@@ -1285,132 +1211,18 @@ function processAlerts() {
   }
 }
 
-function startVoiceTimer() {
-  stopVoiceTimer();
-  // Fresh dedup memory on (re)start so the first broadcast after enabling,
-  // an interval change, or a schedule pause/resume always speaks in full.
-  state.voiceLastSpoken.clear();
-  if (!state.voice.enabled || !state.voice.interval) return;
-  if (!isVoiceAllowedNow()) {
-    state.voicePausedBySchedule = !!(state.voice.smartSchedule && state.voice.smartSchedule.enabled);
-    renderStatus();
-    return;
-  }
-  state.voicePausedBySchedule = false;
-  const interval = state.voice.interval;
-  // Try Web Worker for accurate background ticking (main-thread setInterval is
-  // throttled to >=1s when the tab is backgrounded).
-  try {
-    const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
-    worker.onmessage = (e) => {
-      if (e.data && e.data.type === 'tick') speakSubscribed();
-    };
-    worker.onerror = () => {
-      // Worker bootstrap failed at runtime; degrade silently to main-thread interval.
-      stopVoiceTimer();
-      state.tickFallback = setInterval(speakSubscribed, interval);
-    };
-    worker.postMessage({ type: 'start', interval });
-    state.tickWorker = worker;
-  } catch {
-    state.tickFallback = setInterval(speakSubscribed, interval);
-  }
-}
-
-function stopVoiceTimer() {
-  if (state.tickWorker) {
-    try {
-      state.tickWorker.postMessage({ type: 'stop' });
-      state.tickWorker.terminate();
-    } catch {
-      /* ignore */
-    }
-    state.tickWorker = null;
-  }
-  if (state.tickFallback) {
-    clearInterval(state.tickFallback);
-    state.tickFallback = null;
-  }
-}
-
-function restartVoiceTimer() {
-  stopVoiceTimer();
-  startVoiceTimer();
-}
-
-function applyVoiceSchedule() {
-  const smart = state.voice.smartSchedule || DEFAULT_SMART_SCHEDULE;
-  if (!smart.enabled) {
-    state.voicePausedBySchedule = false;
-    if (state.voice.enabled && !state.tickWorker && !state.tickFallback) startVoiceTimer();
-    renderStatus();
-    return;
-  }
-  const session = getVoiceSession();
-  const prevSession = state.voiceLastSession;
-  state.voiceLastSession = session;
-  // R2: 调度检查必须与播报入口（speakSubscribed / startVoiceTimer 所用的
-  // isVoiceAllowedNow）共用同一允许策略。存在正在交易的已订阅合约（如
-  // 期货夜盘）时，股票 after-close 会话不得全局停用语音；只有当
-  // isVoiceAllowedNow 也判定不允许时才执行暂停/自动关闭。
-  const prevAllowed = state.voiceLastAllowed !== undefined && state.voiceLastAllowed !== null
-    ? state.voiceLastAllowed
-    : state.voice.enabled;
-  const allowed = isVoiceAllowedNow();
-  state.voiceLastAllowed = allowed;
-
-  if (state.voice.enabled && !allowed) {
-    stopVoiceTimer();
-    ttsCancel();
-    // 统一决策（R2 回归修正 M1）：lunch/pre-open/closed 只暂停，依靠会话
-    // 恢复路径在下一交易时段自动重启；仅股票 after-close 会话才允许自动
-    // 关闭（期货夜盘在 after-close 内收盘时命中并补播「已收盘」）。
-    // 午休绝不永久关闭语音，否则 13:00 恢复分支因 enabled=false 永不执行。
-    const action = resolveVoiceScheduleAction({
-      prevSession,
-      session,
-      allowed,
-      prevAllowed,
-      smartSchedule: smart
-    });
-    if (action.notice && isSpeechSupported()) {
-      ttsSpeak(action.notice, { volume: clampVolume(state.voice.volume) / 100 });
-    }
-    state.voicePausedBySchedule = action.pausedBySchedule;
-    if (action.autoStop) {
-      state.voice = { ...state.voice, enabled: false };
-      patchVoiceSettings({ enabled: false });
-      state.voicePausedBySchedule = false;
-      renderVoiceBar();
-    }
-    renderStatus();
-    return;
-  }
-
-  if (!state.voice.enabled && smart.autoStartAuction && session === 'opening-auction') {
-    state.voice = { ...state.voice, enabled: true };
-    patchVoiceSettings({ enabled: true });
-    state.voicePausedBySchedule = false;
-    renderVoiceBar();
-    startVoiceTimer();
-    renderStatus();
-    return;
-  }
-
-  if (state.voice.enabled && allowed) {
-    state.voicePausedBySchedule = false;
-    if (!state.tickWorker && !state.tickFallback) startVoiceTimer();
-  }
-  renderStatus();
-}
-
-function startVoiceScheduleChecker() {
-  if (state.voiceScheduleTimer) clearInterval(state.voiceScheduleTimer);
-  warmTradeCalendar().finally(() => applyVoiceSchedule());
-  state.voiceScheduleTimer = setInterval(() => {
-    applyVoiceSchedule();
-  }, 30000);
-}
+const voiceCtrl = createVoiceController({
+  getSettings: () => state.voice,
+  saveSettings: patch => { state.voice = { ...state.voice, ...patch }; patchVoiceSettings(patch); },
+  getCodes: () => state.subscribed,
+  getQuotes: () => state.quotes,
+  getTradingDates: () => state.tradingDates || [],
+  speech: { supported: isSpeechSupported, speak: ttsSpeak, cancel: ttsCancel },
+  onChange: ({ paused }) => { state.voicePausedBySchedule = paused; renderVoiceBar(); renderStatus(); }
+});
+function startVoiceTimer() { voiceCtrl.startTimer(); }
+function restartVoiceTimer() { voiceCtrl.startTimer(); voiceCtrl.applySchedule(); }
+function startVoiceScheduleChecker() { voiceCtrl.start(warmTradeCalendar); }
 
 function handleRowClick(code, e) {
   const target = e && e.target;
@@ -1488,7 +1300,7 @@ async function refreshLiveIntradayForCode(code, isLimitUp = false) {
   if (
     !inst ||
     inst.intradayRefreshing ||
-    !isLiveTradeDate(inst.selectedTradeDate, isFutureCode(code)) ||
+    !isLiveTradeDate(inst.selectedTradeDate, code, new Date(), state.tradingDates) ||
     Date.now() - inst.intradayLastFetchAt < 10000
   ) return;
   inst.intradayRefreshing = true;
@@ -1907,11 +1719,7 @@ export function stopApp() {
   stopMomentumScan();
   stopMonitorTimer();
   stopLimitUpTimer();
-  stopVoiceTimer();
-  if (state.voiceScheduleTimer) {
-    clearInterval(state.voiceScheduleTimer);
-    state.voiceScheduleTimer = null;
-  }
+  voiceCtrl.stop();
   if (state.dataScheduleTimer) {
     clearInterval(state.dataScheduleTimer);
     state.dataScheduleTimer = null;

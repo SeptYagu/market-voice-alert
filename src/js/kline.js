@@ -461,13 +461,13 @@ function _isContinuousTradingMinute(parts) {
   );
 }
 
-export function applyLiveQuoteToIntraday(items, quote, now = new Date(), isFuture = false) {
+export function applyLiveQuoteToIntraday(items, quote, now = new Date(), isFuture = false, tradingDates = []) {
   if (!Array.isArray(items) || !items.length || !quote || typeof quote !== 'object') return items;
   const price = _positiveNumber(quote.price);
   if (!price) return items;
   const isFut = isFuture || quote.type === 'future' || quote.isFuture || (quote.code && isFutureCode(quote.code));
   if (isFut) {
-    if (!isFuturesMarketOpen(now)) return items;
+    if (!isFuturesMarketOpen(now, tradingDates, quote.code ? [quote.code] : [])) return items;
   } else {
     const parts = getBeijingClockParts(now);
     if (!_isContinuousTradingMinute(parts)) return items;

@@ -122,11 +122,12 @@ export function applyLiveTickToKlineChart(ctl, inst, quoteOrPrice) {
   }
 }
 
-export function applyLiveQuoteToIntradayChart(ctl, inst, quote, now = new Date()) {
+export function applyLiveQuoteToIntradayChart(ctl, inst, quote, now = new Date(), tradingDates = []) {
   if (!inst || !ctl || !inst.intradayData) return false;
-  const isFuture = isFutureCode(inst.code);
-  if (!isLiveTradeDate(inst.selectedTradeDate, isFuture, now)) return false;
-  const updated = applyLiveQuoteToIntraday(inst.intradayData.items, quote, now, isFuture);
+  const code = inst.code || quote.code;
+  const isFuture = isFutureCode(code);
+  if (!isLiveTradeDate(inst.selectedTradeDate, code, now, tradingDates)) return false;
+  const updated = applyLiveQuoteToIntraday(inst.intradayData.items, quote, now, isFuture, tradingDates);
   if (updated === inst.intradayData.items) return false;
   inst.intradayData = { ...inst.intradayData, items: updated };
   if (typeof ctl.updatePoint === 'function' && updated.length > 0) {
@@ -188,6 +189,7 @@ export class ChartRowManager {
     this.onStateChange = options.onStateChange || (() => {});
     this.onKlineBarClick = options.onKlineBarClick || null;
     this.getQuote = options.getQuote || null;
+    this.getTradingDates = options.getTradingDates || (() => []);
 
     this.klineCtlMap = new Map();
     this.intradayCtlMap = new Map();
@@ -495,7 +497,8 @@ export class ChartRowManager {
     const ctl = this.intradayCtlMap.get(code);
     const inst = this.getInst(code);
     if (!ctl || !inst) return false;
-    const applied = applyLiveQuoteToIntradayChart(ctl, inst, quote, now);
+    inst.code = code;
+    const applied = applyLiveQuoteToIntradayChart(ctl, inst, quote, now, this.getTradingDates());
     if (applied) this.updateIntradayStatus(code);
     return applied;
   }
