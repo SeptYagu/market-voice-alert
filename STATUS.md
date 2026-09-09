@@ -2,11 +2,13 @@
 
 > **新窗口从这里开始**：本文件记录了完整的重做计划、决策、当前阶段和下一步任务。无需阅读历史对话。
 >
-> **最新进展（2026-09-08，基线 ef695b7→782185a）**：[`R1–R7+T1/T2 修复闭环 handoff`](docs/handoff/2026-09-08-r1-r7-t1-t2-fixed-handoff.md)。上一轮审查发现的 7 项功能缺陷（R1 语音去重、R2 夜盘调度、R3 涨停分组刷新、R4 强刷透传 force、R5/R6 异步任务守卫、R7 服务端期货会话）与 2 项工程问题（T1 单测离线化、T2 E2E 启动命令）已全部修复并分组推送。离线单测 665/665、E2E 57/57、lint/build 通过；阶段 B–E 结构性重构仍待做。
+> **最新进展（2026-09-09）**：[`代码审查缺陷彻底闭环与期货会话模型收敛 handoff`](docs/handoff/2026-09-09-code-review-defects-closure-and-session-model-handoff.md)。完成 4 项核心攻坚：（1）修复 `api.js` 强刷 K 线无法写回本地缓存缺陷；（2）提取前后端通用期货会话服务 `src/js/futures/session.js`，精准识别无夜盘金融期货（国债/股指）与不同商品期货夜盘时间；（3）修复夜盘播报与调度标的过滤及收盘提示；（4）新增 `tests/codeReviewRegressions.test.js` 断言式单元测试套件，离线单测扩展至 671/671 全部通过，ESLint 0 错误 0 警告，Vite 生产构建成功。
 >
-> **上轮代码审查（2026-09-08，基线 9cd782e）**：[`代码缺陷与重构 handoff`](docs/handoff/2026-09-08-code-review-bugs-and-refactor-handoff.md)。发现 7 项功能缺陷与 2 项工程验证问题，附复现脚本、修复方案及分阶段重构计划；本轮已完成阶段 A 修复。
+> **前序进展（2026-09-08，基线 ef695b7→782185a）**：[`R1–R7+T1/T2 修复闭环 handoff`](docs/handoff/2026-09-08-r1-r7-t1-t2-fixed-handoff.md)。上一轮审查发现的 7 项功能缺陷与 2 项工程问题已全部修复。
 >
-> **新窗口交接文档**：[`docs/handoff/2026-09-07-workbuddy-round4-code-review-handoff.md`](docs/handoff/2026-09-07-workbuddy-round4-code-review-handoff.md) — 2026-09-07 WorkBuddy 第四轮代码审查交接文档：最新提交 a91927c 核验 + 整体复审 round-4（0 Critical / 0 Major / 2 Minor 遗留）（最新）。详见前序 [`docs/handoff/2026-09-07-workbuddy-round3-code-review-handoff.md`](docs/handoff/2026-09-07-workbuddy-round3-code-review-handoff.md)。
+> **前序代码审查（2026-09-08，基线 9cd782e）**：[`代码缺陷与重构 handoff`](docs/handoff/2026-09-08-code-review-bugs-and-refactor-handoff.md)。
+>
+> **最新交接文档**：[`docs/handoff/2026-09-09-code-review-defects-closure-and-session-model-handoff.md`](docs/handoff/2026-09-09-code-review-defects-closure-and-session-model-handoff.md) — 2026-09-09 缺陷闭环与期货会话模型收敛交接文档（最新）。
 
 ## 项目定位
 

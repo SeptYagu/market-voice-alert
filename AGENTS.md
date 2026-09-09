@@ -5,7 +5,9 @@
 股票期货实时监控助手 v2 - 单页 Web 应用
 
 **新窗口速读入口**：
-- [`docs/handoff/2026-09-07-workbuddy-round4-code-review-handoff.md`](docs/handoff/2026-09-07-workbuddy-round4-code-review-handoff.md) — 2026-09-07 WorkBuddy 第四轮代码审查交接文档：最新提交 a91927c 核验 + 整体复审 round-4（0 Critical / 0 Major / 2 Minor 遗留）（最新）
+- [`docs/handoff/2026-09-09-code-review-defects-closure-and-session-model-handoff.md`](docs/handoff/2026-09-09-code-review-defects-closure-and-session-model-handoff.md) — 2026-09-09 缺陷闭环与期货会话模型收敛交接文档（最新）
+- [`docs/handoff/2026-09-08-r1-r7-t1-t2-fixed-handoff.md`](docs/handoff/2026-09-08-r1-r7-t1-t2-fixed-handoff.md) — 2026-09-08 R1-R7 与 T1/T2 修复闭环交接文档
+- [`docs/handoff/2026-09-07-workbuddy-round4-code-review-handoff.md`](docs/handoff/2026-09-07-workbuddy-round4-code-review-handoff.md) — 2026-09-07 WorkBuddy 第四轮代码审查交接文档：最新提交 a91927c 核验 + 整体复审 round-4（0 Critical / 0 Major / 2 Minor 遗留）
 - [`docs/handoff/2026-09-07-workbuddy-round3-code-review-handoff.md`](docs/handoff/2026-09-07-workbuddy-round3-code-review-handoff.md) — 2026-09-07 WorkBuddy 第三轮代码审查交接文档：最新提交核验 + 整体复审（0 Critical / 0 Major / 2 Minor）
 - [`docs/handoff/2026-09-05-workbuddy-round2-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-round2-code-review-defects-closure-handoff.md) — 2026-09-05 WorkBuddy 第二轮全量代码审查缺陷彻底闭环与控制器解耦交接文档
 - [`docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md`](docs/handoff/2026-09-05-workbuddy-code-review-defects-closure-handoff.md) — 2026-09-05 WorkBuddy 第一轮全量代码审查缺陷彻底闭环交接文档

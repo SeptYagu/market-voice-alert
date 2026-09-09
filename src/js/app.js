@@ -82,6 +82,7 @@ import {
   isVoiceAllowedInSession,
   normalizeSmartSchedule,
   isFuturesMarketOpen,
+  isFutureTrading,
   isLiveTradeDate
 } from './marketSession.js';
 
@@ -1211,9 +1212,11 @@ function isDataAutoRefreshAllowedNow() {
     ...(state.limitUp?.expandedCodes || []),
     ...(state.momentum?.expandedCodes || [])
   ];
-  const hasFutures = (state.watchList || []).some(isFutureCode) ||
-    expandedAnywhere.some(isFutureCode);
-  if (hasFutures && isFuturesMarketOpen(new Date(), dates)) {
+  const futureCodes = [
+    ...(state.watchList || []).filter(isFutureCode),
+    ...expandedAnywhere.filter(isFutureCode)
+  ];
+  if (futureCodes.length && isFuturesMarketOpen(new Date(), dates, futureCodes)) {
     return true;
   }
   const session = getDataRefreshSession();
@@ -1223,8 +1226,8 @@ function isDataAutoRefreshAllowedNow() {
 
 function isVoiceAllowedNow() {
   const dates = state.tradingDates || state.limitUp.tradingDates || [];
-  const hasSubscribedFutures = [...(state.subscribed || [])].some(isFutureCode);
-  if (hasSubscribedFutures && isFuturesMarketOpen(new Date(), dates)) {
+  const subscribedFutures = [...(state.subscribed || [])].filter(isFutureCode);
+  if (subscribedFutures.length && isFuturesMarketOpen(new Date(), dates, subscribedFutures)) {
     return true;
   }
   const smart = state.voice.smartSchedule || DEFAULT_SMART_SCHEDULE;
@@ -1244,7 +1247,14 @@ function speakSubscribed() {
   const volume = clampVolume(state.voice.volume) / 100;
   const fields = state.voice.fields;
   const fieldsOrder = state.voice.fieldsOrder;
+  const dates = state.tradingDates || state.limitUp.tradingDates || [];
+  const stockAllowed = isVoiceAllowedInSession(getVoiceSession(), state.voice.smartSchedule || DEFAULT_SMART_SCHEDULE);
   for (const code of state.subscribed) {
+    if (isFutureCode(code)) {
+      if (!isFutureTrading(code, new Date(), dates)) continue;
+    } else {
+      if (!stockAllowed) continue;
+    }
     const q = state.quotes.get(code);
     if (!q) continue;
     // Dedup: skip codes whose price AND changePercent are unchanged since the
@@ -1349,18 +1359,25 @@ function applyVoiceSchedule() {
   // isVoiceAllowedNow）共用同一允许策略。存在正在交易的已订阅合约（如
   // 期货夜盘）时，股票 after-close 会话不得全局停用语音；只有当
   // isVoiceAllowedNow 也判定不允许时才执行暂停/自动关闭。
+  const prevAllowed = state.voiceLastAllowed !== undefined && state.voiceLastAllowed !== null
+    ? state.voiceLastAllowed
+    : state.voice.enabled;
   const allowed = isVoiceAllowedNow();
+  state.voiceLastAllowed = allowed;
 
   if (state.voice.enabled && !allowed) {
     stopVoiceTimer();
     ttsCancel();
     // Announce the scheduled pause itself (e.g. trading -> lunch / after-close).
-    const notice = getSessionTransitionNotice(prevSession, session, smart);
+    let notice = getSessionTransitionNotice(prevSession, session, smart);
+    if (!notice && prevAllowed && smart.autoStopAfterClose) {
+      notice = '已收盘';
+    }
     if (notice && isSpeechSupported()) {
       ttsSpeak(notice, { volume: clampVolume(state.voice.volume) / 100 });
     }
     state.voicePausedBySchedule = session === 'lunch' || session === 'pre-open' || session === 'closed';
-    if (session === 'after-close' && smart.autoStopAfterClose) {
+    if ((session === 'after-close' || prevAllowed) && smart.autoStopAfterClose) {
       state.voice = { ...state.voice, enabled: false };
       patchVoiceSettings({ enabled: false });
       state.voicePausedBySchedule = false;

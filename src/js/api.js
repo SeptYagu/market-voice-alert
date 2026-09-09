@@ -460,7 +460,7 @@ export function fetchKline(code, opts = {}) {
           return _fetchKlineFromNetwork(code, period, undefined);
         })
         : await _fetchKlineFromNetwork(code, period, undefined);
-      if (data && !noCache) {
+      if (data && data.items && data.items.length) {
         klineCacheSet(code, period, data);
         emitKlineUpdated(code, period, data);
       }

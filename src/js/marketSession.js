@@ -1,4 +1,4 @@
-import { getBeijingClockParts, getBeijingDate, shiftCalendarDate } from './time.js';
+import { getBeijingClockParts, getBeijingDate } from './time.js';
 import { isTradingDate } from './tradeCalendar.js';
 
 export { getBeijingDate };
@@ -64,60 +64,19 @@ export function isAutoRefreshAllowedInSession(session, smartSchedule) {
   return false;
 }
 
-export function isFuturesMarketOpen(now = new Date(), tradingDates = []) {
-  const clock = getBeijingClockParts(now);
-  const timeMin = clock.hour * 60 + clock.minute;
-  const beijingToday = getBeijingDate(now);
-  const beijingDate = new Date(Date.UTC(clock.year, clock.month - 1, clock.day, 12, 0, 0));
-  const beijingDayOfWeek = beijingDate.getUTCDay();
-  const isWeekend = beijingDayOfWeek === 0 || beijingDayOfWeek === 6;
-  const hasCalendar = Array.isArray(tradingDates) && tradingDates.length > 0;
-  const isTradingDay = hasCalendar ? tradingDates.includes(beijingToday) : !isWeekend;
+import {
+  isFutureTrading,
+  isAnyFutureTrading,
+  isFuturesMarketOpenFallback
+} from './futures/session.js';
 
-  // 1. 日盘：08:55 - 11:30, 13:00 - 15:15
-  if (isTradingDay && ((timeMin >= 8 * 60 + 55 && timeMin <= 11 * 60 + 30) || (timeMin >= 13 * 60 && timeMin <= 15 * 60 + 15))) {
-    return true;
+export { isFutureTrading, isAnyFutureTrading };
+
+export function isFuturesMarketOpen(now = new Date(), tradingDates = [], codes = []) {
+  if (Array.isArray(codes) && codes.length > 0) {
+    return isAnyFutureTrading(codes, now, tradingDates);
   }
-
-  // 2. 当晚夜盘：20:55 - 24:00 (周一至周五工作日)
-  if (isTradingDay && beijingDayOfWeek >= 1 && beijingDayOfWeek <= 5 && timeMin >= 20 * 60 + 55 && timeMin < 24 * 60) {
-    if (hasCalendar) {
-      const idx = tradingDates.indexOf(beijingToday);
-      if (idx !== -1 && idx < tradingDates.length - 1) {
-        const nextTradeDate = tradingDates[idx + 1];
-        const nextDayOffset = beijingDayOfWeek === 5 ? 3 : 1;
-        const expectedNextDate = shiftCalendarDate(beijingToday, nextDayOffset);
-        if (nextTradeDate !== expectedNextDate) {
-          // 节前最后一个交易日夜盘不交易
-          return false;
-        }
-      }
-    }
-    return true;
-  }
-
-  // 3. 次日凌晨跨午夜夜盘：00:00 - 02:30 (周二至周六凌晨)
-  if (beijingDayOfWeek >= 2 && beijingDayOfWeek <= 6 && timeMin <= 2 * 60 + 30) {
-    if (hasCalendar) {
-      const prevCalendarDay = shiftCalendarDate(beijingToday, -1);
-      if (!tradingDates.includes(prevCalendarDay)) {
-        return false;
-      }
-      const prevDateObj = new Date(Date.UTC(clock.year, clock.month - 1, clock.day - 1, 12, 0, 0));
-      const prevDow = prevDateObj.getUTCDay();
-      const prevIdx = tradingDates.indexOf(prevCalendarDay);
-      if (prevIdx !== -1 && prevIdx < tradingDates.length - 1) {
-        const nextOfPrev = tradingDates[prevIdx + 1];
-        const expectedNextOfPrev = shiftCalendarDate(prevCalendarDay, prevDow === 5 ? 3 : 1);
-        if (nextOfPrev !== expectedNextOfPrev) {
-          return false;
-        }
-      }
-    }
-    return true;
-  }
-
-  return false;
+  return isFuturesMarketOpenFallback(now, tradingDates);
 }
 
 export function isLiveTradeDate(selectedDate, isFuture = false, now = new Date(), _tradingDates = []) {
