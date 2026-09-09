@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { getOrRefresh, cachePath } from './cacheStore.js';
 import { fetchAktoolsSpot, fetchTencentSpot, isAStockCode } from './marketData.js';
+import { fetchSinaSpot } from './sinaSpotService.js';
 
 const SPOT_TTL_MS = 30 * 1000;
 
@@ -54,10 +55,17 @@ export async function getCachedSpotLatest({ signal } = {}) {
           return {
             items,
             count: items.length,
+            universeComplete: true,
+            universeSource: 'full-market-snapshot',
             source: 'aktools-stock_zh_a_spot_em'
           };
         } catch (aktoolsError) {
           if (aktoolsError && aktoolsError.name === 'AbortError') throw aktoolsError;
+          try {
+            return await fetchSinaSpot(signal);
+          } catch (sinaError) {
+            if (signal?.aborted) throw sinaError;
+          }
           const seeds = await getKlineCacheUniverse();
           if (!seeds.length) throw aktoolsError;
           const snapshot = await fetchTencentSpot(seeds.map((item) => item.code), signal);
@@ -66,6 +74,8 @@ export async function getCachedSpotLatest({ signal } = {}) {
             items: snapshot.items,
             count: snapshot.items.length,
             source: 'tencent-batch-quotes',
+            universeComplete: false,
+            universeSource: 'local-cache-seeds',
             universeStats: snapshot.stats,
             upstreamError: aktoolsError && aktoolsError.message ? aktoolsError.message : String(aktoolsError)
           };

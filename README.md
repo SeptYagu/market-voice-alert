@@ -56,6 +56,22 @@ npm run server
 
 生产服务默认端口为 `3001`，可用 `PORT` 和 `HOST` 环境变量调整。服务器仍需要能访问 AKTools 服务。
 
+## VPS 日志与远程排障
+
+线上日志可直接用一行命令抓取，供 AI 或人工排查，无需进入 VPS：
+
+```bash
+curl -fsS --max-time 15 https://market.yagu.ddns-ip.net/api/cache/diagnostics
+```
+
+Windows PowerShell 使用 `curl.exe` 替代 `curl`。浏览器也可打开[运行日志页面](https://market.yagu.ddns-ip.net/logs.html)，按来源、级别筛选或导出 JSON。
+
+先检查 `version` 是否为预期提交，再查看 `entries` 中的接口位置、错误码、时间和次数；`persistenceError` 应为 `false`。日志仅提供公开诊断摘要，不包含原始报错全文或系统日志。上游超时可能被备用数据源恢复，需结合业务接口的 `ok`、`stale`、数据覆盖范围判断，不能只看错误数量。浏览器上报是未认证线索。
+
+VPS 已配置 Git 自动更新：推送后等待 **200 秒**，重新抓取版本并刷新页面验证。保留最近 7 天、最多 500 组日志，更新时需保留 `data/cache` 目录。[完整字段与覆盖边界](docs/diagnostics.md)；[2026-09-09 线上排查记录](docs/handoff/2026-09-09-vps-diagnostics-investigation.md)。
+
+发现线上问题时，优先在本机实际调用同一接口复现；本机能复现就先在本机排查与修复，无需先索取 VPS 运行细节。全市场快照可用 `npm run test:spot-live` 进行真实联网验证，使用独立临时缓存，不会启动全市场 K 线扫描。当前回退顺序为 AKTools 东财快照 → 新浪完整分页快照 → 本机缓存名单的腾讯查询；最后一种仅为部分覆盖，不能代表全市场。
+
 ## 常用命令
 
 ```bash

@@ -2,6 +2,10 @@
 
 ## 2026-09-09 VPS 远程诊断
 
+本轮完整 CI：721 单测、62 E2E、lint/build 通过；独立 `test:spot-live` 约 14.9 秒恢复 5549 个有效快照。真实本机 HTTP 500 已复现并读取异常栈。
+
+线上排查确认 AKTools 全市场快照 HTTP 500，缓存名单回退仅覆盖 33 只股票却被标为 complete。本机复现东财 RemoteDisconnected，已接入新浪完整分页快照回退，并校验全量计数、缺页与重复代码；本机生产 API 实测 5559 个名单、5549 个有效快照、沪深北全覆盖。保留部分覆盖警告、旧缓存纠正和启动补扫。见 [排查证据与边界](docs/handoff/2026-09-09-vps-diagnostics-investigation.md)。README 已加入抓取方法与“先本机复现”工作流。
+
 新增 `/api/cache/diagnostics` 公共结构化 JSON 接口和独立 `/logs.html` 页面，支持一行 curl 抓取、来源/级别筛选及导出。采集 Node/API/上游和浏览器异常摘要；白名单字段防止公开任意敏感文本，7 天 / 500 组有界持久化。详见 [诊断接口与覆盖边界](docs/diagnostics.md)。
 
 验证：712 单测、61 E2E、lint/build 通过；随后版本字段、导航入口和静态缓存策略调整再次通过 712 单测、8 项诊断/导航 E2E、lint/build。生产后端提供日志页面的截图检查通过。

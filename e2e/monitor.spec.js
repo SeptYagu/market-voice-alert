@@ -74,6 +74,20 @@ test.describe('监控页', () => {
     await expect(page.locator('.momentum-actions')).not.toContainText('错误:', { timeout: DEFAULT_TIMEOUT });
   });
 
+  test('部分股票池扫描保留结果并显示覆盖警告', async ({ page }) => {
+    await page.route('**/api/cache/momentum/ten-day**', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, data: {
+        status: 'partial', universeComplete: false, universeSize: 33, scanned: 33,
+        message: '全市场股票名单不可用，仅扫描本机缓存中的 33 只股票，不能代表全市场结果',
+        items: [{ code: 'sh600519', name: '贵州茅台', gainPercent: 48.5, price: 2000 }]
+      } })
+    }));
+    await page.goto('/');
+    await page.getByRole('button', { name: '扫描', exact: true }).click();
+    await expect(page.locator('.momentum-actions')).toContainText('不能代表全市场结果');
+    await expect(page.locator('tr[data-momentum-code="sh600519"]')).toBeVisible();
+  });
+
   test('输入期货代码（如 rb2510）→ 表格出现期货行并显示持仓量', async ({ page }) => {
     await page.goto('http://127.0.0.1:5173/');
     await page.fill('#code-input', 'rb2510');
@@ -127,4 +141,3 @@ test.describe('监控页', () => {
     await expect(host.locator('canvas').first()).toBeVisible({ timeout: DEFAULT_TIMEOUT });
   });
 });
-

@@ -13,6 +13,20 @@ import {
 
 export { computeTenDayMomentum };
 
+// Cached K-line directories are a watch-history subset, not a market universe.
+// Also correct pre-metadata cached results at the API boundary after deployment.
+export function normalizeMomentumCoverage(data) {
+  if (!data || (data.universeComplete !== false && data.spotSource !== 'tencent-batch-quotes')) return data;
+  const warning = `全市场股票名单不可用，仅扫描本机缓存中的 ${Number(data.universeSize) || 0} 只股票，不能代表全市场结果`;
+  return {
+    ...data,
+    universeComplete: false,
+    universeSource: 'local-cache-seeds',
+    status: data.status === 'complete' ? 'partial' : data.status,
+    message: data.message?.includes(warning) ? data.message : [warning, data.message].filter(Boolean).join('；')
+  };
+}
+
 const MOMENTUM_TTL_MS = 5 * 60 * 1000;
 const CONCURRENCY = 32;
 const SCHEDULED_SCAN_TIMES = Object.freeze([
@@ -181,6 +195,11 @@ function emptyMomentumData(dateKey, threshold, message) {
 
 async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt, commit }) {
   const spotResult = await getCachedSpotLatest({ signal });
+  const coverage = {
+    spotSource: spotResult?.data?.source || '',
+    universeComplete: spotResult?.data?.universeComplete,
+    universeSource: spotResult?.data?.universeSource
+  };
   const universe = spotResult && spotResult.data && Array.isArray(spotResult.data.items)
     ? spotResult.data.items
     : [];
@@ -205,11 +224,13 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt, 
   const batchUniverseFailures = Array.isArray(universeStats.failedBatches)
     ? universeStats.failedBatches.reduce((sum, batch) => sum + (Number(batch.count) || 0), 0)
     : 0;
-  const universeRefreshFailures = batchUniverseFailures + (spotResult && spotResult.stale ? universe.length : 0);
+  // missingCount already includes entire failed batches; count those only once.
+  const universeRefreshFailures = Math.max(batchUniverseFailures, Number(universeStats.missingCount) || 0) + (spotResult && spotResult.stale ? universe.length : 0);
   const liveDate = spotResult && spotResult.stale ? '' : scanDates.liveDate;
   const scanned = { count: 0 };
   let progressWrite = Promise.resolve();
   await commit(() => writeMomentumProgress(parts, {
+    ...coverage,
     status: 'scanning',
     date: dateKey,
     threshold,
@@ -268,6 +289,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt, 
       scanned.count += 1;
       if (scanned.count > 0 && scanned.count % 100 === 0) {
         const progress = {
+          ...coverage,
           status: 'scanning',
           date: dateKey,
           threshold,
@@ -301,7 +323,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt, 
     .sort((a, b) => (b.gainPercent || 0) - (a.gainPercent || 0));
   const totalFailures = refreshFailures + universeRefreshFailures;
   const isComplete = totalFailures === 0;
-  return {
+  return normalizeMomentumCoverage({
     status: isComplete ? 'complete' : 'partial',
     date: dateKey,
     threshold,
@@ -313,7 +335,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt, 
     freshUniverseSize: endDateCounts.get(latestMarketDate) || 0,
     refreshFailures,
     universeRefreshFailures,
-    spotSource: spotResult && spotResult.data ? spotResult.data.source : '',
+    ...coverage,
     universeStats,
     sourceStats,
     failureReasons,
@@ -323,7 +345,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt, 
       ? `${refreshFailures} 只股票的日 K 刷新失败，${universeRefreshFailures} 只股票的实时快照缺失；最新交易日覆盖 ${endDateCounts.get(latestMarketDate) || 0}/${universe.length}，仅展示有效结果`
       : '',
     items: freshFound
-  };
+  });
 }
 
 export async function getCachedTenDayMomentum({ date, threshold: rawThreshold, signal: _signal } = {}) {
@@ -366,7 +388,7 @@ export async function getCachedTenDayMomentum({ date, threshold: rawThreshold, s
       stale: !fresh,
       generatedAt: cached.generatedAt,
       ttlMs: cached.ttlMs || MOMENTUM_TTL_MS,
-      data: cached.data
+      data: normalizeMomentumCoverage(cached.data)
     };
   }
 
@@ -390,8 +412,8 @@ export function startTenDayMomentumScan({ date, threshold: rawThreshold, reason 
         signal: job.signal, jobStartedAt: job.startedAt, commit: job.commit });
       const completed = { ...data, reason, jobId: job.id };
       await job.commit(() => writeMomentumProgress(parts, completed));
-      if (completed.status === 'complete' || (completed.status === 'partial' &&
-          completed.scanned >= 100 && (completed.refreshFailures || 0) / completed.scanned <= 0.03)) {
+      if (completed.universeComplete !== false && (completed.status === 'complete' || (completed.status === 'partial' &&
+          completed.scanned >= 100 && (completed.refreshFailures || 0) / completed.scanned <= 0.03))) {
         await job.commit(() => writeMomentumProgress(successCacheParts(dateKey, threshold), completed));
       }
       return data;
@@ -416,7 +438,8 @@ function ensureStartupMomentumScan(logger) {
   const parts = cacheParts(dateKey, threshold);
 
   return readCache(parts, { skipTouch: true }).then((cached) => {
-    if (cached && cached.data && Array.isArray(cached.data.items) && cached.data.items.length) {
+    if (cached && cached.data && normalizeMomentumCoverage(cached.data).universeComplete !== false &&
+        Array.isArray(cached.data.items) && cached.data.items.length) {
       if (logger && logger.info) {
         logger.info(`momentum shared cache present for ${dateKey}, skipping startup scan`);
       }

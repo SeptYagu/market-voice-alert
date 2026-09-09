@@ -19,7 +19,8 @@
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
     "ci": "npm run lint && npm run test && npm run e2e && npm run build",
-    "test:integration": "node scripts/run-tests.mjs --integration"
+    "test:integration": "node scripts/run-tests.mjs --integration",
+    "test:spot-live": "node scripts/spot-smoke.mjs"
   },
   "dependencies": {
     "lightweight-charts": "^4.2.0"

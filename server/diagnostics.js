@@ -20,6 +20,7 @@ export function safeLocation(value) {
     if (url.hostname.endsWith('.eastmoney.com')) return 'eastmoney';
     if (url.hostname.endsWith('.gtimg.cn')) return 'tencent';
     if (url.hostname.endsWith('.sinajs.cn')) return 'sina';
+    if (url.hostname === 'vip.stock.finance.sina.com.cn') return 'sina';
     if (url.port === '8888') return 'aktools';
     const path = url.pathname;
     if (cacheRoutes.some(route => path === `/api/cache/${route}`)) return path;
