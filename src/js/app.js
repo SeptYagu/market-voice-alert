@@ -1345,7 +1345,11 @@ function applyVoiceSchedule() {
   const session = getVoiceSession();
   const prevSession = state.voiceLastSession;
   state.voiceLastSession = session;
-  const allowed = isVoiceAllowedInSession(session, smart);
+  // R2: 调度检查必须与播报入口（speakSubscribed / startVoiceTimer 所用的
+  // isVoiceAllowedNow）共用同一允许策略。存在正在交易的已订阅合约（如
+  // 期货夜盘）时，股票 after-close 会话不得全局停用语音；只有当
+  // isVoiceAllowedNow 也判定不允许时才执行暂停/自动关闭。
+  const allowed = isVoiceAllowedNow();
 
   if (state.voice.enabled && !allowed) {
     stopVoiceTimer();

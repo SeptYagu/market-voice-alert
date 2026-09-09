@@ -1,5 +1,5 @@
 import { parseFutureInput } from './contractCatalog.js';
-import { getBeijingClockParts, getBeijingDate } from '../../src/js/time.js';
+import { getBeijingClockParts, getBeijingDate, shiftCalendarDate } from '../../src/js/time.js';
 import { resolveLatestTradingDate, shiftTradingDate } from '../../src/js/tradeCalendar.js';
 
 /**
@@ -80,13 +80,18 @@ export function getFuturesSession(instrument, now = new Date(), tradingDates = [
     if (nightEnd === '01:00') endMin = 25 * 60;
     else if (nightEnd === '02:30') endMin = 26 * 60 + 30;
 
-    // A. 当晚 20:55 - 24:00: 仅在周一至周五的交易日开市
+    // A. 当晚 20:55 - 收盘点(≤24:00): 仅在周一至周五的交易日开市，且次日
+    // 必须是相邻的自然日交易日（节前最后一夜不开夜盘）；收盘点以品种
+    // 元数据 nightSessionEnd 为准（如 RB0 23:00 之后不再交易）。
     if (isTradingDay && beijingDayOfWeek >= 1 && beijingDayOfWeek <= 5) {
       const nightTradingDay = shiftTradingDate(beijingToday, 1, tradingDates);
-      if (timeMin >= 20 * 60 + 55 && timeMin < 21 * 60) {
-        return { isTrading: false, sessionKind: 'night', sessionStatus: 'auction', tradingDay: nightTradingDay };
-      }
-      if (timeMin >= 21 * 60 && timeMin < 24 * 60) {
+      const expectedNextCalendarDay = shiftCalendarDate(beijingToday, beijingDayOfWeek === 5 ? 3 : 1);
+      const nightAllowed = nightTradingDay === expectedNextCalendarDay;
+      const endMinCapped = Math.min(endMin, 24 * 60);
+      if (nightAllowed && timeMin >= 20 * 60 + 55 && timeMin < endMinCapped) {
+        if (timeMin < 21 * 60) {
+          return { isTrading: false, sessionKind: 'night', sessionStatus: 'auction', tradingDay: nightTradingDay };
+        }
         return { isTrading: true, sessionKind: 'night', sessionStatus: 'trading', tradingDay: nightTradingDay };
       }
     }
@@ -95,16 +100,27 @@ export function getFuturesSession(instrument, now = new Date(), tradingDates = [
     if (timeMin < 3 * 60) {
       const currentMinAcross = 24 * 60 + timeMin;
       if (currentMinAcross <= endMin) {
-        // 周二至周五凌晨：周一至周四夜盘续段，归属当天
+        // 续段归属：周二至周五凌晨归属当天；周六凌晨归属下一个交易日（下周一）。
+        // 周日、周一凌晨前一晚无夜盘，休市。
+        let targetTradingDay = null;
         if (beijingDayOfWeek >= 2 && beijingDayOfWeek <= 5) {
-          return { isTrading: true, sessionKind: 'night', sessionStatus: 'trading', tradingDay: beijingToday };
+          targetTradingDay = beijingToday;
+        } else if (beijingDayOfWeek === 6) {
+          targetTradingDay = shiftTradingDate(beijingToday, 1, tradingDates);
         }
-        // 周六凌晨：周五夜盘续段，归属下周一（下一个交易日）
-        if (beijingDayOfWeek === 6) {
-          const satNextTradingDay = shiftTradingDate(beijingToday, 1, tradingDates);
-          return { isTrading: true, sessionKind: 'night', sessionStatus: 'trading', tradingDay: satNextTradingDay };
+        if (targetTradingDay) {
+          // 前一自然日必须是交易日，且其夜盘归属目标交易日，否则休市
+          // （覆盖节假日前夜、周末凌晨等日历约束）。
+          const prevCalendarDay = shiftCalendarDate(beijingToday, -1);
+          const prevDateObj = new Date(Date.UTC(clock.year, clock.month - 1, clock.day - 1, 12, 0, 0));
+          const prevDow = prevDateObj.getUTCDay();
+          const prevIsTradingDay = hasCalendar
+            ? tradingDates.includes(prevCalendarDay)
+            : (prevDow >= 1 && prevDow <= 5);
+          if (prevIsTradingDay && shiftTradingDate(prevCalendarDay, 1, tradingDates) === targetTradingDay) {
+            return { isTrading: true, sessionKind: 'night', sessionStatus: 'trading', tradingDay: targetTradingDay };
+          }
         }
-        // 周日、周一凌晨：前一晚无夜盘，均为休市
       }
     }
   }
