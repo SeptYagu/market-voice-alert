@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'node:url';
+import { recordDiagnostic, errorDetails } from './diagnostics.js';
 import { resolve, sep } from 'node:path';
 export const DEFAULT_PORT = 3001;
 export const CACHE_ROOT = process.env.MARKET_VOICE_CACHE_ROOT
@@ -57,8 +58,11 @@ export async function fetchWithTimeout(url, options = {}) {
 
   const { timeoutMs: _timeoutMs, signal: _signal, ...fetchOptions } = options;
   try {
-    return await fetch(url, { ...fetchOptions, signal });
+    const response = await fetch(url, { ...fetchOptions, signal });
+    if (!response.ok) recordDiagnostic({ source: 'upstream', kind: 'http', status: response.status, location: url });
+    return response;
   } catch (err) {
+    if (!upstreamSignal?.aborted) recordDiagnostic({ source: 'upstream', kind: timeoutSignal.aborted ? 'timeout' : 'network', location: url, ...errorDetails(err) });
     if (err && (err.name === 'TimeoutError' || (signal && signal.reason && signal.reason.name === 'TimeoutError'))) {
       const timeoutError = new Error(`Upstream timeout after ${timeoutMs}ms`);
       timeoutError.name = 'TimeoutError';

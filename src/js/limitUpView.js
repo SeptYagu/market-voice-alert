@@ -559,7 +559,8 @@ function buildHeader() {
       'nav',
       { class: 'app-nav', id: 'app-nav' },
       el('a', { href: '#/', class: 'nav-link' }, '监控'),
-      el('a', { href: '#/limit-up', class: 'nav-link active' }, '涨停看板')
+      el('a', { href: '#/limit-up', class: 'nav-link active' }, '涨停看板'),
+      el('a', { href: '/logs.html', class: 'nav-link' }, '运行日志')
     )
   );
 }

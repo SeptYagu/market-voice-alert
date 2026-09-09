@@ -71,7 +71,8 @@ export function renderHeaderView(options = {}) {
       'nav',
       { class: 'app-nav', id: 'app-nav' },
       el('a', { href: '#/', class: 'nav-link', 'data-route': '#/' }, '监控'),
-      el('a', { href: '#/limit-up', class: 'nav-link', 'data-route': '#/limit-up' }, '涨停看板')
+      el('a', { href: '#/limit-up', class: 'nav-link', 'data-route': '#/limit-up' }, '涨停看板'),
+      el('a', { href: '/logs.html', class: 'nav-link' }, '运行日志')
     ),
     el(
       'div',

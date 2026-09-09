@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { handleDiagnostics, recordDiagnostic, startDiagnostics, errorDetails } from './diagnostics.js';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -39,6 +40,11 @@ function routeNotFound(res) {
 }
 
 export async function handleCacheRequest(req, res) {
+  if (req.url.split('?')[0] === '/api/cache/diagnostics') {
+    await handleDiagnostics(req, res);
+    return;
+  }
+  observeDiagnosticRequest(req, res);
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'access-control-allow-origin': '*',
@@ -305,6 +311,7 @@ export async function handleCacheRequest(req, res) {
     routeNotFound(res);
   } catch (err) {
     const status = err && err.statusCode ? err.statusCode : 500;
+    recordDiagnostic({ source: 'server', kind: 'runtime', location: path, ...errorDetails(err) });
     jsonResponse(res, status, errorEnvelope(err && err.message ? err.message : String(err)));
   }
 }
@@ -341,7 +348,8 @@ async function sendStaticFile(req, res, filePath, { fallbackToIndex = true } = {
     const ext = extname(target).toLowerCase();
     const isIndex = ext === '.html';
     const isHashedAsset = target.includes('/assets/') || target.includes('\\assets\\');
-    const cacheControl = isIndex
+    const isDiagnosticAsset = /(?:^|[/\\])(?:logs|diagnostics-client)\.js$/.test(target);
+    const cacheControl = isIndex || isDiagnosticAsset
       ? 'no-store'
       : (isHashedAsset ? 'public, max-age=31536000, immutable' : 'public, max-age=3600');
     res.writeHead(200, {
@@ -386,6 +394,7 @@ async function handleAppRequest(req, res) {
 
 export function createAppServer() {
   return http.createServer((req, res) => {
+    observeDiagnosticRequest(req, res);
     handleAppRequest(req, res).catch((err) => {
       if (res && !res.headersSent && !res.destroyed) {
         try {
@@ -399,8 +408,17 @@ export function createAppServer() {
 }
 
 export function startBackgroundJobs() {
+  startDiagnostics();
   if (process.env.DISABLE_BACKGROUND_JOBS === '1') return;
   startMomentumScheduler();
+}
+
+export function observeDiagnosticRequest(req, res) {
+  if (res.__diagnosticObserved || req.url.split('?')[0] === '/api/cache/diagnostics') return;
+  res.__diagnosticObserved = true;
+  res.once('finish', () => {
+    if (res.statusCode >= 400) recordDiagnostic({ source: 'server', kind: 'http', status: res.statusCode, location: req.url });
+  });
 }
 
 export function startServer({

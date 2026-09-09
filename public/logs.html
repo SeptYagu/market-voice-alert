@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>运行日志 · 股票期货监控助手</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui,sans-serif; }
+    body { margin: 0 auto; padding: 24px; max-width: 1200px; background: light-dark(#f5f0e6,#1e1e2e); color: light-dark(#333,#e8e8e8); }
+    a { color: light-dark(#92511e,#efbe89); } h1 { margin-bottom: 8px; }
+    p { line-height: 1.7; } .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 24px 0; }
+    button, select, input { font: inherit; padding: 8px 12px; border: 1px solid #8888; border-radius: 6px; }
+    .table-wrap { overflow-x: auto; border: 1px solid #8885; border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; background: light-dark(#fff,#292939); }
+    th,td { text-align: left; padding: 12px; border-bottom: 1px solid #8884; white-space: nowrap; }
+    th { font-weight: 600; } #status { min-height: 1.7em; } small { opacity: .75; }
+  </style>
+  <script defer src="/logs.js"></script>
+</head>
+<body>
+  <a href="/#/">← 返回监控</a>
+  <h1>运行日志</h1>
+  <p>集中查看服务器、上游数据源及浏览器上报的异常。保留最近 7 天、最多 500 组记录；相邻相同错误在一分钟内合并计数。</p>
+  <small>公开诊断摘要不包含原始报错文本、堆栈、查询参数或身份信息。浏览器记录来自未认证客户端，仅作线索。Nginx、操作系统和独立 AKTools 进程的内部日志不在此页；其接口故障可在上游记录中查看。突然崩溃可能丢失最后 5 秒记录。</small>
+  <div class="controls">
+    <label>来源 <select id="source"><option value="">全部来源</option><option value="server">服务器</option><option value="upstream">上游数据源</option><option value="browser">浏览器（客户端上报）</option></select></label>
+    <label>级别 <select id="level"><option value="">全部级别</option><option value="error">错误</option><option value="warning">警告</option><option value="info">信息</option></select></label>
+    <label>筛选 <input id="search" type="search" placeholder="接口、状态码或类别"></label>
+    <button id="refresh">刷新</button><button id="export">导出诊断 JSON</button>
+    <label><input id="auto" type="checkbox" checked>每 10 秒刷新</label>
+  </div>
+  <p id="status" role="status">正在读取日志…</p>
+  <div class="table-wrap"><table><thead><tr><th>最近时间</th><th>来源</th><th>级别</th><th>类别</th><th>接口 / 位置</th><th>HTTP</th><th>次数</th></tr></thead><tbody id="entries"></tbody></table></div>
+</body>
+</html>
