@@ -666,7 +666,9 @@ export function createLimitUpController(appContext) {
     inst._intradayVisibleRange = null;
     if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
     rerenderLimitUpPage();
-    loadLimitUpKline(code);
+    // Force reload must bypass the kline cache, otherwise the "重新加载"
+    // button can serve the stale cached data it was meant to replace.
+    loadLimitUpKline(code, { force: true });
   }
 
   function _destroyLimitUpChart(code) {
@@ -681,8 +683,9 @@ export function createLimitUpController(appContext) {
     limitUpChartMgr.applyLiveTick(code, quoteOrPrice);
   }
 
-  function loadLimitUpKline(code) {
-    limitUpChartMgr.loadKline(code);
+  function loadLimitUpKline(code, options) {
+    // Pass through options (e.g. { force: true }) so callers can bypass caches.
+    limitUpChartMgr.loadKline(code, options);
   }
 
   return {

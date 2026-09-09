@@ -1252,7 +1252,16 @@ function speakSubscribed() {
     const { text, spoken } = formatQuoteSpeechDelta(q, state.voiceLastSpoken.get(code), fields, fieldsOrder);
     if (!text) continue;
     ttsSpeak(text, { volume });
-    if (spoken) state.voiceLastSpoken.set(code, spoken);
+    // Merge into the previous memory instead of replacing it: `spoken` only
+    // contains the fields announced THIS round, so a full replace would make
+    // later rounds think the untouched fields were never spoken and keep
+    // re-announcing them alternately.
+    if (spoken) {
+      state.voiceLastSpoken.set(code, {
+        ...state.voiceLastSpoken.get(code),
+        ...spoken
+      });
+    }
   }
 }
 

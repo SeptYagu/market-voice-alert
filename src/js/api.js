@@ -434,8 +434,11 @@ export function fetchKline(code, opts = {}) {
   }
   const key = `${code}|${period}`;
 
-  // 1. In-flight dedup: same (code, period) concurrent calls share one promise decoupled from caller signal
-  if (inflightKline.has(key)) {
+  // 1. In-flight dedup: same (code, period) concurrent calls share one promise decoupled from caller signal.
+  // A forced (noCache) request must NOT reuse a normal in-flight promise —
+  // the caller explicitly wants fresh data, and the in-flight call may be
+  // serving from the very cache being bypassed.
+  if (!noCache && inflightKline.has(key)) {
     return _attachCallerSignal(inflightKline.get(key), opts.signal);
   }
 
@@ -463,7 +466,10 @@ export function fetchKline(code, opts = {}) {
       }
       return data;
     } finally {
-      inflightKline.delete(key);
+      // Only remove our own entry: a concurrent request may have replaced it.
+      if (inflightKline.get(key) === p) {
+        inflightKline.delete(key);
+      }
     }
   })();
   inflightKline.set(key, p);
