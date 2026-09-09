@@ -129,10 +129,29 @@ export function createLimitUpController(appContext) {
 
     const lu = getLimitUpState();
     const items = lu.items || [];
-    const existingRows = groupsSection.querySelectorAll('tr[data-code]');
-    if (existingRows.length !== items.length) {
-      return false;
+
+    // Structural check BEFORE patching: group membership and per-group row
+    // order must match the freshly computed state. A quote-only change (e.g.
+    // a stock falling below the limit) can move it between groups or change
+    // sorting; patching just its cells would leave it in the wrong group with
+    // stale counts. Any mismatch bails out so the caller does a full rerender.
+    const domGroups = groupsSection.querySelectorAll('section.lu-group[data-group]');
+    const expectedGroups = lu.groups || [];
+    if (domGroups.length !== expectedGroups.length) return false;
+    let totalRows = 0;
+    for (let i = 0; i < expectedGroups.length; i++) {
+      const g = expectedGroups[i];
+      const sec = domGroups[i];
+      if (sec.getAttribute('data-group') !== g.key) return false;
+      const domRows = sec.querySelectorAll('tr[data-code]');
+      const gItems = g.items || [];
+      totalRows += gItems.length;
+      if (domRows.length !== gItems.length) return false;
+      for (let j = 0; j < gItems.length; j++) {
+        if (domRows[j].getAttribute('data-code') !== gItems[j].code) return false;
+      }
     }
+    if (totalRows !== items.length) return false;
     if (!items.length) {
       updateLimitUpStatusBar();
       return true;
