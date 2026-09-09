@@ -1,3 +1,4 @@
+import { createRequestScope } from '../services/requestScope.js';
 // 10 日强势股控制器（状态管理、扫描、图表与行情合并）
 import {
   renderMomentumSectionView,
@@ -32,7 +33,7 @@ export function createMomentumController(appContext) {
   // handleMomentumScan checks it before committing state, so a stale task
   // (aborted, stopped, or superseded by a newer scan) cannot clobber the
   // current task's loading/error/items or the poll timer.
-  let momentumScanGeneration = 0;
+  const scanScope = createRequestScope();
 
   function getMomentumState() {
     return getState().momentum;
@@ -109,7 +110,7 @@ export function createMomentumController(appContext) {
   function stopMomentumScan() {
     // Invalidate the current scan task BEFORE aborting so its catch/finally
     // (and any in-flight continuation) no longer count as current.
-    momentumScanGeneration += 1;
+    scanScope.cancel();
     if (momentumPollTimer) {
       clearTimeout(momentumPollTimer);
       momentumPollTimer = null;
@@ -157,10 +158,10 @@ export function createMomentumController(appContext) {
     if (mState.abort) {
       try { mState.abort.abort(); } catch { /* ignore */ }
     }
-    const abort = new AbortController();
+    const token = scanScope.begin();
+    const abort = token.controller;
     mState.abort = abort;
-    const generation = ++momentumScanGeneration;
-    const isCurrent = () => generation === momentumScanGeneration;
+    const isCurrent = () => scanScope.isCurrent(token);
     mState.loading = true;
     if (!options || options.poll !== true) mState.serverScanning = false;
     mState.message = null;
@@ -192,7 +193,7 @@ export function createMomentumController(appContext) {
           if (momentumPollTimer) clearTimeout(momentumPollTimer);
           momentumPollTimer = setTimeout(() => {
             momentumPollTimer = null;
-            if (generation === momentumScanGeneration && mState.serverScanning && !mState.loading) handleMomentumScan({ poll: true });
+            if (isCurrent() && mState.serverScanning && !mState.loading) handleMomentumScan({ poll: true });
           }, 5000);
           return;
         }
@@ -228,7 +229,7 @@ export function createMomentumController(appContext) {
         while (cursor < universe.length) {
           const idx = cursor;
           cursor += 1;
-          if (abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+          if (!isCurrent()) throw new DOMException('Aborted', 'AbortError');
           const candidate = universe[idx];
           try {
             const item = await scanMomentumCandidate(candidate, {

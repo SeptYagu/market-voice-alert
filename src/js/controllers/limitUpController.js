@@ -1,3 +1,4 @@
+import { createRequestScope } from '../services/requestScope.js';
 // 涨停看板控制器（状态、数据抓取、筛选排序与图表交互）
 import {
   fetchLimitUpList,
@@ -146,6 +147,7 @@ export function createLimitUpController(appContext) {
   } = appContext;
 
   let limitUpRootEl = null;
+  const listScope = createRequestScope();
 
   function getLimitUpState() {
     return getState().limitUp;
@@ -322,7 +324,8 @@ export function createLimitUpController(appContext) {
     }
     const requestSeq = lu.requestSeq + 1;
     lu.requestSeq = requestSeq;
-    const controller = new AbortController();
+    const token = listScope.begin();
+    const controller = token.controller;
     lu.abort = controller;
     lu.loading = true;
     lu.error = null;
@@ -336,7 +339,7 @@ export function createLimitUpController(appContext) {
         lu.selectedDate || getBeijingDate(),
         requestSeq
       );
-      if (requestSeq !== lu.requestSeq || lu.selectedDate !== date) return;
+      if (!listScope.isCurrent(token) || requestSeq !== lu.requestSeq || lu.selectedDate !== date) return;
       const forceRefresh = !!lu.forceRefreshOnce;
       lu.forceRefreshOnce = false;
       const rawItems = await fetchLimitUpList({
@@ -346,7 +349,7 @@ export function createLimitUpController(appContext) {
         includeBroken: true,
         forceRefresh
       });
-      if (requestSeq !== lu.requestSeq || lu.selectedDate !== date) return;
+      if (!listScope.isCurrent(token) || requestSeq !== lu.requestSeq || lu.selectedDate !== date) return;
       lu.lastUpdate = new Date();
       const updated = applyLimitUpFetchResult(lu, rawItems);
       Object.assign(lu, updated);
@@ -357,7 +360,7 @@ export function createLimitUpController(appContext) {
         enrichLimitUpItemsWithQuotes(rawItems, controller.signal)
           .then((quoteEnriched) => {
             const currentLu = getLimitUpState();
-            if (requestSeq !== currentLu.requestSeq || currentLu.selectedDate !== date) return;
+            if (!listScope.isCurrent(token) || requestSeq !== currentLu.requestSeq || currentLu.selectedDate !== date) return;
             const quoteMap = new Map(quoteEnriched.map((it) => [it.code, it]));
             currentLu.items = currentLu.items.map((it) => {
               const q = quoteMap.get(it.code);
@@ -385,11 +388,11 @@ export function createLimitUpController(appContext) {
         preloadKlineForCodes(rawItems.slice(0, 10).map((it) => it.code));
       }
     } catch (e) {
-      if (requestSeq === lu.requestSeq && e && e.name !== 'AbortError') {
+      if (listScope.isCurrent(token) && requestSeq === lu.requestSeq && e && e.name !== 'AbortError') {
         lu.error = e.message || String(e);
       }
     } finally {
-      if (requestSeq === lu.requestSeq) {
+      if (listScope.isCurrent(token) && requestSeq === lu.requestSeq) {
         if (lu.abort === controller) lu.abort = null;
         lu.loading = false;
         updateLimitUpStatusBar();
@@ -481,6 +484,7 @@ export function createLimitUpController(appContext) {
     closeAllLimitUpCharts();
     clearLimitUpMetadataCache();
     const lu = getLimitUpState();
+    listScope.cancel();
     lu.requestSeq += 1;
     if (lu.abort) {
       try { lu.abort.abort(); } catch { /* ignore */ }
@@ -541,6 +545,11 @@ export function createLimitUpController(appContext) {
     if (lu.timer) {
       clearInterval(lu.timer);
       lu.timer = null;
+    }
+    if (abort) {
+      listScope.cancel();
+      lu.requestSeq += 1;
+      lu.loading = false;
     }
     if (abort && lu.abort) {
       try { lu.abort.abort(); } catch { /* ignore */ }

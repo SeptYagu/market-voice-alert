@@ -12,7 +12,13 @@
 
 ## 待完成
 
-- B：共享 requestScope 迁移及服务端串行提交归属。
 - D：按 code/group 增量移动节点与图表保留、批量销毁。
 - E：monitorController 提取。
 - T1 与剩余验收：生产 parser/service fixtures、独立缓存、意外网络门禁、完整竞态/UI 回归。
+
+## B 请求归属
+
+- `requestScope` 的 begin/isCurrent/cancel 已接入图表 K 线/分时独立请求、动量扫描/轮询、涨停列表；涨停保留日期与 requestSeq 隔离，stop 使附属 enrichment 失效。
+- 图表 destroyAll 同时清理尚未挂载和仅分时实例；AbortSignal 已取消时也不能提交。
+- 服务端 `jobRegistry` 使用独立 jobId、替换前失效与按任务键串行提交。初始进度、批量进度、最终结果、success 缓存和错误结果均通过 commit 检查；已经进入写盘的旧写入先完成，新任务写入随后执行。
+- 固定时钟模拟十分钟替换，覆盖旧成功/进度/失败/清理与写盘中替换；真实图表覆盖周期/日期切换和销毁后迟到响应。完整 CI：702 单测、57 E2E、lint/build 通过。

@@ -1,3 +1,4 @@
+import { createJobRegistry } from './jobRegistry.js';
 import { readCache, writeCache } from './cacheStore.js';
 import { getKlineDataForMomentum } from './klineService.js';
 import { getCachedSpotLatest } from './spotService.js';
@@ -18,7 +19,8 @@ const SCHEDULED_SCAN_TIMES = Object.freeze([
   Object.freeze({ hour: 8, minute: 0, label: 'pre-open' }),
   Object.freeze({ hour: 15, minute: 5, label: 'after-close' })
 ]);
-const JOBS = new Map();
+const jobRegistry = createJobRegistry({ clock: nowMs });
+const JOBS = jobRegistry.jobs;
 let schedulerTimer = null;
 let schedulerStarted = false;
 
@@ -177,7 +179,7 @@ function emptyMomentumData(dateKey, threshold, message) {
   };
 }
 
-async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt }) {
+async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt, commit }) {
   const spotResult = await getCachedSpotLatest({ signal });
   const universe = spotResult && spotResult.data && Array.isArray(spotResult.data.items)
     ? spotResult.data.items
@@ -207,7 +209,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt }
   const liveDate = spotResult && spotResult.stale ? '' : scanDates.liveDate;
   const scanned = { count: 0 };
   let progressWrite = Promise.resolve();
-  await writeMomentumProgress(parts, {
+  await commit(() => writeMomentumProgress(parts, {
     status: 'scanning',
     date: dateKey,
     threshold,
@@ -216,7 +218,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt }
     universeSize: universe.length,
     scanned: 0,
     items: []
-  });
+  }));
   await mapLimit(universe, CONCURRENCY, async (candidate) => {
     if (!candidate || !/^(sh|sz|bj)\d{6}$/i.test(candidate.code)) return null;
     try {
@@ -285,7 +287,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt }
             .sort((a, b) => (b.gainPercent || 0) - (a.gainPercent || 0))
         };
         progressWrite = progressWrite
-          .then(() => writeMomentumProgress(parts, progress))
+          .then(() => commit(() => writeMomentumProgress(parts, progress)))
           .catch((e) => {
             console.warn(`writeMomentumProgress failed: ${e && e.message ? e.message : e}`);
           });
@@ -382,81 +384,30 @@ export function startTenDayMomentumScan({ date, threshold: rawThreshold, reason 
   const threshold = parsePositiveNumber(rawThreshold, DEFAULT_THRESHOLD);
   const parts = cacheParts(dateKey, threshold);
   const jobKey = `${dateKey}|${threshold}`;
-  if (JOBS.has(jobKey)) {
-    const existing = JOBS.get(jobKey);
-    if (existing && existing.startedAt && (nowMs() - existing.startedAt > 10 * 60 * 1000)) {
-      if (existing.controller) {
-        try { existing.controller.abort(); } catch { /* ignore */ }
-      }
-      JOBS.delete(jobKey);
-    } else if (existing && existing.promise) {
-      return existing.promise;
-    }
-  }
-
-  const controller = new AbortController();
-  const startedAt = nowMs();
-  const job = buildMomentum({
-    dateKey,
-    threshold,
-    parts,
-    signal: controller.signal,
-    jobStartedAt: startedAt
-  })
-    .then(async (data) => {
-      const completed = { ...data, reason };
-      await writeMomentumProgress(parts, completed);
-      if (completed.status === 'complete' || (completed.status === 'partial' && (completed.scanned >= 100 && (completed.refreshFailures || 0) / completed.scanned <= 0.03))) {
-        await writeMomentumProgress(successCacheParts(dateKey, threshold), completed);
+  return jobRegistry.start(jobKey, async (job) => {
+    try {
+      const data = await buildMomentum({ dateKey, threshold, parts,
+        signal: job.signal, jobStartedAt: job.startedAt, commit: job.commit });
+      const completed = { ...data, reason, jobId: job.id };
+      await job.commit(() => writeMomentumProgress(parts, completed));
+      if (completed.status === 'complete' || (completed.status === 'partial' &&
+          completed.scanned >= 100 && (completed.refreshFailures || 0) / completed.scanned <= 0.03)) {
+        await job.commit(() => writeMomentumProgress(successCacheParts(dateKey, threshold), completed));
       }
       return data;
-    })
-    .catch(async (err) => {
-      const isCurrentJob = () => JOBS.get(jobKey)?.promise === job;
-      if (!isCurrentJob()) {
-        return {
-          status: 'error',
-          date: dateKey,
-          threshold,
-          error: err && err.message ? err.message : String(err)
-        };
-      }
-      try {
-        const lastSuccess = await readCache(successCacheParts(dateKey, threshold), { skipTouch: true }).catch(() => null);
-        const prior = lastSuccess && lastSuccess.data
-          ? lastSuccess
-          : await readCache(parts, { skipTouch: true }).catch(() => null);
-        const data = {
-          status: 'error',
-          date: dateKey,
-          threshold,
-          lookbackDays: LOOKBACK_DAYS,
-          universeSize: prior && prior.data ? prior.data.universeSize : 0,
-          scanned: prior && prior.data ? prior.data.scanned : 0,
-          latestMarketDate: prior && prior.data ? prior.data.latestMarketDate : null,
-          items: prior && prior.data && Array.isArray(prior.data.items) ? prior.data.items : [],
-          error: err && err.message ? err.message : String(err)
-        };
-        if (isCurrentJob()) {
-          await writeMomentumProgress(parts, data).catch(() => {});
-        }
-        return data;
-      } catch {
-        return {
-          status: 'error',
-          date: dateKey,
-          threshold,
-          error: err && err.message ? err.message : String(err)
-        };
-      }
-    })
-    .finally(() => {
-      if (JOBS.get(jobKey)?.promise === job) {
-        JOBS.delete(jobKey);
-      }
-    });
-  JOBS.set(jobKey, { promise: job, startedAt, controller });
-  return JOBS.get(jobKey).promise;
+    } catch (err) {
+      const error = err && err.message ? err.message : String(err);
+      if (!job.isCurrent()) return { status: 'error', date: dateKey, threshold, error };
+      const lastSuccess = await readCache(successCacheParts(dateKey, threshold), { skipTouch: true }).catch(() => null);
+      const prior = lastSuccess?.data ? lastSuccess : await readCache(parts, { skipTouch: true }).catch(() => null);
+      const data = { status: 'error', date: dateKey, threshold, lookbackDays: LOOKBACK_DAYS,
+        universeSize: prior?.data?.universeSize || 0, scanned: prior?.data?.scanned || 0,
+        latestMarketDate: prior?.data?.latestMarketDate || null,
+        items: Array.isArray(prior?.data?.items) ? prior.data.items : [], error, jobId: job.id };
+      await job.commit(() => writeMomentumProgress(parts, data)).catch(() => {});
+      return data;
+    }
+  });
 }
 
 function ensureStartupMomentumScan(logger) {

@@ -1,3 +1,4 @@
+import { createRequestScope } from '../services/requestScope.js';
 import {
   calcMA,
   formatCandleColors,
@@ -280,6 +281,8 @@ export class ChartRowManager {
     if (abort) {
       const inst = this.getInst(code);
       if (inst) {
+        inst.klineScope?.cancel();
+        inst.intradayScope?.cancel();
         if (inst.abort) {
           try { inst.abort.abort(); } catch { /* ignore */ }
           inst.abort = null;
@@ -303,7 +306,7 @@ export class ChartRowManager {
   }
 
   destroyAll() {
-    for (const code of [...this.klineCtlMap.keys()]) {
+    for (const code of new Set([...this.klineCtlMap.keys(), ...this.intradayCtlMap.keys(), ...(this.getChartInstances?.()?.keys() || [])])) {
       this.destroyCharts(code);
     }
   }
@@ -322,7 +325,9 @@ export class ChartRowManager {
     if (inst.abort) {
       try { inst.abort.abort(); } catch { /* ignore */ }
     }
-    inst.abort = new AbortController();
+    inst.klineScope ||= createRequestScope();
+    const token = inst.klineScope.begin();
+    inst.abort = token.controller;
     // Task identity: an in-flight response may still complete after this code
     // was collapsed, re-expanded (new inst), switched to another period, or
     // superseded by a newer request on the same inst. Every commit below is
@@ -332,7 +337,7 @@ export class ChartRowManager {
     const isCurrentTask = () =>
       this.isExpanded(code) &&
       this.getInst(code) === inst &&
-      inst.abort === myAbort &&
+      inst.klineScope.isCurrent(token) && inst.abort === myAbort &&
       inst.period === startedPeriod;
     inst.loading = true;
     inst.error = null;
@@ -397,7 +402,9 @@ export class ChartRowManager {
       try { inst.intradayAbort.abort(); } catch { /* ignore */ }
     }
     inst.selectedTradeDate = date;
-    inst.intradayAbort = new AbortController();
+    inst.intradayScope ||= createRequestScope();
+    const token = inst.intradayScope.begin();
+    inst.intradayAbort = token.controller;
     // Same task-identity guard as loadKline, but keyed on the intraday
     // request (abort controller + requested date) so switching dates or
     // reloading the kline invalidates the older intraday response.
@@ -405,7 +412,7 @@ export class ChartRowManager {
     const isCurrentTask = () =>
       this.isExpanded(code) &&
       this.getInst(code) === inst &&
-      inst.intradayAbort === myAbort &&
+      inst.intradayScope.isCurrent(token) && inst.intradayAbort === myAbort &&
       inst.selectedTradeDate === date;
     inst.intradayLoading = true;
     inst.intradayError = null;
