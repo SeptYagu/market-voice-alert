@@ -77,7 +77,7 @@ import { getBeijingDate, formatDateTime } from './time.js';
 import {
   DEFAULT_SMART_SCHEDULE,
   getMarketSession,
-  getSessionTransitionNotice,
+  resolveVoiceScheduleAction,
   isAutoRefreshAllowedInSession,
   isVoiceAllowedInSession,
   normalizeSmartSchedule,
@@ -1368,16 +1368,22 @@ function applyVoiceSchedule() {
   if (state.voice.enabled && !allowed) {
     stopVoiceTimer();
     ttsCancel();
-    // Announce the scheduled pause itself (e.g. trading -> lunch / after-close).
-    let notice = getSessionTransitionNotice(prevSession, session, smart);
-    if (!notice && prevAllowed && smart.autoStopAfterClose) {
-      notice = '已收盘';
+    // 统一决策（R2 回归修正 M1）：lunch/pre-open/closed 只暂停，依靠会话
+    // 恢复路径在下一交易时段自动重启；仅股票 after-close 会话才允许自动
+    // 关闭（期货夜盘在 after-close 内收盘时命中并补播「已收盘」）。
+    // 午休绝不永久关闭语音，否则 13:00 恢复分支因 enabled=false 永不执行。
+    const action = resolveVoiceScheduleAction({
+      prevSession,
+      session,
+      allowed,
+      prevAllowed,
+      smartSchedule: smart
+    });
+    if (action.notice && isSpeechSupported()) {
+      ttsSpeak(action.notice, { volume: clampVolume(state.voice.volume) / 100 });
     }
-    if (notice && isSpeechSupported()) {
-      ttsSpeak(notice, { volume: clampVolume(state.voice.volume) / 100 });
-    }
-    state.voicePausedBySchedule = session === 'lunch' || session === 'pre-open' || session === 'closed';
-    if ((session === 'after-close' || prevAllowed) && smart.autoStopAfterClose) {
+    state.voicePausedBySchedule = action.pausedBySchedule;
+    if (action.autoStop) {
       state.voice = { ...state.voice, enabled: false };
       patchVoiceSettings({ enabled: false });
       state.voicePausedBySchedule = false;

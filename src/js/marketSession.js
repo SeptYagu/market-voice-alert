@@ -54,6 +54,44 @@ export function getSessionTransitionNotice(prevSession, nextSession, smartSchedu
   return null;
 }
 
+/**
+ * 语音调度「停用分支」的统一决策（纯函数，便于回归测试）。
+ *
+ * 在 allowed=false（智能调度判定当前不允许播报）时决定本轮动作：
+ * - lunch / pre-open / closed：仅暂停（voicePausedBySchedule），依赖会话
+ *   恢复路径在下一个交易时段自动重启计时器；
+ * - after-close：执行自动关闭（enabled=false），这是唯一的永久关闭入口。
+ *
+ * 回归背景（2026-09-09 审查 M1）：曾用 `(session === 'after-close' ||
+ * prevAllowed)` 作为关闭条件，导致午休第一拍 prevAllowed=true 就把语音
+ * 永久关闭、13:00 无法自动恢复；且午休期间新开页面会误播「已收盘」。
+ * @param {object} p
+ * @param {string|null} p.prevSession - 上一拍的会话（首次为 null）
+ * @param {string} p.session - 当前会话
+ * @param {boolean} p.allowed - isVoiceAllowedNow() 的判定结果（已含期货夜盘放行）
+ * @param {boolean} p.prevAllowed - 上一拍的允许状态（首次回退为 voice.enabled）
+ * @param {object} p.smartSchedule - 智能调度配置
+ * @returns {{ pause: boolean, autoStop: boolean, notice: string|null, pausedBySchedule: boolean }}
+ */
+export function resolveVoiceScheduleAction({ prevSession, session, allowed, prevAllowed, smartSchedule }) {
+  const cfg = normalizeSmartSchedule(smartSchedule);
+  const idle = { pause: false, autoStop: false, notice: null, pausedBySchedule: false };
+  if (!cfg.enabled || allowed) return idle;
+
+  // 收盘自动关闭仅发生在股票 after-close 会话；期货夜盘在 after-close
+  // 会话内收盘时同样命中本分支（RB 23:00 等），并补播「已收盘」。
+  // 凌晨续段收盘（如沪金 02:30）落在 closed 会话，只暂停、次日自动恢复。
+  const autoStop = !!cfg.autoStopAfterClose && session === 'after-close';
+  let notice = getSessionTransitionNotice(prevSession, session, cfg);
+  if (!notice && autoStop && prevAllowed) notice = '已收盘';
+  return {
+    pause: true,
+    autoStop,
+    notice,
+    pausedBySchedule: session === 'lunch' || session === 'pre-open' || session === 'closed'
+  };
+}
+
 export function isAutoRefreshAllowedInSession(session, smartSchedule) {
   const cfg = normalizeSmartSchedule(smartSchedule);
   if (!cfg.enabled) return true;

@@ -7,7 +7,19 @@ import {
   isAnyFutureTrading,
   isFuturesMarketOpenFallback
 } from '../src/js/futures/session.js';
-import { isFuturesMarketOpen } from '../src/js/marketSession.js';
+import { isFuturesMarketOpen, resolveVoiceScheduleAction } from '../src/js/marketSession.js';
+import { limitUpRowsMatchDom } from '../src/js/controllers/limitUpController.js';
+import { renderLimitUpPage } from '../src/js/limitUpView.js';
+
+// renderLimitUpPage 所需的最小回调集合（见 tests/limitUpView.test.js 同款）
+const LU_VIEW_CALLBACKS = {
+  navigateTo: () => {},
+  addToWatchListAndNavigate: () => {},
+  onRefreshChange: () => {},
+  fetchList: () => {},
+  sortGroup: () => {},
+  onLiveTickUpdate: () => {}
+};
 
 function createMockStorage() {
   const map = new Map();
@@ -257,5 +269,243 @@ QUnit.module('Code Review Regressions & Fixes', (hooks) => {
     // 场景 4: 实例被替换（重新展开产生新实例）
     currentInst = { period: '1d', abort: new AbortController() };
     assert.notOk(checkTask(originalInst, originalAbort, '1d'), 'Task invalid when instance object was replaced');
+  });
+
+  // ---------------------------------------------------------------------------
+  // R2: 语音调度允许策略 —— 午休只暂停不永久关闭（M1 回归）
+  // ---------------------------------------------------------------------------
+  QUnit.test('R2: lunch transition pauses only, voice must NOT be auto-stopped', (assert) => {
+    const smart = { enabled: true, autoStartAuction: false, pauseLunchBreak: true, autoStopAfterClose: true };
+    // 上午交易中 allowed=true，11:30 切入 lunch：allowed=false、prevAllowed=true
+    const action = resolveVoiceScheduleAction({
+      prevSession: 'trading',
+      session: 'lunch',
+      allowed: false,
+      prevAllowed: true,
+      smartSchedule: smart
+    });
+    assert.equal(action.autoStop, false, 'lunch must not permanently disable voice');
+    assert.equal(action.pausedBySchedule, true, 'lunch marks schedule-pause so the resume path can restart');
+    assert.equal(action.notice, '中午休市', 'lunch transition announces lunch break');
+  });
+
+  QUnit.test('R2: trading->lunch->trading keeps voice armed and resumes', (assert) => {
+    const smart = { enabled: true, autoStartAuction: false, pauseLunchBreak: true, autoStopAfterClose: true };
+    const lunchAction = resolveVoiceScheduleAction({
+      prevSession: 'trading', session: 'lunch', allowed: false, prevAllowed: true, smartSchedule: smart
+    });
+    // 关键不变量：lunch 不置 autoStop，voice.enabled 保持 true，13:00 恢复分支
+    // （state.voice.enabled && allowed）才能重新启动计时器。
+    assert.equal(lunchAction.autoStop, false, 'voice.enabled survives lunch');
+
+    const tradingAction = resolveVoiceScheduleAction({
+      prevSession: 'lunch', session: 'trading', allowed: true, prevAllowed: lunchAction.autoStop ? false : true, smartSchedule: smart
+    });
+    assert.equal(tradingAction.pause, false, 'trading session resumes (no pause)');
+    assert.equal(tradingAction.notice, null, 'no notice on resume');
+  });
+
+  QUnit.test('R2: fresh page load during lunch does not announce closed', (assert) => {
+    const smart = { enabled: true, autoStartAuction: false, pauseLunchBreak: true, autoStopAfterClose: true };
+    // 首拍：voiceLastSession=null、prevAllowed 回退为 voice.enabled=true
+    const action = resolveVoiceScheduleAction({
+      prevSession: null,
+      session: 'lunch',
+      allowed: false,
+      prevAllowed: true,
+      smartSchedule: smart
+    });
+    assert.equal(action.notice, null, 'no false closed announcement during lunch');
+    assert.equal(action.autoStop, false, 'no permanent stop on fresh load during lunch');
+  });
+
+  QUnit.test('R2: futures night close inside after-close auto-stops and announces', (assert) => {
+    const smart = { enabled: true, autoStartAuction: false, pauseLunchBreak: true, autoStopAfterClose: true };
+    // RB 夜盘 23:00 收盘：股票会话一直是 after-close（无会话过渡），
+    // 允许状态从 true 翻转为 false，此时应自动关闭并补播「已收盘」。
+    const action = resolveVoiceScheduleAction({
+      prevSession: 'after-close',
+      session: 'after-close',
+      allowed: false,
+      prevAllowed: true,
+      smartSchedule: smart
+    });
+    assert.equal(action.autoStop, true, 'after-close auto-stops voice');
+    assert.equal(action.notice, '已收盘', 'futures close fallback announcement');
+  });
+
+  QUnit.test('R2: gold night close at 02:30 falls in closed session and pauses only', (assert) => {
+    const smart = { enabled: true, autoStartAuction: false, pauseLunchBreak: true, autoStopAfterClose: true };
+    const action = resolveVoiceScheduleAction({
+      prevSession: 'closed',
+      session: 'closed',
+      allowed: false,
+      prevAllowed: true,
+      smartSchedule: smart
+    });
+    assert.equal(action.autoStop, false, 'closed session must not permanently disable voice');
+    assert.equal(action.pausedBySchedule, true, 'closed marks schedule-pause');
+    assert.equal(action.notice, null, 'no announcement inside closed session');
+  });
+
+  // ---------------------------------------------------------------------------
+  // R3: 涨停局部刷新结构校验 —— 分组归属/排序不一致时必须放弃补丁
+  // ---------------------------------------------------------------------------
+  function buildLuState(over = {}) {
+    return Object.assign(
+      {
+        items: [],
+        groups: [
+          { key: '3+', label: '3 连板及以上', items: [] },
+          { key: '2', label: '2 连板', items: [] },
+          { key: '1', label: '1 连板 / 首板', items: [] },
+          { key: 'broken', label: '炸板', items: [] }
+        ],
+        lastUpdate: new Date('2024-03-15T10:00:00Z'),
+        loading: false,
+        error: null,
+        sortKey: 'amount',
+        selectedCodes: new Set(),
+        expandedCodes: new Set(),
+        chartInstances: new Map(),
+        chartPeriod: '1d',
+        consecutiveEmptyFetches: 0,
+        lastNonEmptyAt: null
+      },
+      over
+    );
+  }
+
+  function buildLuItem(over = {}) {
+    return Object.assign(
+      {
+        code: 'sh600519',
+        name: '贵州茅台',
+        price: 1100,
+        change: 100,
+        changePercent: 10,
+        limitUpCount: 1,
+        firstLimitTime: '10:30',
+        breakCount: 0,
+        isST: false,
+        amount: 100000
+      },
+      over
+    );
+  }
+
+  QUnit.test('R3: matching DOM structure allows quote-cell patching', (assert) => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    try {
+      const item = buildLuItem();
+      const lu = buildLuState();
+      lu.groups[2].items = [item];
+      lu.items = [item];
+      renderLimitUpPage(root, lu, LU_VIEW_CALLBACKS);
+      const groupsSection = root.querySelector('#lu-groups');
+      assert.equal(limitUpRowsMatchDom(groupsSection, lu.groups, lu.items), true, 'rendered DOM matches computed groups');
+    } finally {
+      document.body.removeChild(root);
+    }
+  });
+
+  QUnit.test('R3: item moving between groups (limit broken) forces full rerender', (assert) => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    try {
+      const item = buildLuItem();
+      const lu = buildLuState();
+      lu.groups[2].items = [item]; // 首板组
+      lu.items = [item];
+      renderLimitUpPage(root, lu, LU_VIEW_CALLBACKS);
+
+      // 行情更新：该股炸板，重新分组后应移入 broken 组
+      const brokenItem = buildLuItem({ changePercent: 5, limitUpCount: 0, breakCount: 1 });
+      const newLu = buildLuState();
+      newLu.groups[3].items = [brokenItem];
+      newLu.items = [brokenItem];
+
+      const groupsSection = root.querySelector('#lu-groups');
+      assert.equal(
+        limitUpRowsMatchDom(groupsSection, newLu.groups, newLu.items),
+        false,
+        'stale DOM (item still in first-board group) must reject patching'
+      );
+    } finally {
+      document.body.removeChild(root);
+    }
+  });
+
+  QUnit.test('R3: pinned item lives in pinned section and still matches', (assert) => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    try {
+      const item = buildLuItem();
+      const lu = buildLuState();
+      lu.pinnedCodes = new Set([item.code]);
+      lu.groups[2].items = [item]; // 计算态仍含该股（置顶是视图层概念）
+      lu.items = [item];
+      renderLimitUpPage(root, lu, LU_VIEW_CALLBACKS);
+      const groupsSection = root.querySelector('#lu-groups');
+
+      // 置顶股的行在 pinned 区，原分组应为空行；校验必须感知这一布局
+      assert.equal(
+        root.querySelector('section.lu-group[data-group="pinned"] tr[data-code]').getAttribute('data-code'),
+        item.code,
+        'renderer places pinned row in pinned section'
+      );
+      assert.equal(
+        limitUpRowsMatchDom(groupsSection, lu.groups, lu.items, lu.pinnedCodes),
+        true,
+        'pinned-aware structural check matches'
+      );
+
+      // 回归保护：置顶股若仍出现在原分组的 DOM 行中（过期 DOM），必须拒绝
+      assert.equal(
+        limitUpRowsMatchDom(groupsSection, lu.groups, lu.items, new Set()),
+        false,
+        'ignoring pinned layout must not match (guards against stale DOM)'
+      );
+    } finally {
+      document.body.removeChild(root);
+    }
+  });
+
+  QUnit.test('R3: group count or row count mismatch rejects patching', (assert) => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    try {
+      const a = buildLuItem({ code: 'sh600519' });
+      const b = buildLuItem({ code: 'sz000001' });
+      const lu = buildLuState();
+      lu.groups[2].items = [a, b];
+      lu.items = [a, b];
+      renderLimitUpPage(root, lu, LU_VIEW_CALLBACKS);
+      const groupsSection = root.querySelector('#lu-groups');
+
+      // 场景 1: 新增一组（分组数量不一致）
+      const moreGroups = buildLuState();
+      moreGroups.groups = [
+        { key: '3+', label: '3 连板及以上', items: [] },
+        { key: '2', label: '2 连板', items: [] },
+        { key: '1', label: '1 连板 / 首板', items: [a, b] },
+        { key: 'broken', label: '炸板', items: [] },
+        { key: 'new', label: '新分组', items: [] }
+      ];
+      moreGroups.items = [a, b];
+      assert.equal(limitUpRowsMatchDom(groupsSection, moreGroups.groups, moreGroups.items), false, 'group count mismatch');
+
+      // 场景 2: 行数不一致（一只跌出榜单）
+      assert.equal(limitUpRowsMatchDom(groupsSection, lu.groups, [a]), false, 'total row count mismatch');
+
+      // 场景 3: 组内行序变化（排序变化）
+      const reordered = buildLuState();
+      reordered.groups[2].items = [b, a];
+      reordered.items = [b, a];
+      assert.equal(limitUpRowsMatchDom(groupsSection, reordered.groups, reordered.items), false, 'in-group order mismatch');
+    } finally {
+      document.body.removeChild(root);
+    }
   });
 });

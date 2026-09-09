@@ -28,6 +28,51 @@ import {
   setLimitUpPinnedCodes,
   patchLimitUpSettings
 } from '../storage.js';
+
+/**
+ * 结构校验（R3 回归，纯函数便于测试）：DOM 的分组数量/顺序/每组行序
+ * 必须与最新计算的 groups/items 完全一致。行情变化（如炸板）可能把
+ * 个股在分组间移动或改变组内排序，只改单元格会把行留在错误分组且
+ * 计数过期；任一不匹配返回 false，由调用方走全量重绘。
+ *
+ * 置顶分组感知（2026-09-09 审查修正）：limitUpView.buildGroups 始终在最前
+ * 渲染一个 data-group="pinned" 的置顶分组（空置顶也渲染），且置顶股会从
+ * 其原分组中剔除。因此比较时跳过首位置的 pinned 区，并把 expectedGroups
+ * 中的置顶股从各组剔除后逐组比对；总行数（含 pinned 区行数）必须等于
+ * items.length。置顶/取消置顶引起的变化会自然导致计数不匹配而触发重绘。
+ * @param {Element} groupsSection - 包含 #lu-groups 的容器元素
+ * @param {Array<{key: string, items: Array<{code: string}>}>} expectedGroups
+ * @param {Array<{code: string}>} items - 全部涨停项（含置顶股）
+ * @param {Set<string>|string[]} [pinnedCodes] - 当前置顶代码集合
+ * @returns {boolean}
+ */
+export function limitUpRowsMatchDom(groupsSection, expectedGroups, items, pinnedCodes) {
+  if (!groupsSection) return false;
+  const domGroups = Array.from(groupsSection.querySelectorAll('section.lu-group[data-group]'));
+  const groups = expectedGroups || [];
+  const pins = pinnedCodes instanceof Set ? pinnedCodes : new Set(pinnedCodes || []);
+
+  // 渲染器始终在最前渲染置顶分组；有置顶时普通组已剔除置顶股
+  const hasPinnedSection = domGroups.length > 0 && domGroups[0].getAttribute('data-group') === 'pinned';
+  const dataGroups = hasPinnedSection ? domGroups.slice(1) : domGroups;
+  if (dataGroups.length !== groups.length) return false;
+
+  let totalRows = hasPinnedSection ? domGroups[0].querySelectorAll('tr[data-code]').length : 0;
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i];
+    const sec = dataGroups[i];
+    if (sec.getAttribute('data-group') !== g.key) return false;
+    const domRows = sec.querySelectorAll('tr[data-code]');
+    const gItems = (g.items || []).filter((it) => !pins.has(it.code));
+    totalRows += gItems.length;
+    if (domRows.length !== gItems.length) return false;
+    for (let j = 0; j < gItems.length; j++) {
+      if (domRows[j].getAttribute('data-code') !== gItems[j].code) return false;
+    }
+  }
+  return totalRows === (items || []).length;
+}
+
 import { DEFAULT_PERIOD, isValidPeriod } from '../kline.js';
 
 export function applyLimitUpFetchResult(luState, items) {
@@ -135,23 +180,7 @@ export function createLimitUpController(appContext) {
     // a stock falling below the limit) can move it between groups or change
     // sorting; patching just its cells would leave it in the wrong group with
     // stale counts. Any mismatch bails out so the caller does a full rerender.
-    const domGroups = groupsSection.querySelectorAll('section.lu-group[data-group]');
-    const expectedGroups = lu.groups || [];
-    if (domGroups.length !== expectedGroups.length) return false;
-    let totalRows = 0;
-    for (let i = 0; i < expectedGroups.length; i++) {
-      const g = expectedGroups[i];
-      const sec = domGroups[i];
-      if (sec.getAttribute('data-group') !== g.key) return false;
-      const domRows = sec.querySelectorAll('tr[data-code]');
-      const gItems = g.items || [];
-      totalRows += gItems.length;
-      if (domRows.length !== gItems.length) return false;
-      for (let j = 0; j < gItems.length; j++) {
-        if (domRows[j].getAttribute('data-code') !== gItems[j].code) return false;
-      }
-    }
-    if (totalRows !== items.length) return false;
+    if (!limitUpRowsMatchDom(groupsSection, lu.groups || [], items, lu.pinnedCodes)) return false;
     if (!items.length) {
       updateLimitUpStatusBar();
       return true;
