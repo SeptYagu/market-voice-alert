@@ -52,7 +52,9 @@ export async function setupApiMocks(page) {
     const allowLatest = url.searchParams.get('allowLatestTickSource') !== '0';
     const data = allowLatest
       ? parseAktoolsIntradayTicks(AKTOOLS_INTRADAY_TICKS_SH600519, common)
-      : parseAktoolsHistMinuteList(AKTOOLS_HIST_MINUTE_SH600519, common);
+      : parseAktoolsHistMinuteList(AKTOOLS_HIST_MINUTE_SH600519.map(item => ({
+        ...item, 时间: `${date} ${item.时间.split(' ')[1]}`
+      })), common);
     await route.fulfill({
       status: 200,
       contentType: 'application/json',

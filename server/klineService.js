@@ -117,8 +117,8 @@ async function fetchKlineNetwork(code, period, signal) {
     const modernUrl = buildTencentYearKlineUrl(code, currentYear);
     let modernError = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      await waitForTencentSlot('modern');
       try {
+        await waitForTencentSlot('modern');
         const text = await fetchText(modernUrl, signal, {
           referer: 'https://gu.qq.com/',
           'user-agent': 'Mozilla/5.0'
@@ -267,4 +267,3 @@ export const _internal = {
     eastmoneyDisabledUntil = 0;
   }
 };
-

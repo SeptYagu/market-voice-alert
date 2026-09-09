@@ -1,4 +1,4 @@
-import { formatDateForInput, getBeijingDate, shiftCalendarDate } from './time.js';
+import { formatDateForInput, getBeijingDate, getBeijingClockParts, shiftCalendarDate } from './time.js';
 
 const CALENDAR_URL = '/api/aktools/api/public/tool_trade_date_hist_sina';
 const CACHE_CALENDAR_URL = '/api/cache/calendar/trade-dates';
@@ -112,6 +112,14 @@ export function resolveLatestTradingDate(date, tradingDates) {
     else break;
   }
   return best || dates[0] || anchor;
+}
+
+// Before opening auction there is no new stock intraday session to display.
+export function resolveStockChartDate(tradingDates, now = new Date()) {
+  const today = getBeijingDate(now);
+  const { hour, minute } = getBeijingClockParts(now);
+  const anchor = hour * 60 + minute < 9 * 60 + 15 ? shiftCalendarDate(today, -1) : today;
+  return resolveLatestTradingDate(anchor, tradingDates);
 }
 
 export function shiftTradingDate(date, delta, tradingDates) {

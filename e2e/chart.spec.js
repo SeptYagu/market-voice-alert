@@ -169,6 +169,9 @@ test.describe('K 线图展开', () => {
   });
 
   test('交易时段连续报价同步更新表格和左侧分时末点', async ({ page }) => {
+    await page.route('**/api/cache/calendar/trade-dates**', route => route.fulfill({
+      json: { ok: true, data: { dates: ['2026-06-05', '2026-06-08', '2026-06-09', '2026-06-10', '2026-06-11'] } }
+    }));
     await page.addInitScript(() => {
       const RealDate = Date;
       const realStart = RealDate.now();

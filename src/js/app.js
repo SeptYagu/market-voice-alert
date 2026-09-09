@@ -70,6 +70,7 @@ import {
 } from './services/momentumMath.js';
 import {
   fetchTradeCalendar,
+  resolveStockChartDate,
   resolveLatestTradingDate
 } from './tradeCalendar.js';
 import { getBeijingDate, formatDateTime } from './time.js';
@@ -372,15 +373,12 @@ const state = {
 function resolveInitialTradeDate(code, data) {
   const dates = state.tradingDates || state.limitUp.tradingDates || [];
   const today = getBeijingDate();
-  const latestTrading = resolveLatestTradingDate(today, dates);
+  const latestTrading = resolveStockChartDate(dates);
   const q = state.quotes.get(code);
   if (isFutureCode(code)) return getFuturesSession(code, new Date(), dates).tradingDay;
-  if (q && q.tradingDay) return q.tradingDay;
+  if (q && q.tradingDay && q.tradingDay <= latestTrading) return q.tradingDay;
   const lastBarDate = data && data.items ? getLastKlineDate(data.items) : '';
-  if (latestTrading && (!lastBarDate || lastBarDate <= latestTrading)) {
-    return latestTrading;
-  }
-  return lastBarDate || latestTrading || today;
+  return latestTrading || lastBarDate || today;
 }
 
 export const monitorChartMgr = new ChartRowManager({
@@ -1255,15 +1253,19 @@ export function applyLiveQuoteToIntradayForCode(code, quote, isLimitUp = false, 
 async function refreshLiveIntradayForCode(code, isLimitUp = false) {
   const mgr = isLimitUp ? limitUpChartMgr : monitorChartMgr;
   const inst = mgr.getInst(code);
+  // A chart opened before auction follows the new session unless the user
+  // explicitly selected a historical bar. Limit-up dates belong to its page.
+  const targetDate = inst && !isLimitUp && !isFutureCode(code) && !inst.manualTradeDate
+    ? resolveStockChartDate(state.tradingDates) : inst?.selectedTradeDate;
   if (
     !inst ||
     inst.intradayRefreshing ||
-    !isLiveTradeDate(inst.selectedTradeDate, code, new Date(), state.tradingDates) ||
+    !isLiveTradeDate(targetDate, code, new Date(), state.tradingDates) ||
     Date.now() - inst.intradayLastFetchAt < 10000
   ) return;
   inst.intradayRefreshing = true;
   try {
-    await mgr.loadIntraday(code, inst.selectedTradeDate);
+    await mgr.loadIntraday(code, targetDate);
   } finally {
     inst.intradayRefreshing = false;
   }

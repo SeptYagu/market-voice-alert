@@ -56,6 +56,8 @@ npm run server
 
 生产服务默认端口为 `3001`，可用 `PORT` 和 `HOST` 环境变量调整。服务器仍需要能访问 AKTools 服务。
 
+手动扫描默认信任本机、内网地址及本项目部署域名 `market.yagu.ddns-ip.net`，仍拒绝不匹配的 Origin。部署到其他域名时设置 `MOMENTUM_SCAN_ALLOWED_HOSTS`（逗号分隔的主机名），此设置会覆盖默认域名；显式空值只允许本机/内网。反向代理应保留浏览器访问的 Host。
+
 ## VPS 日志与远程排障
 
 线上日志可直接用一行命令抓取，供 AI 或人工排查，无需进入 VPS：

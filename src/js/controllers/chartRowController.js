@@ -66,6 +66,7 @@ export function createChartState(period = DEFAULT_PERIOD) {
     error: null,
     abort: null,
     selectedTradeDate: '',
+    manualTradeDate: false,
     intradayData: null,
     intradayLoading: false,
     intradayError: null,
@@ -456,6 +457,7 @@ export class ChartRowManager {
     const inst = this.getInst(code);
     if (!inst) return;
     const date = chartTimeToDate(time);
+    if (date) inst.manualTradeDate = true;
     if (!date || inst.selectedTradeDate === date) return;
     if (typeof this.onKlineBarClick === 'function') {
       this.onKlineBarClick(code, date);
@@ -474,6 +476,7 @@ export class ChartRowManager {
     inst.error = null;
     if (this.hasIntraday) {
       inst.selectedTradeDate = null;
+      inst.manualTradeDate = false;
       inst.intradayData = null;
       inst.intradayError = null;
       inst._intradayVisibleRange = null;

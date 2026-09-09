@@ -126,7 +126,10 @@ function beijingStamp(ms) {
 // of the day (e.g. fetched at 10:30 -> chart shows "morning only" forever,
 // and its last close never matches the daily K-line). Snapshots generated on
 // a later day, or after 15:05 Beijing, are treated as complete archives.
-function isHistoricalSnapshotComplete(generatedAtMs, dateDash) {
+function isHistoricalSnapshotComplete(generatedAtMs, dateDash, data) {
+  // A new write time does not make an old morning-only fallback complete.
+  if (data?.archiveComplete === false || !data?.items?.some((item) =>
+    chartTimeToDate(item.time) === dateDash && chartSecondsToTime(item.time) === '15:00')) return false;
   const n = Number(generatedAtMs);
   if (!Number.isFinite(n) || n <= 0) return false;
   const stamp = beijingStamp(n);
@@ -197,7 +200,12 @@ async function fetchIntradayNetwork(common, allowLatestTickSource) {
       source: 'eastmoney-kline-1m-cache'
     });
     const filtered = filterIntradaySessions(decorated, common.date);
-    if (hasItems(filtered)) return filtered;
+    if (hasItems(filtered) && isHistoricalSnapshotComplete(cachedMinute.generatedAt, common.date, filtered)) {
+      return { ...filtered, archiveComplete: true };
+    }
+    if (hasItems(filtered) && !isHistoricalDate(common.date.replace(/-/g, ''))) {
+      return { ...filtered, archiveComplete: false, upstreamStale: true };
+    }
   }
 
   try {
@@ -211,7 +219,8 @@ async function fetchIntradayNetwork(common, allowLatestTickSource) {
       const items = filterKlineItemsByDate(klineData.items, common.date);
       const decorated = decorateKlineIntraday({ ...klineData, items }, common);
       const filtered = filterIntradaySessions(decorated, common.date);
-      if (hasItems(filtered)) return filtered;
+      if (hasItems(filtered)) return { ...filtered, upstreamStale: !!klineResult.stale, archiveComplete: !klineResult.stale &&
+        isHistoricalSnapshotComplete(klineResult.generatedAt, common.date, filtered) };
     }
   } catch (e) {
     if (e && e.name === 'AbortError') throw e;
@@ -261,7 +270,7 @@ export async function getCachedIntraday({
     if (!historical) {
       historical = await readHistoricalCache(['intraday', code, `${dateKey}-latest-${safePrevClose}.json`], INTRADAY_TTL_MS);
     }
-    if (historical && isHistoricalSnapshotComplete(historical.generatedAt, selectedDate)) {
+    if (historical && isHistoricalSnapshotComplete(historical.generatedAt, selectedDate, historical.data)) {
       historical.data = { ...historical.data, name: name || historical.data.name || code };
       return historical;
     }
@@ -283,6 +292,8 @@ export async function getCachedIntraday({
       );
       return {
         ...refreshed,
+        stale: refreshed.stale || !!refreshed.data?.upstreamStale ||
+          (isHistoricalDate(dateKey) && refreshed.data?.archiveComplete === false),
         data: {
           ...refreshed.data,
           name: name || refreshed.data.name || code
@@ -305,6 +316,8 @@ export async function getCachedIntraday({
   );
   return {
     ...result,
+    stale: result.stale || !!result.data?.upstreamStale ||
+      (isHistoricalDate(dateKey) && result.data?.archiveComplete === false),
     data: {
       ...result.data,
       name: name || result.data.name || code

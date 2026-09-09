@@ -64,7 +64,7 @@ export async function handleCacheRequest(req, res) {
     // plus an optional env allowlist for domain-based access.
     // A DNS-rebinding page keeps its public Host/Origin hostname, which is
     // neither a private IP nor same-host-with-private-IP, so it stays blocked.
-    const allowedHosts = (process.env.MOMENTUM_SCAN_ALLOWED_HOSTS || '')
+    const allowedHosts = (process.env.MOMENTUM_SCAN_ALLOWED_HOSTS ?? 'market.yagu.ddns-ip.net')
       .split(',')
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
