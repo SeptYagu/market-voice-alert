@@ -20,7 +20,11 @@ export default defineConfig({
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } }
   ],
   webServer: {
-    command: "powershell -NoProfile -Command \"$env:DISABLE_BACKGROUND_JOBS='1'; npm run dev\"",
+    // Launch Vite directly via Node instead of npm/powershell: npm.ps1 is
+    // blocked by PowerShell execution policies on some Windows machines,
+    // and powershell itself is unavailable on non-Windows CI.
+    command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1',
+    env: { DISABLE_BACKGROUND_JOBS: '1' },
     url: 'http://127.0.0.1:5173',
     reuseExistingServer: !process.env.CI,
     timeout: 60_000
