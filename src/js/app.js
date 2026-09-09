@@ -21,7 +21,7 @@ import {
   getMomentumPinnedCodes,
   getLimitUpPinnedCodes
 } from './storage.js';
-import { fetchQuotes, fetchKline, fetchIntraday, onKlineUpdated } from './api.js';
+import { fetchQuotes, fetchKline, onKlineUpdated } from './api.js';
 import { isFutureCode } from './futures/instrument.js';
 import { getFuturesSession } from './futures/session.js';
 import {
@@ -33,8 +33,6 @@ import {
   ChartRowManager,
   createChartState,
   rememberRange,
-  restoreRangeOrFit,
-  getPrevCloseForDate,
   applyKlineDataToChart
 } from './controllers/chartRowController.js';
 import {
@@ -54,6 +52,7 @@ import {
   createLimitUpController,
   applyLimitUpFetchResult
 } from './controllers/limitUpController.js';
+import { createMonitorController } from './controllers/monitorController.js';
 import { createVoiceController } from './controllers/voiceController.js';
 import { createMomentumController } from './controllers/momentumController.js';
 import {
@@ -305,12 +304,9 @@ const state = {
   selected: new Set(),
   subscribed: new Set(),
   refreshInterval: DEFAULT_REFRESH,
-  refreshSeq: 0,
   unsubKlineUpdated: null,
-  timer: null,
   autoRefreshEnabled: true,
   autoRefreshPausedBySchedule: false,
-  dataScheduleTimer: null,
   dataLastSession: null,
   loading: false,
   lastUpdate: null,
@@ -372,7 +368,6 @@ const state = {
   }
 };
 
-let abortController = null;
 
 function resolveInitialTradeDate(code, data) {
   const dates = state.tradingDates || state.limitUp.tradingDates || [];
@@ -781,14 +776,7 @@ function handleAdd() {
     flashError('未识别到有效代码');
     return;
   }
-  const newCodes = [];
-  for (const code of codes) {
-    if (!state.watchList.includes(code)) {
-      addToWatchList(code);
-      newCodes.push(code);
-    }
-  }
-  state.watchList = getWatchList();
+  const newCodes = monitorCtrl.addCodes(codes);
   input.value = '';
   input.focus();
   renderData();
@@ -830,13 +818,8 @@ async function handleRemove(code) {
     danger: true
   });
   if (!ok) return;
-  removeFromWatchList(code);
-  state.watchList = getWatchList();
-  state.selected.delete(code);
-  state.quotes.delete(code);
-  if (state.subscribed.delete(code)) persistSubscribed();
-  delete state.alertStates[code];
-  if (state.expandedCodes.has(code)) closeChart(code);
+  monitorCtrl.removeCodes([code]);
+  persistSubscribed();
   renderData();
 }
 
@@ -868,19 +851,8 @@ async function handleDeleteSelected() {
   });
   if (!ok) return;
   const codes = [...state.selected];
-  removeFromWatchList(codes);
-  let subChanged = false;
-  for (const c of codes) {
-    state.quotes.delete(c);
-    if (state.subscribed.delete(c)) subChanged = true;
-    delete state.alertStates[c];
-  }
-  if (subChanged) persistSubscribed();
-  for (const c of codes) {
-    if (state.expandedCodes.has(c)) closeChart(c);
-  }
-  state.selected.clear();
-  state.watchList = getWatchList();
+  monitorCtrl.removeCodes(codes);
+  persistSubscribed();
   renderData();
 }
 
@@ -1305,25 +1277,7 @@ async function refreshLiveIntradayForCode(code, isLimitUp = false) {
   ) return;
   inst.intradayRefreshing = true;
   try {
-    const data = await fetchIntraday(code, {
-      date: inst.selectedTradeDate,
-      name: inst.klineData ? inst.klineData.name : code,
-      prevClose: getPrevCloseForDate(inst.klineData && inst.klineData.items, inst.selectedTradeDate),
-      allowLatestTickSource: true,
-      sharedCache: true
-    });
-    if (!data || !mgr.isExpanded(code)) return;
-    inst.intradayData = data;
-    inst.intradayLastFetchAt = Date.now();
-    const intradayCtl = mgr.intradayCtlMap.get(code);
-    if (intradayCtl) {
-      intradayCtl.setData(data.items);
-      restoreRangeOrFit(intradayCtl, inst._intradayVisibleRange);
-      mgr.updateIntradayStatus(code);
-    }
-  } catch (e) {
-    // Keep the latest live-quote point visible when a background backfill fails.
-    if (console && console.warn) console.warn('intraday background refresh failed for', code, e);
+    await mgr.loadIntraday(code, inst.selectedTradeDate);
   } finally {
     inst.intradayRefreshing = false;
   }
@@ -1449,79 +1403,28 @@ function flashInfo(msg) {
   }, 3000);
 }
 
-async function refreshNow() {
-  const refreshCodes = getRefreshCodes();
-  if (!refreshCodes.length) return;
-  if (abortController) {
-    try { abortController.abort(); } catch { /* ignore */ }
-  }
-  const seq = (state.refreshSeq || 0) + 1;
-  state.refreshSeq = seq;
-  abortController = new AbortController();
-  state.loading = true;
-  state.error = null;
-  renderStatus();
-  try {
-    const quotes = await fetchQuotes(refreshCodes, { signal: abortController.signal });
-    if (seq !== state.refreshSeq) return;
-    for (const q of quotes) {
-      state.quotes.set(q.code, q);
-    }
+const monitorCtrl = createMonitorController({
+  getState: () => state,
+  fetchQuotes,
+  storage: { get: getWatchList, add: addToWatchList, remove: removeFromWatchList },
+  onRemove: code => {
+    monitorChartMgr.destroyCharts(code);
+    state.chartInstances.delete(code);
+    state.expandedCodes.delete(code);
+  },
+  onQuotes: () => {
     mergeQuotesIntoMomentumItems();
-    state.lastUpdate = new Date();
-    // Fire alert pipeline AFTER quotes are updated so triggers see fresh data.
-    try {
-      processAlerts();
-    } catch (e) {
-      // Never let alert errors break the data refresh cycle.
-      console && console.warn && console.warn('processAlerts failed:', e);
-    }
-    // Advance all open K-line charts to the latest tick so the in-progress
-    // bar moves in real time. Wrapped in try/catch like processAlerts so it
-    // never breaks the data refresh cycle.
-    try {
-      updateChartLastTickMulti();
-    } catch (e) {
-      console && console.warn && console.warn('updateChartLastTickMulti failed:', e);
-    }
-  } catch (err) {
-    if (seq === state.refreshSeq && err.name !== 'AbortError') {
-      state.error = err.message || String(err);
-    }
-  } finally {
-    if (seq === state.refreshSeq) {
-      state.loading = false;
-      // Refresh path must NOT rebuild the table. renderTable() destroys all
-      // chart instances to handle structural changes (add/remove/expand), but
-      // on a periodic data refresh the row set is unchanged — we'd be throwing
-      // away the chart ctl and the user's zoom/pan state every 10s. Instead
-      // patch the price/change/percent cells in place and refresh the status
-      // bar. The chart's last bar is already updated by
-      // updateChartLastTickMulti above via series.update() (preserves zoom).
-      for (const code of state.watchList) {
-        if (state.quotes.has(code)) updateRowQuoteCells(code);
-      }
-      for (const item of state.momentum.items || []) {
-        if (item && state.quotes.has(item.code)) updateMomentumQuoteCells(item.code);
-      }
-      applyLiveTicksToLimitUp();
-      renderStatus();
-    }
-  }
-}
-
-function getRefreshCodes() {
-  const out = new Set(state.watchList);
-  for (const code of state.subscribed || []) {
-    if (code) out.add(code);
-  }
-  if (state.limitUp && Array.isArray(state.limitUp.items) && isLimitUpDateToday()) {
-    for (const it of state.limitUp.items) {
-      if (it && it.code) out.add(it.code);
-    }
-  }
-  return [...out];
-}
+    try { processAlerts(); } catch (error) { console.warn('processAlerts failed:', error); }
+    try { updateChartLastTickMulti(); } catch (error) { console.warn('updateChartLastTickMulti failed:', error); }
+  },
+  onRefresh: () => {
+    for (const code of state.watchList) if (state.quotes.has(code)) updateRowQuoteCells(code);
+    for (const item of state.momentum.items || []) if (state.quotes.has(item.code)) updateMomentumQuoteCells(item.code);
+    applyLiveTicksToLimitUp();
+  },
+  onStatus: renderStatus
+});
+function refreshNow() { return monitorCtrl.refresh(); }
 
 // Patch the data cells of an existing
 // <tr data-code="..."> in place. The row's <td> order is fixed by renderRow():
@@ -1538,29 +1441,8 @@ function updateMomentumQuoteCells(code) {
   momentumCtrl.updateQuoteCells(code);
 }
 
-function restartTimer() {
-  if (state.timer) clearInterval(state.timer);
-  state.timer = null;
-  if (!state.autoRefreshEnabled) {
-    state.autoRefreshPausedBySchedule = false;
-    renderStatus();
-    return;
-  }
-  if (!isDataAutoRefreshAllowedNow()) {
-    state.autoRefreshPausedBySchedule = true;
-    renderStatus();
-    return;
-  }
-  state.autoRefreshPausedBySchedule = false;
-  state.timer = setInterval(refreshNow, state.refreshInterval);
-}
-
-function stopMonitorTimer() {
-  if (state.timer) {
-    clearInterval(state.timer);
-    state.timer = null;
-  }
-}
+function restartTimer() { monitorCtrl.applySchedule(isDataAutoRefreshAllowedNow()); }
+function stopMonitorTimer() { monitorCtrl.stopTimer(); }
 
 function handleMonitorAutoRefreshToggle(enabled) {
   state.autoRefreshEnabled = !!enabled;
@@ -1581,22 +1463,7 @@ function applyDataRefreshSchedule() {
 
   const hasLimitUpRoot = Boolean(limitUpCtrl.getRootEl());
 
-  if (state.autoRefreshEnabled && !hasLimitUpRoot) {
-    if (!allowed) {
-      stopMonitorTimer();
-      state.autoRefreshPausedBySchedule = true;
-    } else {
-      const wasPaused = state.autoRefreshPausedBySchedule;
-      state.autoRefreshPausedBySchedule = false;
-      if (!state.timer) {
-        state.timer = setInterval(refreshNow, state.refreshInterval);
-        if (wasPaused) refreshNow();
-      }
-    }
-  } else {
-    stopMonitorTimer();
-    if (!hasLimitUpRoot) state.autoRefreshPausedBySchedule = false;
-  }
+  monitorCtrl.applySchedule(allowed, !hasLimitUpRoot);
 
   if (state.limitUp.autoRefreshEnabled && hasLimitUpRoot) {
     if (!allowed) {
@@ -1624,11 +1491,7 @@ function applyDataRefreshSchedule() {
 }
 
 function startDataRefreshScheduleChecker() {
-  if (state.dataScheduleTimer) clearInterval(state.dataScheduleTimer);
-  warmTradeCalendar().finally(() => applyDataRefreshSchedule());
-  state.dataScheduleTimer = setInterval(() => {
-    applyDataRefreshSchedule();
-  }, 30000);
+  monitorCtrl.startChecker(warmTradeCalendar, applyDataRefreshSchedule);
 }
 
 function _onKlineUpdated(code, period, data) {
@@ -1712,18 +1575,11 @@ export function stopApp() {
     appRouter.stop();
     appRouter = null;
   }
-  if (abortController) {
-    try { abortController.abort(); } catch { /* ignore */ }
-    abortController = null;
-  }
+  monitorCtrl.stop();
   stopMomentumScan();
   stopMonitorTimer();
   stopLimitUpTimer();
   voiceCtrl.stop();
-  if (state.dataScheduleTimer) {
-    clearInterval(state.dataScheduleTimer);
-    state.dataScheduleTimer = null;
-  }
   closeAllCharts();
   closeAllLimitUpCharts();
   closeAllMomentumCharts();

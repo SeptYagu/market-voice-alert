@@ -2,6 +2,8 @@
 
 ## A–E 全部完成目标（进行中）
 
+E 已提取 monitorController，app 的后台分时回填也统一走 ChartRowManager 归属保护。704 单测、58 E2E、lint/build 通过；继续最后的 T1 与验收补齐。
+
 D 已实现涨停分组/排序节点移动和图表实例保留、删除及批量清理。703 单测、既有 57 E2E、新增生命周期 E2E 定向、lint/build 通过；详情见逐阶段记录。
 
 B 请求归属已完成：前端共享 requestScope，服务端 jobId 与串行缓存提交；完整 CI 702 单测、57 E2E、lint/build 通过。继续 D、监控控制器与测试隔离。
