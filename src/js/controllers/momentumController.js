@@ -28,6 +28,11 @@ export function createMomentumController(appContext) {
   } = appContext;
 
   let momentumPollTimer = null;
+  // Monotonic task identity for scans: every await completion in
+  // handleMomentumScan checks it before committing state, so a stale task
+  // (aborted, stopped, or superseded by a newer scan) cannot clobber the
+  // current task's loading/error/items or the poll timer.
+  let momentumScanGeneration = 0;
 
   function getMomentumState() {
     return getState().momentum;
@@ -102,6 +107,9 @@ export function createMomentumController(appContext) {
   }
 
   function stopMomentumScan() {
+    // Invalidate the current scan task BEFORE aborting so its catch/finally
+    // (and any in-flight continuation) no longer count as current.
+    momentumScanGeneration += 1;
     if (momentumPollTimer) {
       clearTimeout(momentumPollTimer);
       momentumPollTimer = null;
@@ -151,6 +159,8 @@ export function createMomentumController(appContext) {
     }
     const abort = new AbortController();
     mState.abort = abort;
+    const generation = ++momentumScanGeneration;
+    const isCurrent = () => generation === momentumScanGeneration;
     mState.loading = true;
     if (!options || options.poll !== true) mState.serverScanning = false;
     mState.message = null;
@@ -161,6 +171,7 @@ export function createMomentumController(appContext) {
     try {
       if (!options || options.poll !== true) {
         await startSharedMomentumScan(abort.signal);
+        if (!isCurrent()) return;
         mState.serverScanning = true;
       }
       let cached = null;
@@ -170,6 +181,7 @@ export function createMomentumController(appContext) {
         if (e && e.name === 'AbortError') throw e;
         cached = null;
       }
+      if (!isCurrent()) return;
       if (cached && Array.isArray(cached.items)) {
         mState.total = cached.universeSize || cached.items.length;
         mState.scanned = cached.scanned || mState.total;
@@ -180,7 +192,7 @@ export function createMomentumController(appContext) {
           if (momentumPollTimer) clearTimeout(momentumPollTimer);
           momentumPollTimer = setTimeout(() => {
             momentumPollTimer = null;
-            if (mState.serverScanning && !mState.loading) handleMomentumScan({ poll: true });
+            if (generation === momentumScanGeneration && mState.serverScanning && !mState.loading) handleMomentumScan({ poll: true });
           }, 5000);
           return;
         }
@@ -206,6 +218,7 @@ export function createMomentumController(appContext) {
         watchList: appState.watchList,
         limitUpItems: appState.limitUp ? appState.limitUp.items : []
       });
+      if (!isCurrent()) return;
       if (!universe.length) throw new Error('没有可扫描的股票池');
       mState.total = universe.length;
       renderMomentumSection();
@@ -226,25 +239,32 @@ export function createMomentumController(appContext) {
           } catch (e) {
             if (e && e.name === 'AbortError') throw e;
           } finally {
-            mState.scanned += 1;
-            if (mState.scanned % 25 === 0 || mState.scanned === mState.total) {
-              renderMomentumSection();
+            if (isCurrent()) {
+              mState.scanned += 1;
+              if (mState.scanned % 25 === 0 || mState.scanned === mState.total) {
+                renderMomentumSection();
+              }
             }
           }
         }
       };
       const workerCount = Math.min(MOMENTUM_SCAN_CONCURRENCY, universe.length);
       await Promise.all(Array.from({ length: workerCount }, worker));
+      if (!isCurrent()) return;
       mState.items = mergePinnedMomentumItems(found);
       _mergeMomentumQuotesSafely(mState.items);
       mState.lastUpdate = new Date();
     } catch (e) {
-      mState.serverScanning = false;
-      if (e && e.name !== 'AbortError') mState.error = e.message || String(e);
+      if (isCurrent()) {
+        mState.serverScanning = false;
+        if (e && e.name !== 'AbortError') mState.error = e.message || String(e);
+      }
     } finally {
       if (mState.abort === abort) mState.abort = null;
-      mState.loading = false;
-      renderMomentumSection();
+      if (isCurrent()) {
+        mState.loading = false;
+        renderMomentumSection();
+      }
     }
   }
 

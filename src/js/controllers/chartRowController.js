@@ -321,6 +321,17 @@ export class ChartRowManager {
       try { inst.abort.abort(); } catch { /* ignore */ }
     }
     inst.abort = new AbortController();
+    // Task identity: an in-flight response may still complete after this code
+    // was collapsed, re-expanded (new inst), switched to another period, or
+    // superseded by a newer request on the same inst. Every commit below is
+    // guarded so a stale response can never write into the current chart.
+    const myAbort = inst.abort;
+    const startedPeriod = inst.period;
+    const isCurrentTask = () =>
+      this.isExpanded(code) &&
+      this.getInst(code) === inst &&
+      inst.abort === myAbort &&
+      inst.period === startedPeriod;
     inst.loading = true;
     inst.error = null;
     this.updateKlineStatus(code);
@@ -332,9 +343,9 @@ export class ChartRowManager {
         forceRefresh: !!force,
         signal: inst.abort.signal
       });
+      if (!isCurrentTask()) return;
       if (!data) throw new Error('未能获取 K 线数据');
       if (!data.items.length) throw new Error('K 线数据为空');
-      if (!this.isExpanded(code)) return;
       inst.klineData = data;
       if (this.hasIntraday && !inst.selectedTradeDate) {
         inst.selectedTradeDate = this.resolveTradeDate(code, inst.klineData);
@@ -360,15 +371,16 @@ export class ChartRowManager {
         this.loadIntraday(code, inst.selectedTradeDate);
       }
     } catch (e) {
+      // A stale task must not clear the new request's loading flag or write
+      // an error into state it no longer owns.
+      if (!isCurrentTask()) return;
       if (e && e.name !== 'AbortError') {
-        if (!this.isExpanded(code)) return;
         inst.error = e.message || String(e);
       }
-      if (!this.isExpanded(code)) return;
       inst.loading = false;
       this.updateKlineStatus(code);
     } finally {
-      if (this.isExpanded(code) && this.getInst(code) === inst) {
+      if (isCurrentTask()) {
         this.setInst(code, inst);
         this.onStateChange(code);
       }
@@ -384,6 +396,15 @@ export class ChartRowManager {
     }
     inst.selectedTradeDate = date;
     inst.intradayAbort = new AbortController();
+    // Same task-identity guard as loadKline, but keyed on the intraday
+    // request (abort controller + requested date) so switching dates or
+    // reloading the kline invalidates the older intraday response.
+    const myAbort = inst.intradayAbort;
+    const isCurrentTask = () =>
+      this.isExpanded(code) &&
+      this.getInst(code) === inst &&
+      inst.intradayAbort === myAbort &&
+      inst.selectedTradeDate === date;
     inst.intradayLoading = true;
     inst.intradayError = null;
     this.updateIntradayStatus(code);
@@ -396,8 +417,8 @@ export class ChartRowManager {
         sharedCache: true,
         signal: inst.intradayAbort.signal
       });
+      if (!isCurrentTask()) return;
       if (!data) throw new Error('未能获取分时数据');
-      if (!this.isExpanded(code)) return;
       inst.intradayData = data;
       inst.intradayLastFetchAt = Date.now();
       inst.intradayLoading = false;
@@ -407,15 +428,14 @@ export class ChartRowManager {
       }
       this.updateIntradayStatus(code);
     } catch (e) {
+      if (!isCurrentTask()) return;
       if (e && e.name !== 'AbortError') {
-        if (!this.isExpanded(code)) return;
         inst.intradayError = e.message || String(e);
       }
-      if (!this.isExpanded(code)) return;
       inst.intradayLoading = false;
       this.updateIntradayStatus(code);
     } finally {
-      if (this.isExpanded(code) && this.getInst(code) === inst) {
+      if (isCurrentTask()) {
         this.setInst(code, inst);
         this.updateIntradayStatus(code);
       }
