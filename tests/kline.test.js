@@ -853,16 +853,36 @@ QUnit.module('kline.applyLiveQuoteToIntraday', () => {
     t.equal(out[1].close, 101);
   });
 
-  QUnit.test('does not append outside continuous trading', (t) => {
+  QUnit.test('corrects the last point (no new minute) outside continuous trading', (t) => {
     const lunch = new Date('2026-09-02T04:00:00.000Z');
-    t.strictEqual(applyLiveQuoteToIntraday(base, { price: 103 }, lunch), base);
+    const out = applyLiveQuoteToIntraday(base, { price: 103, prevClose: 100 }, lunch);
+    t.notStrictEqual(out, base, 'stale last point is corrected to the quote price');
+    t.equal(out.length, 1, 'no new minute is appended while trading is halted');
+    t.equal(out[0].time, firstTime, 'timestamp stays on the last real minute');
+    t.equal(out[0].close, 103);
+    t.equal(out[0].volume, 100, 'last real minute volume is untouched');
+    t.equal(out[0].high, 101, 'last real minute high is untouched');
+    t.ok(Math.abs(out[0].percent - 3) < 1e-9, 'percent recomputed from preClose');
+  });
+
+  QUnit.test('no-op outside continuous trading when the last point already matches', (t) => {
+    const lunch = new Date('2026-09-02T04:00:00.000Z');
+    t.strictEqual(applyLiveQuoteToIntraday(base, { price: 100, prevClose: 100 }, lunch), base);
+  });
+
+  QUnit.test('recomputes avgPrice from day-cumulative quote volume/amount', (t) => {
+    const lunch = new Date('2026-09-02T04:00:00.000Z');
+    const out = applyLiveQuoteToIntraday(base, { price: 103, prevClose: 100, volume: 150, amount: 1530000 }, lunch);
+    t.equal(out[0].avgPrice, 102);
   });
 
   QUnit.test('appends point during futures night trading (21:30) and morning trading (09:10)', (t) => {
     // 21:30 Beijing time on 2026-09-02 is 13:30 UTC
     const night = new Date('2026-09-02T13:30:00.000Z');
-    const stockOut = applyLiveQuoteToIntraday(base, { price: 103, code: 'sh600519' }, night);
-    t.strictEqual(stockOut, base, 'stock quote is blocked during night');
+    const stockOut = applyLiveQuoteToIntraday(base, { price: 103, prevClose: 100, code: 'sh600519' }, night);
+    t.equal(stockOut.length, 1, 'stock quote at night corrects the last point instead of appending');
+    t.equal(stockOut[0].close, 103, 'stale cached close is corrected to the quote price');
+    t.equal(stockOut[0].time, firstTime, 'timestamp unchanged');
 
     const futureOut = applyLiveQuoteToIntraday(base, {
       code: 'rb0',

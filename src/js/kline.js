@@ -461,6 +461,37 @@ function _isContinuousTradingMinute(parts) {
   );
 }
 
+// Frozen market (lunch break, pre-open, after close, overnight): the live
+// quote IS the day's authoritative last-traded price, but the intraday series
+// may come from a cached/truncated source whose final point disagrees with it.
+// Correct the last point's close in place instead of appending a new minute —
+// there is no new minute to append while trading is halted. The last point's
+// high/low/volume belong to its own minute's real trades and stay untouched;
+// avgPrice can be recomputed because quote volume/amount are day-cumulative.
+function _correctLastIntradayPoint(items, quote, nowMinute) {
+  const last = items[items.length - 1];
+  const lastTime = Number(last && last.time);
+  if (!Number.isFinite(nowMinute) || !Number.isFinite(lastTime) || nowMinute < lastTime) return items;
+  const price = _positiveNumber(quote.price);
+  if (!price || Number(last.close) === price) return items;
+  const prevClose = _positiveNumber(quote.prevClose) || _positiveNumber(last && (last.preClose || last.prevClose));
+  const corrected = {
+    ...last,
+    close: price,
+    price,
+    percent: prevClose > 0
+      ? (price / prevClose - 1) * 100
+      : (Number.isFinite(Number(last && last.percent)) ? Number(last.percent) : 0)
+  };
+  const cumulativeVolume = _positiveNumber(quote.volume);
+  const cumulativeAmount = _positiveNumber(quote.amount);
+  const avgPrice = cumulativeAmount > 0 && cumulativeVolume > 0
+    ? cumulativeAmount / (cumulativeVolume * 100)
+    : 0;
+  if (avgPrice > 0) corrected.avgPrice = avgPrice;
+  return [...items.slice(0, -1), corrected];
+}
+
 export function applyLiveQuoteToIntraday(items, quote, now = new Date(), isFuture = false, tradingDates = []) {
   if (!Array.isArray(items) || !items.length || !quote || typeof quote !== 'object') return items;
   const price = _positiveNumber(quote.price);
@@ -470,7 +501,9 @@ export function applyLiveQuoteToIntraday(items, quote, now = new Date(), isFutur
     if (!isFuturesMarketOpen(now, tradingDates, quote.code ? [quote.code] : [])) return items;
   } else {
     const parts = getBeijingClockParts(now);
-    if (!_isContinuousTradingMinute(parts)) return items;
+    if (!_isContinuousTradingMinute(parts)) {
+      return _correctLastIntradayPoint(items, quote, getBeijingMinuteChartSeconds(now));
+    }
   }
   const time = getBeijingMinuteChartSeconds(now);
   if (!Number.isFinite(time)) return items;

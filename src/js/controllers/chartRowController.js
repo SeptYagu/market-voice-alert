@@ -437,6 +437,18 @@ export class ChartRowManager {
         applyIntradayDataToChart(ctl, inst, data);
       }
       this.updateIntradayStatus(code);
+      // The cached intraday source can lag (or truncate) the live quote by up
+      // to its cache TTL, and this setData just overwrote whatever live tick
+      // was applied earlier. Re-apply the latest quote on top so the chart's
+      // last point matches the table/kline immediately instead of staying
+      // stale until the next refresh tick.
+      if (typeof this.getQuote === 'function') {
+        const q = this.getQuote(code);
+        if (q && Number(q.price) > 0) {
+          inst.code = code;
+          applyLiveQuoteToIntradayChart(ctl, inst, q, new Date(), this.getTradingDates());
+        }
+      }
     } catch (e) {
       if (!isCurrentTask()) return;
       if (e && e.name !== 'AbortError') {
