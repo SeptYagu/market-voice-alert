@@ -1,5 +1,15 @@
 # STATUS.md - 项目状态
 
+## 2026-09-10 momentum 峰值触及审查缺陷闭环（P1 + P2）
+
+针对 `b321522` 审查（基线 `9449721`）的 1×P1 + 5×P2 已全部处置：P1 加规则版本
+`MOMENTUM_RULE='peak-touch-v1'`，换判定口径即自动作废旧缓存（`06944d1`）；P2 按
+用户决策**保留**峰值达标但已跌回成本线以下的标的（`isMomentumEligible` 去掉当前
+涨幅为正的要求），并把排序器、回踩阈值/文案、表头口径收敛为单一定义（`e188fb4`）。
+验证：lint 0 问题；单测 **768/768**；E2E **63/63**；build 通过。详见
+[`2026-09-10-momentum-peak-fix-closure.md`](docs/handoff/2026-09-10-momentum-peak-fix-closure.md)。
+遗留：新 UI（峰值副行）在单测/E2E 中零覆盖，E2E mock 需补 `maxGainPercent`。
+
 ## 2026-09-10 审查缺陷闭环（R1–R8 及 M1–M6、m1–m3）
 
 以「需求与功能真实可用」为验收标准，对 `82c294f` 的 M1–M6 / m1–m3 修复做了独立复核（见 [`m1m6-fix-verification.md`](docs/handoff/2026-09-10-m1m6-fix-verification.md)）：其中 M4、M6、m2 成立；**M5 的修复实际未生效，M3 的修复反而引入了更严重的队列死锁**，M1 方向正确但对主流行情源失效。以下为本轮真正落地并逐项验证的修复：
