@@ -68,7 +68,10 @@ export async function fetchMomentumUniverse({ signal, watchList = [], limitUpIte
     ...((limitUpItems || []).map((it) => it && it.code).filter(Boolean))
   ])].filter((code) => /^(sh|sz|bj)\d{6}$/i.test(code));
   if (!fallbackCodes.length) return [];
-  return fetchQuotes(fallbackCodes, { signal });
+  // fetchQuotes answers with a { quotes, failedCodes, asOf } envelope; this helper
+  // only ever needs the candidate rows themselves.
+  const { quotes } = await fetchQuotes(fallbackCodes, { signal });
+  return quotes;
 }
 
 export async function scanMomentumCandidate(candidate, { signal, limitUpItems = [] } = {}) {

@@ -493,6 +493,20 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   font-weight: 600;
 }
 
+/* The last refresh for this code failed: keep the old price visible but make it
+   obvious that it is not current. */
+.watch-table tbody tr.stale td.num,
+.watch-table tbody tr.stale td.name,
+.watch-table tbody tr.stale td.code {
+  opacity: 0.55;
+  font-style: italic;
+}
+.watch-table tbody tr.stale td[data-field="price"]::after {
+  content: ' ⏳';
+  font-style: normal;
+  opacity: 0.8;
+}
+
 .watch-table tbody tr.chart-row {
   cursor: default;
 }

@@ -101,6 +101,25 @@ QUnit.module('views.monitorTableView', (hooks) => {
     t.equal(row.getAttribute('role'), 'button');
     t.equal(row.getAttribute('aria-expanded'), 'false');
     t.equal(row.getAttribute('data-code'), 'sh600519');
+    t.equal(row.getAttribute('data-stale'), null, 'a fresh row carries no stale marker');
+    t.false(row.classList.contains('stale'));
+  });
+
+  QUnit.test('renderRow marks a row whose quote failed to refresh as stale', (t) => {
+    const staleRow = renderRow('sh600519', false, {
+      quotesMap: new Map([['sh600519', { code: 'sh600519', name: '茅台', price: 1800, stale: true }]])
+    });
+    t.equal(staleRow.getAttribute('data-stale'), 'true');
+    t.true(staleRow.classList.contains('stale'), 'CSS hook for the dimmed/italic treatment');
+    const priceCell = staleRow.querySelector('td[data-field="price"]');
+    t.true(priceCell.getAttribute('title').includes('上一次有效报价'), 'tooltip explains the frozen price');
+
+    // A stale marker must not survive a successful refresh.
+    const freshRow = renderRow('sh600519', false, {
+      quotesMap: new Map([['sh600519', { code: 'sh600519', name: '茅台', price: 1810, stale: false }]])
+    });
+    t.equal(freshRow.getAttribute('data-stale'), null);
+    t.false(freshRow.classList.contains('stale'));
   });
 
   QUnit.test('updateRowQuoteCells updates quote cells in place via data-field', (t) => {

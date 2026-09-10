@@ -105,6 +105,10 @@ export function evaluateAlerts(quotes, subscribedCodes, threshold, statesIn) {
   for (const code of codes) {
     const quote = quotes && typeof quotes.get === 'function' ? quotes.get(code) : null;
     if (!quote) continue;
+    // A quote whose refresh failed still shows the previous price. Alerting on it
+    // would fire on stale data, so hold the last known direction and wait for a real
+    // update instead of comparing against a value that never moved.
+    if (quote.stale === true) continue;
     const prev = states[code] || { direction: null };
     const r = shouldTriggerAlert(quote, threshold, prev);
     states[code] = r.state;

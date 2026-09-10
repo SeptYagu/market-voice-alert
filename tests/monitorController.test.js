@@ -34,11 +34,11 @@ QUnit.module('Production monitor controller', () => {
       storage: { get: () => [...saved], add: code => saved.push(code), remove: codes => { saved = saved.filter(code => !codes.includes(code)); } },
       timers: { setInterval: fn => { timers.set(++id, fn); return id; }, clearInterval: key => timers.delete(key) } });
     const first = controller.refresh(); controller.stop(); const second = controller.refresh();
-    pending[0]([{ code: 'sh600000', price: 9 }]); await first;
+    pending[0]({ quotes: [{ code: 'sh600000', price: 9 }], failedCodes: [] }); await first;
     assert.true(state.loading);
     assert.equal(state.quotes.size, 0);
     controller.removeCodes(['sh600000']);
-    pending[1]([{ code: 'sh600000', price: 10 }]); await second;
+    pending[1]({ quotes: [{ code: 'sh600000', price: 10 }], failedCodes: [] }); await second;
     assert.equal(state.quotes.size, 0, 'removed quote cannot be resurrected');
     assert.deepEqual(controller.addCodes(['sh600001', 'sh600001']), ['sh600001']);
     controller.applySchedule(true); controller.applySchedule(true);

@@ -237,12 +237,15 @@ export async function fetchQuotes(codes, opts = {}) {
   const gotCodes = new Set(fulfilled.map((q) => q && q.code).filter(Boolean));
   const failedCodes = requestedCodes.filter((c) => !gotCodes.has(c));
 
-  fulfilled.quotes = fulfilled;
-  fulfilled.failedCodes = failedCodes;
-  fulfilled.asOf = Date.now();
-  fulfilled.source = 'aggregated';
-
-  return fulfilled;
+  // Batch envelope: callers need to know which codes are missing, not just whether
+  // the batch threw, otherwise a partially failed refresh is indistinguishable from
+  // a fully successful one. `quotes` is a plain array so nothing self-references.
+  return {
+    quotes: fulfilled,
+    failedCodes,
+    asOf: Date.now(),
+    source: 'aggregated'
+  };
 }
 
 function _isTradingSessionTime(time) {

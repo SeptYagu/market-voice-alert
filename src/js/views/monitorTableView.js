@@ -95,13 +95,18 @@ export function renderRow(code, isActive, options = {}) {
   const isFuture = q.type === 'future' || isFutureCode(code);
   const displayCode = isFuture ? code.toUpperCase() : code;
   const priceDecimals = isFuture && q.priceTick && q.priceTick < 0.01 ? 3 : 2;
+  // The row keeps its last successful price when a refresh fails; mark it so an old
+  // quote cannot pass for a fresh one.
+  const stale = q.stale === true;
+  const staleTitle = '该行情本轮未刷新成功，显示的是上一次有效报价';
 
   return el(
     'tr',
     {
       'data-code': code,
-      class: isActive ? 'active' : null,
-      title: isActive ? '点击关闭 K 线' : '点击查看 K 线',
+      'data-stale': stale ? 'true' : null,
+      class: [isActive ? 'active' : null, stale ? 'stale' : null].filter(Boolean).join(' ') || null,
+      title: stale ? staleTitle : (isActive ? '点击关闭 K 线' : '点击查看 K 线'),
       role: 'button',
       tabindex: '0',
       'aria-expanded': isActive ? 'true' : 'false',
@@ -120,7 +125,8 @@ export function renderRow(code, isActive, options = {}) {
     el('td', { class: 'col-sub', 'data-field': 'sub' }, subCheckbox),
     el('td', { class: 'code', 'data-field': 'code' }, displayCode),
     el('td', { class: 'name', 'data-field': 'name' }, q.name || '...'),
-    el('td', { class: `num ${dir}`, 'data-field': 'price' }, formatNumber(q.price, priceDecimals)),
+    el('td', { class: `num ${dir}`, 'data-field': 'price', title: stale ? staleTitle : null },
+      formatNumber(q.price, priceDecimals)),
     el('td', { class: `num ${dir}`, 'data-field': 'percent' }, formatPercent(q.changePercent)),
     el('td', { class: 'num', 'data-field': 'open' }, formatPriceWithPercent(q.open, q.openChangePercent)),
     el('td', { class: 'num', 'data-field': 'volume', title: isFuture ? '成交量' : '量比' }, isFuture ? (q.volume ? `${Math.round(q.volume).toLocaleString('en-US')}` : '-') : formatNumber(q.volumeRatio)),

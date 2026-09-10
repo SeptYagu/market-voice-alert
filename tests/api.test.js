@@ -4,6 +4,7 @@ import {
   buildEastmoneyTrendsUrl,
   buildSinaFutureUrl,
   splitCodes,
+  fetchQuotes,
   fetchKline,
   fetchIntraday,
   EASTMONEY_FIELDS,
@@ -615,5 +616,61 @@ QUnit.module('api.fetchKline (Phase 8 cache + dedup + SWR)', (hooks) => {
     await fetchKline('sh999999', { period: '1d' });
     await new Promise(r => setTimeout(r, 30));
     t.equal(events.length, 0, 'no events after unsubscribe');
+  });
+});
+
+QUnit.module('api.fetchQuotes envelope', (hooks) => {
+  let originalFetch;
+  hooks.beforeEach(() => { originalFetch = globalThis.fetch; });
+  hooks.afterEach(() => { globalThis.fetch = originalFetch; });
+
+  // Tencent returns only sh600000; the eastmoney fallback for the missing code fails.
+  function stubPartialBatch() {
+    globalThis.fetch = async (url) => {
+      const target = String(url);
+      if (target.includes('/api/tencent/')) {
+        const row = 'v_sh600000="1~浦发银行~sh600000~10.50~9.00~9.50~200~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~20260910100000~1.50~16.67~10.60~9.40~0/200/4000~"';
+        return { ok: true, status: 200, arrayBuffer: async () => new TextEncoder().encode(row).buffer };
+      }
+      return { ok: false, status: 502, json: async () => ({}) };
+    };
+  }
+
+  QUnit.test('answer is a plain envelope, not an array carrying its own properties', async (t) => {
+    stubPartialBatch();
+    const res = await fetchQuotes(['sh600000', 'sh600001']);
+    t.false(Array.isArray(res), 'an array with extra properties is ambiguous for callers');
+    t.equal(res.quotes.length, 1);
+    t.equal(res.quotes[0].code, 'sh600000');
+    t.equal(res.quotes[0].price, 10.5);
+    t.equal(typeof res.asOf, 'number');
+    t.equal(res.source, 'aggregated');
+    // A self-referencing envelope would explode on JSON.stringify / structuredClone.
+    t.equal(JSON.stringify(res).includes('"quotes"'), true, 'envelope survives serialization');
+  });
+
+  QUnit.test('a code that produced no quote is reported in failedCodes', async (t) => {
+    stubPartialBatch();
+    const res = await fetchQuotes(['sh600000', 'sh600001']);
+    t.deepEqual(res.failedCodes, ['sh600001'], 'missing code is named, not silently dropped');
+  });
+
+  QUnit.test('a fully successful batch reports no failures', async (t) => {
+    globalThis.fetch = async (url) => {
+      const target = String(url);
+      if (target.includes('/api/tencent/')) {
+        const row = 'v_sh600000="1~浦发银行~sh600000~10.50~9.00~9.50~200~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~20260910100000~1.50~16.67~10.60~9.40~0/200/4000~"';
+        return { ok: true, status: 200, arrayBuffer: async () => new TextEncoder().encode(row).buffer };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    };
+    const res = await fetchQuotes(['sh600000']);
+    t.deepEqual(res.failedCodes, []);
+    t.equal(res.quotes.length, 1);
+  });
+
+  QUnit.test('every provider failing still rejects instead of resolving empty', async (t) => {
+    globalThis.fetch = async () => { throw new Error('network down'); };
+    await t.rejects(fetchQuotes(['sh600000']), /行情数据源全部失败/);
   });
 });

@@ -196,6 +196,37 @@ QUnit.module('alert.evaluateAlerts', () => {
     evaluateAlerts(quotes, ['sh600519'], 5, states);
     t.equal(JSON.stringify(states), before, 'input states untouched');
   });
+
+  QUnit.test('a quote whose refresh failed can never trigger an alert', (t) => {
+    const quotes = new Map([
+      ['sh600519', { code: 'sh600519', name: '贵州茅台', price: 1850, changePercent: 9, type: 'stock', stale: true }]
+    ]);
+    const result = evaluateAlerts(quotes, ['sh600519'], 5, {});
+    t.equal(result.triggered.length, 0, 'stale quote is not evaluated');
+  });
+
+  QUnit.test('a hold on stale data keeps the previous direction instead of resetting it', (t) => {
+    const liveUp = new Map([
+      ['sh600519', { code: 'sh600519', name: '贵州茅台', price: 1850, changePercent: 9, type: 'stock' }]
+    ]);
+    const r1 = evaluateAlerts(liveUp, ['sh600519'], 5, {});
+    t.deepEqual(r1.states['sh600519'], { direction: 'up' });
+
+    // The next refresh fails: the row keeps the old price, which still reads +9%.
+    const stale = new Map([
+      ['sh600519', { code: 'sh600519', name: '贵州茅台', price: 1850, changePercent: 9, type: 'stock', stale: true }]
+    ]);
+    const r2 = evaluateAlerts(stale, ['sh600519'], 5, r1.states);
+    t.equal(r2.triggered.length, 0, 'no duplicate alert from a frozen price');
+    t.deepEqual(r2.states['sh600519'], { direction: 'up' }, 'direction is held, not reset to null');
+
+    // Once a real update arrives, the state machine continues from where it was.
+    const recovered = new Map([
+      ['sh600519', { code: 'sh600519', name: '贵州茅台', price: 1850, changePercent: 1, type: 'stock', stale: false }]
+    ]);
+    const r3 = evaluateAlerts(recovered, ['sh600519'], 5, r2.states);
+    t.deepEqual(r3.states['sh600519'], { direction: null }, 'recovery resets the direction');
+  });
 });
 
 QUnit.module('alert.notifications', (hooks) => {

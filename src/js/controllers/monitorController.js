@@ -33,25 +33,30 @@ export function createMonitorController({ getState, fetchQuotes, fetchKline, sto
     try {
       const res = await fetchQuotes(codes, { signal: token.signal });
       if (!scope.isCurrent(token)) return;
-      const quotes = Array.isArray(res) ? res : (res && res.quotes) || [];
+      const quotes = (res && res.quotes) || [];
       const failedCodes = (res && res.failedCodes) || [];
-      if (Array.isArray(quotes) && quotes.length > 0) {
-        const currentCodes = new Set(getRefreshCodes());
-        for (const quote of quotes) {
-          if (currentCodes.has(quote.code)) {
-            quote.stale = false;
-            quote.lastEffectiveTime = clock();
-            state.quotes.set(quote.code, quote);
-          }
+      const currentCodes = new Set(getRefreshCodes());
+      const asOf = clock();
+      for (const quote of quotes) {
+        if (currentCodes.has(quote.code)) {
+          quote.stale = false;
+          quote.lastEffectiveTime = asOf;
+          state.quotes.set(quote.code, quote);
         }
-        for (const failCode of failedCodes) {
-          if (state.quotes.has(failCode)) {
-            const old = state.quotes.get(failCode);
-            state.quotes.set(failCode, { ...old, stale: true });
-          }
+      }
+      for (const failCode of failedCodes) {
+        if (state.quotes.has(failCode)) {
+          const old = state.quotes.get(failCode);
+          state.quotes.set(failCode, { ...old, stale: true });
         }
-        state.lastUpdate = clock();
+      }
+      if (quotes.length || failedCodes.length) {
         state.failedCodes = failedCodes;
+        // "更新于" must mean "every requested code is current". A partial batch keeps
+        // the previous success time and the missing rows stay flagged as stale, so an
+        // old price can never masquerade as a fresh one.
+        if (quotes.length) state.lastEffectiveAt = asOf;
+        if (quotes.length && !failedCodes.length) state.lastUpdate = asOf;
         onQuotes();
       }
     } catch (error) {

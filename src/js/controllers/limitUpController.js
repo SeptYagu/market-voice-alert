@@ -352,7 +352,7 @@ export function createLimitUpController(appContext) {
   async function enrichLimitUpItemsWithQuotes(items, signal) {
     if (!Array.isArray(items) || !items.length) return [];
     try {
-      const quotes = await fetchQuotes(items.map((it) => it.code), { signal });
+      const { quotes } = await fetchQuotes(items.map((it) => it.code), { signal });
       const quoteMap = new Map(quotes.map((q) => [q.code, q]));
       return items.map((it) => {
         const q = quoteMap.get(it.code);

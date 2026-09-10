@@ -34,7 +34,7 @@ QUnit.module('Phase A Defect Fixes (R1, R2, R3, R4, R8)', () => {
     assert.equal(pending[0].signal.aborted, false, 'in-flight slow request is preserved');
 
     // Resolve the slow response
-    pending[0].resolve([{ code: 'sh600000', price: 15.5 }]);
+    pending[0].resolve({ quotes: [{ code: 'sh600000', price: 15.5 }], failedCodes: [] });
     await p1;
     await p2;
 
@@ -175,17 +175,18 @@ QUnit.module('Phase A Defect Fixes (R1, R2, R3, R4, R8)', () => {
 
     const mockFetchQuotes = async (_codes) => {
       // Only sh600000 succeeds; sh600001 fails/missing
-      const fulfilled = [{ code: 'sh600000', price: 10.5 }];
-      fulfilled.quotes = fulfilled;
-      fulfilled.failedCodes = ['sh600001'];
-      fulfilled.asOf = Date.now();
-      fulfilled.source = 'aggregated';
-      return fulfilled;
+      return {
+        quotes: [{ code: 'sh600000', price: 10.5 }],
+        failedCodes: ['sh600001'],
+        asOf: Date.now(),
+        source: 'aggregated'
+      };
     };
 
     const ctl = createMonitorController({
       getState: () => state,
-      fetchQuotes: mockFetchQuotes
+      fetchQuotes: mockFetchQuotes,
+      clock: () => new Date('2026-09-10T06:00:00Z')
     });
 
     await ctl.refresh();
@@ -195,6 +196,24 @@ QUnit.module('Phase A Defect Fixes (R1, R2, R3, R4, R8)', () => {
     assert.equal(state.quotes.get('sh600001').price, 20, 'old price retained for failed code');
     assert.equal(state.quotes.get('sh600001').stale, true, 'missing code is flagged stale');
     assert.deepEqual(state.failedCodes, ['sh600001']);
+    assert.equal(state.lastUpdate, undefined,
+      'a partial batch must not advance the "updated at" time that the status bar shows');
+    assert.equal(+state.lastEffectiveAt, +new Date('2026-09-10T06:00:00Z'),
+      'the last effective quote time is tracked separately');
+
+    const fullState = {
+      watchList: ['sh600000'], subscribed: new Set(),
+      quotes: new Map([['sh600000', { code: 'sh600000', price: 10 }]]),
+      autoRefreshEnabled: true
+    };
+    const fullCtl = createMonitorController({
+      getState: () => fullState,
+      fetchQuotes: async () => ({ quotes: [{ code: 'sh600000', price: 11 }], failedCodes: [] }),
+      clock: () => new Date('2026-09-10T06:00:00Z')
+    });
+    await fullCtl.refresh();
+    assert.equal(+fullState.lastUpdate, +new Date('2026-09-10T06:00:00Z'));
+    assert.deepEqual(fullState.failedCodes, []);
   });
 
   QUnit.test('M6: In-flight ownership is scoped to current token; older request completion does not clear inFlight prematurely', async assert => {
@@ -224,7 +243,7 @@ QUnit.module('Phase A Defect Fixes (R1, R2, R3, R4, R8)', () => {
     assert.equal(ctl.inspect().inFlight, true);
 
     // 3. Resolve first (aborted) request. Its finally block executes.
-    pending[0].resolve([{ code: 'sh600000', price: 10 }]);
+    pending[0].resolve({ quotes: [{ code: 'sh600000', price: 10 }], failedCodes: [] });
     await p1;
 
     // inFlight MUST remain true because second request is still in-flight!
@@ -236,7 +255,7 @@ QUnit.module('Phase A Defect Fixes (R1, R2, R3, R4, R8)', () => {
     await p3;
 
     // 5. Complete second request
-    pending[1].resolve([{ code: 'sh600000', price: 11 }]);
+    pending[1].resolve({ quotes: [{ code: 'sh600000', price: 11 }], failedCodes: [] });
     await p2;
 
     assert.equal(ctl.inspect().inFlight, false, 'inFlight released after current request completes');

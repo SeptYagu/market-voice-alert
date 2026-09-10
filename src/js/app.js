@@ -649,6 +649,11 @@ function renderStatus() {
   if (state.lastUpdate) {
     parts.push(`更新于 ${formatDateTime(state.lastUpdate)}`);
   }
+  // Codes whose last refresh failed keep their old price on screen; say so instead of
+  // letting the timestamp imply everything is current.
+  if (Array.isArray(state.failedCodes) && state.failedCodes.length) {
+    parts.push(`⚠️ ${state.failedCodes.length} 项行情未更新`);
+  }
   if (state.info) parts.push(state.info);
   if (state.error) parts.push(`错误: ${state.error}`);
   bar.textContent = parts.join(' · ');
