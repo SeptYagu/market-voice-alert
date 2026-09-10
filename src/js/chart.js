@@ -64,16 +64,30 @@ function _timeScaleOptions(c, period = '1d') {
   };
 }
 
-// Intraday (分时) charts: both edges pinned to the session bounds (9:30 and
-// 15:00) and panning/zooming disabled — the full session is always visible.
+// Intraday (分时) charts: panning/zooming disabled — the full session is always
+// visible. NOTE 1: fixLeftEdge/fixRightEdge must stay OFF: lightweight-charts
+// anchors those edges to the last bar *with a value* and ignores trailing
+// whitespace bars, which shoves the whole curve to the right of the plot.
+// The visible range is pinned explicitly via setVisibleLogicalRange in
+// setData/fitContent instead.
+// NOTE 2: handleScroll/handleScale are CHART-ROOT options — nesting them under
+// timeScale is silently ignored by lightweight-charts, so they are applied via
+// _intradayChartInteractionOptions() at the root level.
 function _intradayTimeScaleOptions(c) {
   return {
     ..._timeScaleOptions(c, '1m'),
-    fixLeftEdge: true,
-    fixRightEdge: true,
+    fixLeftEdge: false,
+    fixRightEdge: false,
     lockVisibleTimeRangeOnResize: true,
     leftOffset: 0,
-    rightOffset: 0,
+    rightOffset: 0
+  };
+}
+
+// Chart-root options: disable all user scroll/zoom/scale interaction
+// (mouse drag, wheel, pinch, price-axis drag, double-click reset).
+function _intradayChartInteractionOptions() {
+  return {
     handleScroll: false,
     handleScale: false
   };
@@ -431,7 +445,20 @@ export function createIntradayChart(container, opts = {}) {
   let zeroLine = null;
   let symmetricPriceRange = null;
   let symmetricPercentRange = null;
-  const chart = createChart(container, buildChartOptions({ width, height, theme: currentTheme, period: '1m' }));
+  let lastDisplayCount = 0;
+  // Keeps the full session visible: fitContent() and the fix* edge options both
+  // anchor to the last bar *with a value* and ignore trailing whitespace bars,
+  // so we pin the logical range to the generated display timeline instead.
+  function pinFullSessionRange() {
+    if (lastDisplayCount < 2) return;
+    try {
+      chart.timeScale().setVisibleLogicalRange({ from: 0, to: lastDisplayCount - 1 });
+    } catch { /* ignore */ }
+  }
+  const chart = createChart(container, {
+    ...buildChartOptions({ width, height, theme: currentTheme, period: '1m' }),
+    ..._intradayChartInteractionOptions()
+  });
   chart.applyOptions({ timeScale: _intradayTimeScaleOptions(colors) });
   const priceSeries = chart.addLineSeries({
     priceScaleId: 'left',
@@ -527,6 +554,7 @@ export function createIntradayChart(container, opts = {}) {
   function setData(items) {
     const arr = Array.isArray(items) ? items : [];
     intradayDataMap.clear();
+    lastDisplayCount = 0;
     if (!arr.length) {
       currentPrevClose = null;
       if (detailLegend) detailLegend.textContent = '';
@@ -575,6 +603,7 @@ export function createIntradayChart(container, opts = {}) {
       }
     }
     const displayTimes = (!isFutureTimeline && timeline.length) ? timeline : [...byTime.keys()].sort((a, b) => a - b);
+    lastDisplayCount = displayTimes.length;
     const averageByTime = new Map();
     for (const it of arr) {
       const explicitAverage = Number(it && it.avgPrice);
@@ -646,6 +675,7 @@ export function createIntradayChart(container, opts = {}) {
       });
     }
     if (arr.length) renderIntradayDetail(arr[arr.length - 1].time);
+    pinFullSessionRange();
   }
 
   function updatePoint(point) {
@@ -684,7 +714,10 @@ export function createIntradayChart(container, opts = {}) {
       theme: currentTheme,
       period: '1m'
     }));
-    chart.applyOptions({ timeScale: _intradayTimeScaleOptions(c) });
+    chart.applyOptions({
+      ..._intradayChartInteractionOptions(),
+      timeScale: _intradayTimeScaleOptions(c)
+    });
     priceSeries.applyOptions({ color: INTRADAY_PRICE_COLOR });
     averageSeries.applyOptions({ color: INTRADAY_AVG_COLOR });
     volumeSeries.applyOptions({ color: c.up });
@@ -699,7 +732,7 @@ export function createIntradayChart(container, opts = {}) {
   }
 
   function fitContent() {
-    try { chart.timeScale().fitContent(); } catch { /* ignore */ }
+    pinFullSessionRange();
   }
 
   function getVisibleRange() {
