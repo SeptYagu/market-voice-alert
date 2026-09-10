@@ -4,6 +4,7 @@ import {
   formatNumber,
   formatPercent,
   formatAmount,
+  formatCacheAge,
   priceDirection
 } from '../format.js';
 import { PERIODS, PERIOD_LABELS } from '../kline.js';
@@ -205,7 +206,8 @@ export function renderMomentumSectionView(wrap, options = {}) {
   const statusBits = [];
   if (s.loading || s.serverScanning) statusBits.push(`扫描中 ${s.scanned}/${s.total || '?'}`);
   else if (s.lastUpdate) statusBits.push(`更新于 ${s.lastUpdate.toLocaleTimeString()}`);
-  if (s.stale) statusBits.push('(过期缓存)');
+  const cacheAge = formatCacheAge(s.generatedAt, s.stale);
+  if (cacheAge) statusBits.push(cacheAge);
   if (s.message) statusBits.push(s.message);
   if (s.error) statusBits.push(`错误: ${s.error}`);
 

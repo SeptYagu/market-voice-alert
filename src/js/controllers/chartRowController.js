@@ -20,7 +20,7 @@ import { fetchKline, fetchIntraday } from '../api.js';
 import { chartTimeToDate, getBeijingDate } from '../time.js';
 import { isFutureCode } from '../futures/instrument.js';
 import { isLiveTradeDate } from '../marketSession.js';
-import { intradaySourceLabel } from '../format.js';
+import { formatCacheAge, intradaySourceLabel } from '../format.js';
 
 export const MA_PERIODS = [5, 10, 20, 60];
 
@@ -173,10 +173,12 @@ export function formatIntradayStatus(inst) {
     }
     const label = intradaySourceLabel(inst.intradayData.source);
     if (label) summary.push(`(${label})`);
-    if (isStale) summary.push('(过期缓存)');
+    const cacheAge = formatCacheAge(inst.intradayData.generatedAt, isStale);
+    if (cacheAge) summary.push(cacheAge);
     parts.push(summary.join(' · '));
   } else if (!inst.intradayLoading && !inst.intradayError) {
-    const staleSuffix = isStale ? ' (过期缓存)' : '';
+    const cacheAge = formatCacheAge(inst.intradayData && inst.intradayData.generatedAt, isStale);
+    const staleSuffix = cacheAge ? ` ${cacheAge}` : '';
     parts.push(inst.selectedTradeDate ? `${inst.selectedTradeDate} · 暂无分时${staleSuffix}` : `点击右侧日K查看分时${staleSuffix}`);
   }
   return parts.join(' · ');

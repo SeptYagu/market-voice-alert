@@ -1,5 +1,8 @@
 # 2026-09-10 修复验证：82c294f 对 R1–R8 审查（M1–M6 / m1–m3）的闭环情况
 
+> [!NOTE]
+> **闭环补记（后续提交）**：本文结论描述的是 `82c294f` 当时的状态。本文列出的全部未闭环项与 Minor 项其后已修复：`fa24120`（M3′ 归属判定提到清理之前）、`c01b3da`（M5′ 用显式 `syncMemory` 标记替代 `Function.length` 推断）、`19c2500`（M1′ 以快照 provenance 作为同日证据，恢复主源盘中合并）、`f9055e1`（M2′ 对象封套 + `lastUpdate`/`lastEffectiveAt` 分离 + stale 展示与提醒抑制）、以及 m1′/m3′ 收尾（统一 `formatCacheAge()`、R7 断言改用真实源产物、历史基线标注补到被验证文档）。当前验证：`lint` 0 问题、单测 **764/764**、E2E **63/63**、`build` 通过；脚本 `--expect=fixed` 在当前 `main` 全过、`--expect=broken` 在 `1c62554` 复现全部 8 项。详见文末「闭环记录」。
+
 ## 审查概览
 
 - 审查目标：`market-voice-alert` 最新提交
@@ -164,3 +167,20 @@ node docs/handoff/2026-09-10-review-repro.mjs   # 8/8 PASSED（已翻转为期�
 ```
 
 本轮独立复现脚本为仓库外临时文件（覆盖 M1 真实源字段、M2 部分失败封套与 `lastUpdate`、M3 迟到回调交叉、M5 门控真值、M4 发布窗口、M6 归属），验证后已删除；工作区保持干净，未修改任何业务代码。
+
+## 闭环记录
+
+本文列出的每一项未闭环项都已按「功能真实可用」而非「测试通过」的标准修复并复验。
+
+| 项 | 问题实质 | 修复提交 | 复验方式 |
+| --- | --- | --- | --- |
+| M3′ | `finish()` 在归属校验**之前**清掉 `_safetyTimer`/`_finishCurrent`；被 `cancel()` 的 utterance 迟到回调会掐掉下一条的安全定时器，队列永久卡死 | `fa24120` | 旧代码上 M3 用例 3 例失败 → 新代码 0 失败；另加「迟到回调」「重入 cancel」「恰好上报一次」3 例 |
+| M5′ | `speech.speak.length === 1` 恒为真（`speak(text, opts = {})` 的参数带默认值不计入 `Function.length`），`memory` 在播报确认前即被同步写入 | `c01b3da` | 夹具改为真实设备契约（`opts.onSpoken('end')`）；旧代码 1 例失败 → 新代码 0 失败 |
+| M1′ | `82c294f` 把证据字段对齐到 `quoteDate`/`updateTime`，但 aktools 无日期字段、新浪只有 `HH:MM:SS`，导致主源盘中合并被整体关死 | `19c2500` | 冻结时钟 + 预置缓存做端到端证明：修复前 `lastClose=20/marketDate=20260909`（今日缺失）→ 修复后 `lastClose=40/marketDate=20260910`；stale 快照在两种情况下均被拒 |
+| M2′ | 封套为自引用数组（`JSON.stringify`/`structuredClone` 直接抛错）；部分缺失仍被当作成功 | `f9055e1` | `fetchQuotes` 返回普通对象；`lastUpdate` 仅整批成功时推进；stale 行标记/状态栏/提醒抑制均有单测与 E2E 覆盖 |
+| m1′ | `generatedAt` 取出却不渲染，两个视图各拼一份 `(过期缓存)` | 本轮 | 抽出 `formatCacheAge()`，涨停看板表头、动量状态区、分时状态行共用 |
+| m3′ | R7 断言用虚构 `time` 字段且 `plan.liveDate` 为空 → 恒真；历史基线标注挂错文档 | 本轮 | R7 改为真实源产物（`quoteDate`/`updateTime`/快照 provenance），并在 `1c62554` 上 `--expect=broken` 复现 8/8、当前 `main` 上 `--expect=fixed` 通过 8/8；标注补到 `2026-09-10-r1r8-fix-review.md` |
+
+M4 残留一并处理：原因归档新增 `reasonSource: aktools-stock_lhb_detail_em`，标明数据来自龙虎榜席位明细而非上涨原因。
+
+最终门禁：`npm run lint` 0 问题；单测 **764/764**；Playwright E2E **63/63**；`npm run build` 通过。

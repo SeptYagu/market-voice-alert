@@ -1,13 +1,20 @@
 # STATUS.md - 项目状态
 
-## 2026-09-10 审查缺陷与核心攻坚闭环（R1–R8 及 M1–M6、m1–m3）
+## 2026-09-10 审查缺陷闭环（R1–R8 及 M1–M6、m1–m3）
 
-全面闭环 `2026-09-10-r1r8-fix-review.md` 与交接文档中识别的缺陷与审查缺口：
-1. **M1 & R7 (盘前扫描与今日柱合成)**：`momentumService.js` 改为必须具备正向日期证据（`quoteDate`/`date`/`updateTime`）且匹配交易日才合成为今日柱，彻底杜绝隔日旧报价被误写为今日导致动量虚高；`phaseBFixes.test.js` 覆盖真实行情源解析产物。
-2. **M2, M6 & R2, R1 (报价时效与并发请求锁)**：`fetchQuotes` 返回 `{ quotes, failedCodes, asOf, source }` 封套；`monitorController` 遇到部分缺失标的标记 `stale: true` 并保留旧价，全失败时不推进 `lastUpdate` 并记录错误；`finally` 块基于 `scope.isCurrent(token)` 正确释放 `inFlight` 锁。
-3. **M3, M5 & R6 (语音队列背压与提醒保护)**：`tts.js` 超时主动通知原生合成器 `synth.cancel()` 并动态计算超时阈值；高优先级告警支持插队并淘汰普通播报，支持有效期过滤；`voiceController` 仅在真实播完回调 `onSpoken` 后更新 `memory` 去重基线。
-4. **M4 & R5 (历史涨停原因发布完整性)**：`limitUpService.js` 调整原因完整性判定至北京时间 20:30，避免收盘即冻结未发布龙虎榜的不完整数据。
-5. **m1, m2, m3 (UI 过期提示、死代码清理与复现脚本对齐)**：涨停看板及 10 日强势股表头全面支持 `(过期缓存)` 标识；清理 `api.js` 死代码再导出并规范 `source` 与 `cacheSource` 语义；`docs/handoff/2026-09-10-review-repro.mjs` 调整为支持期望验证，R1–R8 全绿通过（750 单测全过）。
+以「需求与功能真实可用」为验收标准，对 `82c294f` 的 M1–M6 / m1–m3 修复做了独立复核（见 [`m1m6-fix-verification.md`](docs/handoff/2026-09-10-m1m6-fix-verification.md)）：其中 M4、M6、m2 成立；**M5 的修复实际未生效，M3 的修复反而引入了更严重的队列死锁**，M1 方向正确但对主流行情源失效。以下为本轮真正落地并逐项验证的修复：
+
+1. **M3′ & R6 语音队列归属竞态（`fa24120`）**：`tts.js` 的 `finish()` 原先在归属校验**之前**就清掉 `_safetyTimer`/`_finishCurrent`，已 `cancel()` 的 utterance 迟到回调会把下一条的安全定时器一起清掉，队列永久卡死。现改为先判归属再清理；所有终止路径（`end`/`error`/`timeout`/`expired`/`replaced`/`dropped`/`canceled`）经 `_notify` 恰好上报一次 `onSpoken`。
+2. **M5′ 播报确认后再写去重基线（`c01b3da`）**：`voiceController.js` 原用 `speech.speak.length === 1` 猜「旧适配器」，但 `speak(text, opts = {})` 的参数带默认值使 `Function.length` 恒为 1，判定永真 → `memory` 在**播报确认之前**就被同步写入。现改为显式 `syncMemory: true` 选择加入，`onSpoken` 仅在 `end` 时写入。
+3. **M1′ & R7 实时行情合并证据（`19c2500`）**：`82c294f` 虽已改读 `quoteDate`/`updateTime`，但 aktools 快照无任何日期字段、新浪只给 `HH:MM:SS`，于是**盘中合并在主源上被整体关死**。现新增 `snapshotEvidenceDateKey()`，以快照自身的 `generatedAt` 作为「同日且非 stale」证据；盘前/盘后 `liveDate` 为空、stale 快照不提供证据，R7 原始保证不变（过期快照仍被拒）。
+4. **M2′ 部分失败可见性（`f9055e1`）**：`fetchQuotes` 返回可序列化的 `{ quotes, failedCodes, asOf, source }` 封套（此前是把返回数组自引用挂 `quotes` 属性）；`lastUpdate` 仅在整批成功时推进，新增 `lastEffectiveAt`；缺失标的标记 `stale: true`，表格行内 `⏳` + tooltip、状态栏提示 `⚠️ N 项行情未更新`，`alert.js` 对 stale 报价保持上一次方向——既不误触发，也不会在恢复时重复触发。
+5. **m1 / m3′ 缓存时效标识与复现脚本（本轮）**：`format.js` 新增统一 `formatCacheAge(generatedAt, stale, now)`，涨停看板表头、10 日强势股状态区、分时状态行共用同一措辞（`(数据时间 HH:MM:SS · N 分钟前)` / `(过期缓存 · 数据时间 HH:MM:SS)`）；涨停原因归档新增 `reasonSource: aktools-stock_lhb_detail_em`，标明它是龙虎榜席位明细而非上涨原因；`2026-09-10-review-repro.mjs` 的 R7 断言改用真实源产物（`quoteDate`/`updateTime`/快照 provenance），不再使用会造成空转的空 `liveDate`——已在 `1c62554` 上以 `--expect=broken` 复现全部 8 项、在当前 `main` 上以 `--expect=fixed` 全部通过；`2026-09-10-r1r8-fix-review.md` 补上历史基线标注。
+
+验证：`npm run lint` 0 问题；单测 **764/764** 通过；Playwright E2E **63/63** 通过；`npm run build` 通过。
+
+> [!NOTE]
+> 本节之前的表述曾把 `82c294f` 的 M1/M3/M5 记为「已修复」。独立复核证明 M5 的判定条件恒真（等于没修）、M3 的改法会卡死语音队列，故上表已按实际生效的提交重写；以本节为当前状态。
+
 
 ## 2026-09-09 运行审查修复
 

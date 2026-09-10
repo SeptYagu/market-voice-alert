@@ -61,6 +61,11 @@ export async function fetchAktoolsLimitPool(kind, date, signal) {
   return parseAktoolsLimitUpList(json, kind);
 }
 
+// The reasons come from the dragon-tiger (龙虎榜) detail board, which explains which
+// seats traded — not why the stock moved. The label is archived with the payload so a
+// reader never mistakes it for a causal explanation of the limit-up.
+export const AKTOOLS_REASONS_SOURCE = 'aktools-stock_lhb_detail_em';
+
 export async function fetchAktoolsReasons(date, signal) {
   const normalized = toAktoolsDate(date);
   const params = {};

@@ -11,6 +11,22 @@ export function formatNumber(n, decimals = 2) {
   return Number(n).toFixed(decimals);
 }
 
+// Unified cache-freshness label: the limit-up board, the 10-day momentum panel and the
+// intraday chart all render the same wording, so "is this data current?" is answered
+// the same way everywhere instead of each view inventing its own badge.
+// Returns '' when there is nothing worth showing (fresh and no timestamp available).
+export function formatCacheAge(generatedAt, stale, now = Date.now()) {
+  const stamp = Number(generatedAt);
+  const hasStamp = Number.isFinite(stamp) && stamp > 0;
+  if (!hasStamp) return stale ? '(过期缓存 · 数据时间未知)' : '';
+  const d = new Date(stamp);
+  const pad = (v) => String(v).padStart(2, '0');
+  const clock = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const minutes = Math.max(0, Math.floor((Number(now) - stamp) / 60000));
+  const age = minutes < 1 ? '刚刚' : (minutes < 60 ? `${minutes} 分钟前` : `${Math.floor(minutes / 60)} 小时前`);
+  return stale ? `(过期缓存 · 数据时间 ${clock})` : `(数据时间 ${clock} · ${age})`;
+}
+
 export function priceDirection(change) {
   if (!Number.isFinite(change)) return 'flat';
   if (change > 0) return 'up';

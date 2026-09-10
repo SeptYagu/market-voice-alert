@@ -14,6 +14,7 @@ import {
   resolveLatestTradingDate
 } from '../tradeCalendar.js';
 import { getBeijingDate } from '../time.js';
+import { formatCacheAge } from '../format.js';
 import { fetchQuotes } from '../api.js';
 import {
   createChartState
@@ -160,7 +161,8 @@ export function createLimitUpController(appContext) {
     parts.push(`共 ${total} 只涨停`);
     if (lu.loading) parts.push('加载中...');
     if (lu.error) parts.push(`错误: ${lu.error}`);
-    if (lu.stale) parts.push('(过期缓存)');
+    const cacheAge = formatCacheAge(lu.generatedAt, lu.stale);
+    if (cacheAge) parts.push(cacheAge);
     if (lu.consecutiveEmptyFetches > 0 && lu.lastNonEmptyAt) {
       const ts = lu.lastNonEmptyAt.toLocaleTimeString();
       parts.push(`缓存自 ${ts} · 已空 ${lu.consecutiveEmptyFetches} 次`);

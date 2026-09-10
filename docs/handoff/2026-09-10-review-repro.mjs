@@ -1,6 +1,9 @@
 // Run from repository root: node docs/handoff/2026-09-10-review-repro.mjs
 // By default, asserts the desired fixed behavior (--expect=fixed).
-// Pass --expect=broken to assert the historical buggy behavior.
+// Pass --expect=broken to assert the historical buggy behavior of the ORIGINAL audit
+// baseline `1c62554` (the commit the 2026-09-10 review was written against). Check that
+// commit out (e.g. `git worktree add --detach <dir> 1c62554`) before using this mode;
+// it will not hold against `33a742d` or `82c294f`, where R1/R7 were already partly fixed.
 const expectFixed = !process.argv.includes('--expect=broken');
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -32,6 +35,10 @@ try {
     timers: { setInterval: fn => { tick = fn; return 1; }, clearInterval() {} },
     fetchQuotes: (_, { signal }) => new Promise(resolve => pending.push({ resolve, signal })) });
   ctl.applySchedule(true);
+  // `fetchQuotes` returns a `{ quotes, failedCodes, asOf, source }` envelope on the fixed
+  // code, while the reviewed baseline consumed a bare array. The fixture follows the
+  // contract of the baseline it is asserting against.
+  const quoteResult = (list) => (expectFixed ? { quotes: list, failedCodes: [], asOf: Date.now() } : list);
   if (expectFixed) {
     for (let i = 0; i < 4; i++) {
       const p = tick();
@@ -39,7 +46,7 @@ try {
       const skipped = tick();
       assert.equal(pending.length, i + 1, 'in-flight request must prevent duplicate overlapping scheduled request');
       assert.equal(pending[i].signal.aborted, false, `pending[${i}] must not be aborted`);
-      pending[i].resolve([{ code: 'sh600000', price: 10 + i }]);
+      pending[i].resolve(quoteResult([{ code: 'sh600000', price: 10 + i }]));
       await p;
       await skipped;
       assert.equal(state.quotes.get('sh600000').price, 10 + i);
@@ -146,23 +153,58 @@ try {
   }
   tts.cancel(); tts.setSpeechAdapter(null);
 
-  // R7: pre-open snapshot and positive date evidence check.
+  // R7: date evidence must be read from the fields the real snapshot sources actually
+  // emit (tencent `quoteDate` + `updateTime`, sina `updateTime`) or from the snapshot's
+  // own provenance date — never from a fictional `quote.time`, which no source produces.
+  // The reviewed baseline only inspected `quote.time || quote.date`, so every real
+  // source bypassed the gate and yesterday's quote became today's bar. Using a blank
+  // `liveDate` here (the previous form of this check) would make it a no-op, because
+  // `mergeLiveQuoteIntoDailyKline` early-returns on an empty `liveDateKey`.
   const dates = ['2026-08-26','2026-08-27','2026-08-28','2026-08-31','2026-09-01',
     '2026-09-02','2026-09-03','2026-09-04','2026-09-07','2026-09-08','2026-09-09','2026-09-10'];
-  const plan = resolveMomentumScanDates('20260910', dates, '20260910', new Date('2026-09-10T00:00:00Z'));
+  const preOpen = resolveMomentumScanDates('20260910', dates, '20260910', new Date('2026-09-10T00:00:00Z'));
+  const inSession = resolveMomentumScanDates('20260910', dates, '20260910', new Date('2026-09-10T02:30:00Z'));
   const history = { items: dates.slice(0, -1).map((time, i) => ({ time, close: 10 + i })) };
-  const merged = mergeLiveQuoteIntoDailyKline(history, { price: 20, open: 19, volume: 100,
-    time: '2026-09-09 15:00:00' }, plan.liveDate);
+  const lastBar = (merged) => (merged && Array.isArray(merged.items) ? merged.items.at(-1).time : undefined);
+  const tencentYesterday = { price: 20, open: 19, volume: 100, quoteDate: '20260909', updateTime: '15:00:00' };
+  const tencentToday = { price: 20, open: 19, volume: 100, quoteDate: '20260910', updateTime: '10:30:00' };
+  const sinaToday = { price: 20, open: 19, volume: 100, updateTime: '10:30:00' };
+  const aktoolsSpot = { price: 20, open: 19, volume: 100 };
+  const mergedTencentYesterday = mergeLiveQuoteIntoDailyKline(history, tencentYesterday, inSession.liveDate);
+  const mergedTencentToday = mergeLiveQuoteIntoDailyKline(history, tencentToday, inSession.liveDate);
+  const mergedSina = mergeLiveQuoteIntoDailyKline(history, sinaToday, inSession.liveDate,
+    { snapshotDateKey: '20260909' });
+  const mergedAktoolsFresh = mergeLiveQuoteIntoDailyKline(history, aktoolsSpot, inSession.liveDate,
+    { snapshotDateKey: '20260910' });
+  const mergedAktoolsStale = mergeLiveQuoteIntoDailyKline(history, aktoolsSpot, inSession.liveDate,
+    { snapshotDateKey: '' });
+  const mergedPreOpen = mergeLiveQuoteIntoDailyKline(history, aktoolsSpot, preOpen.liveDate);
   if (expectFixed) {
-    assert.equal(merged.items.at(-1).time, '2026-09-09');
+    assert.equal(preOpen.liveDate, '', 'pre-open scan must not expose a live date');
+    assert.equal(inSession.liveDate, '20260910', 'the live session must expose a live date to merge against');
+    assert.equal(lastBar(mergedTencentYesterday), '2026-09-09',
+      'tencent quoteDate=20260909 contradicts the live day and must not be rewritten as today');
+    assert.equal(lastBar(mergedTencentToday), '2026-09-10', 'a same-day tencent quote must still merge');
+    assert.equal(lastBar(mergedSina), '2026-09-09',
+      'sina only sends HH:MM:SS, so a 09-09 snapshot must not merge on the 09-10 live day');
+    assert.equal(lastBar(mergedAktoolsFresh), '2026-09-10',
+      'aktools spot has no date field, so a fresh same-day snapshot must vouch for it');
+    assert.equal(lastBar(mergedAktoolsStale), '2026-09-09', 'a stale snapshot must not vouch for a dateless quote');
+    assert.equal(lastBar(mergedPreOpen), '2026-09-09', 'pre-open scan must not synthesize today');
     assert.equal(computeTenDayMomentum(history).gainPercent, 100);
-    assert.equal(computeTenDayMomentum(merged).gainPercent, 100);
-    console.log('R7 verified fixed: quote without today evidence does not synthesize today bar; gain remains 100');
+    assert.equal(computeTenDayMomentum(mergedTencentYesterday).gainPercent, 100);
+    console.log('R7 verified fixed: real-source date evidence (quoteDate/updateTime/provenance) gates the merge; gain stays 100');
   } else {
-    assert.equal(merged.items.at(-1).time, '2026-09-10');
+    assert.equal(preOpen.liveDate, '20260910', 'the baseline treats 08:00 as a live session');
+    assert.equal(lastBar(mergedPreOpen), '2026-09-10', 'pre-open scan invents a today bar that has not traded yet');
+    assert.equal(lastBar(mergedTencentYesterday), '2026-09-10');
+    assert.equal(lastBar(mergedTencentToday), '2026-09-10');
+    assert.equal(lastBar(mergedSina), '2026-09-10');
+    assert.equal(lastBar(mergedAktoolsFresh), '2026-09-10');
+    assert.equal(lastBar(mergedAktoolsStale), '2026-09-10');
     assert.equal(computeTenDayMomentum(history).gainPercent, 100);
-    assert.equal(computeTenDayMomentum(merged).gainPercent, 81.82);
-    console.log('R7 reproduced: 08:00 duplicates yesterday into today; ten-day gain changes 100 -> 81.82');
+    assert.equal(computeTenDayMomentum(mergedTencentYesterday).gainPercent, 81.82);
+    console.log("R7 reproduced: no date evidence and no pre-open guard, so a not-yet-traded day is synthesized (100 -> 81.82)");
   }
 
   // R8: envelope quality and cache status reflection.

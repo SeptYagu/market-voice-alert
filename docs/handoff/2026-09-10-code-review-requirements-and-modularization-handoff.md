@@ -3,7 +3,7 @@
 ## 交接结论与范围
 
 > [!NOTE]
-> **历史基线标注**：本文确认的 R1–R8 缺陷及后续审查中识别的 M1–M6、m1–m3 缺口已全部完成闭环修复（单测已提升至 750/750 通过），配套验证脚本 `docs/handoff/2026-09-10-review-repro.mjs` 已更新为默认校验期望修复行为（`--expect=fixed` 通过，支持 `--expect=broken` 历史对照）。本文档作为初始审查的历史基线归档。
+> **历史基线标注**：本文确认的 R1–R8 缺陷及后续审查中识别的 M1–M6、m1–m3 缺口已完成闭环修复（单测 **764/764** 通过；其中 M5/M3 在 `82c294f` 中的修复经复核无效/有害，已在 `c01b3da`/`fa24120` 重做）。本节只针对本文，`33a742d` 的逐项验收结论见 [`2026-09-10-r1r8-fix-review.md`](2026-09-10-r1r8-fix-review.md)，修复复核见 [`2026-09-10-m1m6-fix-verification.md`](2026-09-10-m1m6-fix-verification.md)。配套验证脚本 `docs/handoff/2026-09-10-review-repro.mjs` 默认校验期望修复行为（`--expect=fixed`），`--expect=broken` 需检出初始基线 `1c62554` 才有意义。本文档作为初始审查的历史基线归档。
 
 - 审查基线：`main @ 1c62554`。开始时工作区干净，`git pull --ff-only` 返回 Already up to date；线上 diagnostics.version 同为 `1c62554`。
 - 本轮交付是审查文档与独立复现脚本，**没有修改业务代码，也没有修复下列缺陷**。旧 handoff 中的“全部闭环”不能覆盖本轮新增场景。

@@ -1,5 +1,5 @@
 import { getOrRefresh, readCache } from './cacheStore.js';
-import { fetchAktoolsLimitPool, fetchAktoolsReasons } from './marketData.js';
+import { fetchAktoolsLimitPool, fetchAktoolsReasons, AKTOOLS_REASONS_SOURCE } from './marketData.js';
 import { normalizeDateKey } from './utils.js';
 
 const LIMIT_UP_TTL_MS = 30 * 1000;
@@ -44,8 +44,13 @@ export function isHistoricalReasonsComplete(generatedAtMs, dateKey, data) {
   const stamp = beijingStamp(n);
   if (data.reasons.length > 0) {
     if (stamp.dateKey > dateKey) return true;
+    // The dragon-tiger board is published in the evening, so a same-day non-empty
+    // result before 20:30 may still be a partial release and must keep retrying.
     if (stamp.dateKey === dateKey && stamp.minutes >= 20 * 60 + 30) return true;
   }
+  // Give-up rule: a snapshot taken on a later day is final even when it is empty.
+  // Without this, a session that genuinely had no dragon-tiger entries would re-fetch
+  // on every single request forever.
   if (stamp.dateKey > dateKey) return true;
   return false;
 }
@@ -117,6 +122,9 @@ export async function getCachedLimitUpReasons({ date, signal, force = false } = 
     REASON_TTL_MS,
     async () => ({
       date: dateKey,
+      // Provenance is archived next to the payload: these are dragon-tiger seat
+      // details, not the reason the stock rose.
+      reasonSource: AKTOOLS_REASONS_SOURCE,
       reasons: await fetchAktoolsReasons(dateKey, signal)
     }),
     { force, forceMinAgeMs: 5000 }
