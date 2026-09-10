@@ -154,6 +154,27 @@ export function renderMomentumChartRow(item, colCount, ctx) {
   return el('tr', { class: 'chart-row momentum-chart-row', 'data-chart-for': item.code }, td);
 }
 
+export function renderGainCellContent(item) {
+  const gainVal = Number(item && item.gainPercent);
+  const maxGainVal = Number(item && item.maxGainPercent);
+  const pullbackVal = Number(item && item.pullbackPercent);
+  const dir = priceDirection(gainVal);
+  const mainSpan = el('span', { class: `momentum-gain-main ${dir}` }, formatPercent(gainVal));
+  if (Number.isFinite(maxGainVal) && (maxGainVal > gainVal || pullbackVal < -0.1)) {
+    const subText = `触及 ${formatPercent(maxGainVal)} · 回踩 ${formatPercent(pullbackVal)}`;
+    const subSpan = el(
+      'span',
+      {
+        class: 'momentum-gain-sub',
+        title: `10日最高触及 ${formatPercent(maxGainVal)}，自高点回落 ${formatPercent(pullbackVal)}`
+      },
+      subText
+    );
+    return el('div', { class: 'momentum-gain-wrap' }, mainSpan, subSpan);
+  }
+  return mainSpan;
+}
+
 export function updateMomentumQuoteCells(code, momentumItems = []) {
   const row = document.querySelector(`tr[data-momentum-code="${code}"]`);
   if (!row) return;
@@ -170,7 +191,10 @@ export function updateMomentumQuoteCells(code, momentumItems = []) {
   if (nameCell) nameCell.textContent = item.name || '-';
 
   const gainCell = getCell('gain', 5);
-  if (gainCell) gainCell.textContent = formatPercent(item.gainPercent);
+  if (gainCell) {
+    gainCell.innerHTML = '';
+    gainCell.appendChild(renderGainCellContent(item));
+  }
 
   const priceCell = getCell('price', 6);
   if (priceCell) priceCell.textContent = formatNumber(item.price);
@@ -214,7 +238,7 @@ export function renderMomentumSectionView(wrap, options = {}) {
   const head = el(
     'header',
     { class: 'momentum-header' },
-    el('div', { class: 'momentum-title' }, `10日涨幅超${MOMENTUM_THRESHOLD_PCT}%`),
+    el('div', { class: 'momentum-title' }, `10日强势股 (触及超${MOMENTUM_THRESHOLD_PCT}%)`),
     el('div', { class: 'momentum-actions' },
       el(
         'button',
@@ -333,7 +357,7 @@ export function renderMomentumSectionView(wrap, options = {}) {
       ),
       el('td', { class: 'code', 'data-field': 'code' }, item.code),
       el('td', { class: 'name', 'data-field': 'name' }, item.name || '-'),
-      el('td', { class: 'num up', 'data-field': 'gain' }, formatPercent(item.gainPercent)),
+      el('td', { class: 'num momentum-gain-cell', 'data-field': 'gain' }, renderGainCellContent(item)),
       el('td', { class: 'num', 'data-field': 'price' }, formatNumber(item.price)),
       el('td', { class: `num ${dir}`, 'data-field': 'percent' }, formatPercent(item.changePercent)),
       el('td', { class: 'num', 'data-field': 'amount' }, formatAmount(item.amount)),

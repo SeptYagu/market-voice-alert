@@ -3,6 +3,7 @@ import { fetchAktoolsSpotList } from '../aktoolsApi.js';
 import { fetchQuotes, fetchKline } from '../api.js';
 import {
   computeTenDayMomentum,
+  isMomentumEligible,
   sortMomentumItems,
   MOMENTUM_THRESHOLD_PCT
 } from './momentumMath.js';
@@ -78,10 +79,14 @@ export async function scanMomentumCandidate(candidate, { signal, limitUpItems = 
   if (!candidate || !/^(sh|sz|bj)\d{6}$/i.test(candidate.code)) return null;
   const data = await fetchKline(candidate.code, { period: '1d', signal, sharedCache: true, revalidate: false });
   const stats = computeTenDayMomentum(data);
-  if (!stats || stats.gainPercent < MOMENTUM_THRESHOLD_PCT) return null;
+  if (!isMomentumEligible(stats, MOMENTUM_THRESHOLD_PCT)) return null;
   const limitUpItem = (limitUpItems || []).find((it) => it && it.code === candidate.code);
   const reason = candidate.reason || (limitUpItem && (limitUpItem.reason || limitUpItem.limitStats)) || '';
   const interpretation = candidate.interpretation || (limitUpItem && limitUpItem.interpretation) || '';
+  const pullback = Number(stats.pullbackPercent) || 0;
+  const defaultAnomaly = pullback < -0.1
+    ? `10日冲高超${MOMENTUM_THRESHOLD_PCT}%(回踩${Math.abs(pullback)}%)`
+    : `10日冲高超${MOMENTUM_THRESHOLD_PCT}%`;
   return {
     code: candidate.code,
     name: candidate.name || (data && data.name) || candidate.code,
@@ -93,7 +98,7 @@ export async function scanMomentumCandidate(candidate, { signal, limitUpItems = 
     reason,
     interpretation,
     limitStats: candidate.limitStats || (limitUpItem && limitUpItem.limitStats) || '',
-    anomaly: reason ? '' : `10日涨幅超${MOMENTUM_THRESHOLD_PCT}%`,
+    anomaly: reason ? '' : defaultAnomaly,
     ...stats
   };
 }

@@ -1,5 +1,6 @@
 import {
   computeTenDayMomentum,
+  isMomentumEligible,
   sortMomentumItems,
   getMomentumReasonText,
   klineDateKey,
@@ -102,5 +103,66 @@ QUnit.module('services.momentumMath', () => {
     t.equal(getMomentumReasonText({ limitStats: '5天3板' }), '5天3板');
     t.equal(getMomentumReasonText({ anomaly: '异动' }), '异动');
     t.equal(getMomentumReasonText({ gainPercent: 52.34 }), '10日涨幅+52.34%');
+    t.equal(
+      getMomentumReasonText({ maxGainPercent: 50.0, gainPercent: 35.0, pullbackPercent: -10.0 }),
+      '10日触及+50.00%(回踩-10.00%)'
+    );
+  });
+
+  QUnit.test('computeTenDayMomentum computes peak touch (maxHigh), pullback and amplitude', (t) => {
+    // 11 bars: index 0 (10 days ago close = 10.00)
+    // bar 5 touches high 15.00 (+50%)
+    // bar 10 finishes at close 13.50 (+35%)
+    // lowest price in interval is 9.50
+    const items = Array.from({ length: 11 }, (_, i) => ({
+      time: `2026-08-${String(i + 1).padStart(2, '0')}`,
+      open: 10 + i * 0.3,
+      close: i === 0 ? 10.0 : (i === 10 ? 13.5 : 10 + i * 0.4),
+      high: i === 5 ? 15.0 : 10 + i * 0.5,
+      low: i === 2 ? 9.5 : 10
+    }));
+
+    const res = computeTenDayMomentum({ items });
+    t.ok(res, 'computed stats');
+    t.equal(res.startClose, 10.0);
+    t.equal(res.lastClose, 13.5);
+    t.equal(res.gainPercent, 35.0, 'current close gain is 35%');
+    t.equal(res.maxHigh, 15.0, 'max high is 15.0');
+    t.equal(res.maxGainPercent, 50.0, 'peak touch gain is 50%');
+    t.equal(res.pullbackPercent, -10.0, 'pullback from peak is -10%');
+    t.equal(res.amplitudePercent, 55.0, 'amplitude is (15 - 9.5) / 10 = 55%');
+    t.equal(res.maxHighDate, '2026-08-06', 'max high date matched bar 5');
+  });
+
+  QUnit.test('isMomentumEligible accepts stocks touching >= 45% with positive net gain', (t) => {
+    // Touched 48%, current gain 32% -> should be eligible
+    t.true(isMomentumEligible({ maxGainPercent: 48, gainPercent: 32 }, 45));
+
+    // Current gain >= 45% (at peak) -> eligible
+    t.true(isMomentumEligible({ maxGainPercent: 46, gainPercent: 46 }, 45));
+
+    // Touched only 40%, current gain 30% -> not eligible
+    t.false(isMomentumEligible({ maxGainPercent: 40, gainPercent: 30 }, 45));
+
+    // Touched 50% early, but plummeted below start price (gainPercent <= 0) -> not eligible
+    t.false(isMomentumEligible({ maxGainPercent: 50, gainPercent: -5 }, 45));
+    t.false(isMomentumEligible({ maxGainPercent: 50, gainPercent: 0 }, 45));
+
+    // Null/empty input
+    t.false(isMomentumEligible(null, 45));
+  });
+
+  QUnit.test('sortMomentumItems prioritizes maxGainPercent then gainPercent', (t) => {
+    const list = [
+      { code: 'sz000001', maxGainPercent: 48, gainPercent: 30, amount: 100 },
+      { code: 'sz000002', maxGainPercent: 55, gainPercent: 20, amount: 200 },
+      { code: 'sz000003', maxGainPercent: 48, gainPercent: 35, amount: 300 }
+    ];
+    const sorted = sortMomentumItems(list);
+    // Highest peak touch first: sz000002 (55%)
+    t.equal(sorted[0].code, 'sz000002');
+    // For same maxGainPercent (48%), higher gainPercent (35%) wins
+    t.equal(sorted[1].code, 'sz000003');
+    t.equal(sorted[2].code, 'sz000001');
   });
 });

@@ -6,12 +6,13 @@ import { getCachedTradeCalendar } from './calendarService.js';
 import { isFresh, normalizeDateKey, nowMs, parsePositiveNumber, mapLimit } from './utils.js';
 import {
   computeTenDayMomentum,
+  isMomentumEligible,
   klineDateKey,
   MOMENTUM_LOOKBACK_TRADING_DAYS as LOOKBACK_DAYS,
   MOMENTUM_THRESHOLD_PCT as DEFAULT_THRESHOLD
 } from '../src/js/services/momentumMath.js';
 
-export { computeTenDayMomentum };
+export { computeTenDayMomentum, isMomentumEligible };
 
 // Cached K-line directories are a watch-history subset, not a market universe.
 // Also correct pre-metadata cached results at the API boundary after deployment.
@@ -37,6 +38,19 @@ const jobRegistry = createJobRegistry({ clock: nowMs });
 const JOBS = jobRegistry.jobs;
 let schedulerTimer = null;
 let schedulerStarted = false;
+
+function compareMomentumOrder(a, b) {
+  const aMax = Number(a && (a.maxGainPercent ?? a.gainPercent)) || 0;
+  const bMax = Number(b && (b.maxGainPercent ?? b.gainPercent)) || 0;
+  if (aMax !== bMax) return bMax - aMax;
+  const ag = Number(a && a.gainPercent) || 0;
+  const bg = Number(b && b.gainPercent) || 0;
+  if (ag !== bg) return bg - ag;
+  const aa = Number(a && a.amount) || 0;
+  const ba = Number(b && b.amount) || 0;
+  if (aa !== ba) return ba - aa;
+  return String((a && a.code) || '').localeCompare(String((b && b.code) || ''));
+}
 
 function dashDate(dateKey) {
   return /^\d{8}$/.test(String(dateKey || ''))
@@ -310,8 +324,12 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt, 
         latestMarketDate = latestMarketDate > stats.endDateKey ? latestMarketDate : stats.endDateKey;
         endDateCounts.set(stats.endDateKey, (endDateCounts.get(stats.endDateKey) || 0) + 1);
       }
-      if (!stats || stats.gainPercent < threshold) return null;
+      if (!isMomentumEligible(stats, threshold)) return null;
       const { endDateKey: _endDateKey, ...publicStats } = stats;
+      const pullback = Number(stats.pullbackPercent) || 0;
+      const anomaly = pullback < -0.1
+        ? `10日冲高超${threshold}%(回踩${Math.abs(pullback)}%)`
+        : `10日冲高超${threshold}%`;
       const item = {
         code: candidate.code,
         name: candidate.name || (data && data.name) || candidate.code,
@@ -323,7 +341,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt, 
         reason: candidate.reason || '',
         interpretation: candidate.interpretation || '',
         limitStats: candidate.limitStats || '',
-        anomaly: `10日涨幅超${threshold}%`,
+        anomaly,
         ...publicStats,
         marketDate: stats.endDateKey
       };
@@ -357,7 +375,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt, 
           items: found
             .filter((item) => item.marketDate === latestMarketDate)
             .slice()
-            .sort((a, b) => (b.gainPercent || 0) - (a.gainPercent || 0))
+            .sort(compareMomentumOrder)
         };
         progressWrite = progressWrite
           .then(() => commit(() => writeMomentumProgress(parts, progress)))
@@ -371,7 +389,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt, 
   await progressWrite;
   const freshFound = found
     .filter((item) => item.marketDate === latestMarketDate)
-    .sort((a, b) => (b.gainPercent || 0) - (a.gainPercent || 0));
+    .sort(compareMomentumOrder);
   const totalFailures = refreshFailures + universeRefreshFailures;
   const isComplete = totalFailures === 0;
   return normalizeMomentumCoverage({

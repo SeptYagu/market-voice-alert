@@ -63,6 +63,7 @@ import {
 } from './services/batchExportService.js';
 import {
   computeTenDayMomentum,
+  isMomentumEligible,
   sortMomentumItems,
   getMomentumReasonText,
   MOMENTUM_LOOKBACK_TRADING_DAYS,
@@ -121,6 +122,7 @@ export {
 } from './format.js';
 export {
   computeTenDayMomentum,
+  isMomentumEligible,
   sortMomentumItems,
   getMomentumReasonText,
   buildMomentumHeaderCheckbox,

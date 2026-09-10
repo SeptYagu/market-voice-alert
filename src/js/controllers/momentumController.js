@@ -344,11 +344,27 @@ export function createMomentumController(appContext) {
       const gainPercent = (Number.isFinite(price) && Number.isFinite(startClose) && startClose > 0)
         ? Number((((price - startClose) / startClose) * 100).toFixed(2))
         : it.gainPercent;
+      const rawHigh = Number(q.high);
+      const highCandidate = Math.max(
+        Number.isFinite(rawHigh) && rawHigh > 0 ? rawHigh : 0,
+        Number.isFinite(price) && price > 0 ? price : 0,
+        Number(it.maxHigh) || 0
+      );
+      const maxHigh = highCandidate > 0 ? highCandidate : (it.maxHigh || price);
+      const maxGainPercent = (Number.isFinite(maxHigh) && Number.isFinite(startClose) && startClose > 0)
+        ? Number((((maxHigh - startClose) / startClose) * 100).toFixed(2))
+        : it.maxGainPercent;
+      const pullbackPercent = (Number.isFinite(price) && Number.isFinite(maxHigh) && maxHigh > 0)
+        ? Number((((price / maxHigh) - 1) * 100).toFixed(2))
+        : it.pullbackPercent;
       return {
         ...it,
         name: q.name || it.name,
         price,
         gainPercent,
+        maxHigh,
+        maxGainPercent,
+        pullbackPercent,
         changePercent: Number.isFinite(Number(q.changePercent)) ? Number(q.changePercent) : it.changePercent,
         amount: Number.isFinite(Number(q.amount)) ? Number(q.amount) : it.amount,
         volumeRatio: Number.isFinite(Number(q.volumeRatio)) ? Number(q.volumeRatio) : it.volumeRatio,
