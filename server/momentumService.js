@@ -87,7 +87,36 @@ export function resolveMomentumScanDates(dateKey, tradeDates, todayKey = beijing
   return { marketDate, historyTargetDate: prior, liveDate: marketDate };
 }
 
-export function mergeLiveQuoteIntoDailyKline(data, quote, liveDateKey) {
+// Date evidence derived from the snapshot's own provenance rather than from the
+// quote fields. Only a snapshot that is fresh (never `stale`) and was fetched while
+// the live session is running can vouch for the day it belongs to.
+export function snapshotEvidenceDateKey(spotResult, liveDateKey) {
+  if (!liveDateKey || !spotResult || spotResult.stale) return '';
+  const generatedAt = Number(spotResult.generatedAt);
+  if (!Number.isFinite(generatedAt) || generatedAt <= 0) return '';
+  return beijingDateKey(new Date(generatedAt));
+}
+
+// Only a plausible calendar date counts as evidence: a raw timestamp such as
+// 1789000000 would otherwise be read as "1789-00-00" and silently block the merge.
+function validDateKey(value) {
+  const digits = String(value === null || value === undefined ? '' : value).replace(/\D/g, '');
+  if (!/^\d{8}$/.test(digits)) return '';
+  const year = Number(digits.slice(0, 4));
+  const month = Number(digits.slice(4, 6));
+  const day = Number(digits.slice(6, 8));
+  if (year < 2000 || year > 2099 || month < 1 || month > 12 || day < 1 || day > 31) return '';
+  return digits;
+}
+
+// `snapshotDateKey` is the Beijing date on which the spot snapshot was fetched.
+// The two leading snapshot providers cannot state a date themselves (aktools spot
+// carries no date column at all; sina only sends HH:MM:SS), so the scan passes the
+// snapshot's own provenance date here. Callers only ever supply it for a fresh
+// snapshot taken on the live trading day, which is exactly what makes the live
+// quote mergeable; `liveDate` is already blanked out for stale snapshots and for
+// pre-open / after-close scans.
+export function mergeLiveQuoteIntoDailyKline(data, quote, liveDateKey, { snapshotDateKey = '' } = {}) {
   const sourceItems = data && Array.isArray(data.items) ? data.items : [];
   const price = Number(quote && quote.price);
   const open = Number(quote && quote.open);
@@ -97,12 +126,12 @@ export function mergeLiveQuoteIntoDailyKline(data, quote, liveDateKey) {
   const rawTime = quote && (quote.updateTime || quote.time);
   let evidence = '';
   if (rawDate) {
-    evidence = String(rawDate).replace(/\D/g, '');
+    evidence = validDateKey(rawDate);
   } else if (rawTime) {
-    const str = String(rawTime);
-    const m = str.match(/^(\d{4})[-/]?(\d{2})[-/]?(\d{2})/);
-    if (m) evidence = `${m[1]}${m[2]}${m[3]}`;
+    const m = String(rawTime).match(/^(\d{4})[-/]?(\d{2})[-/]?(\d{2})/);
+    if (m) evidence = validDateKey(`${m[1]}${m[2]}${m[3]}`);
   }
+  if (!evidence) evidence = validDateKey(snapshotDateKey);
   if (!evidence || evidence !== normalizeDateKey(liveDateKey)) return data;
   const time = dashDate(liveDateKey);
   if (!time) return data;
@@ -245,6 +274,10 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt, 
   // missingCount already includes entire failed batches; count those only once.
   const universeRefreshFailures = Math.max(batchUniverseFailures, Number(universeStats.missingCount) || 0) + (spotResult && spotResult.stale ? universe.length : 0);
   const liveDate = spotResult && spotResult.stale ? '' : scanDates.liveDate;
+  // Evidence for the aktools / sina full-market sources, which cannot state a date
+  // in the quote payload itself: a snapshot that is fresh and was fetched during the
+  // live session vouches for the trading day it belongs to.
+  const snapshotDateKey = snapshotEvidenceDateKey(spotResult, liveDate);
   const scanned = { count: 0 };
   let progressWrite = Promise.resolve();
   await commit(() => writeMomentumProgress(parts, {
@@ -271,7 +304,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt, 
         if (failureSamples.length < 20) failureSamples.push({ code: candidate.code, reason });
         return null;
       }
-      const data = mergeLiveQuoteIntoDailyKline(klineResult && klineResult.data, candidate, liveDate);
+      const data = mergeLiveQuoteIntoDailyKline(klineResult && klineResult.data, candidate, liveDate, { snapshotDateKey });
       const stats = computeTenDayMomentum(data, LOOKBACK_DAYS, dateKey);
       if (stats && stats.endDateKey) {
         latestMarketDate = latestMarketDate > stats.endDateKey ? latestMarketDate : stats.endDateKey;

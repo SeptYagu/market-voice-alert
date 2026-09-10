@@ -1,4 +1,4 @@
-import { resolveMomentumScanDates, mergeLiveQuoteIntoDailyKline } from '../server/momentumService.js';
+import { resolveMomentumScanDates, mergeLiveQuoteIntoDailyKline, snapshotEvidenceDateKey } from '../server/momentumService.js';
 import { computeTenDayMomentum } from '../src/js/services/momentumMath.js';
 import { isHistoricalLimitUpComplete, isHistoricalReasonsComplete, getCachedLimitUp } from '../server/limitUpService.js';
 import { writeCache } from '../server/cacheStore.js';
@@ -138,5 +138,45 @@ QUnit.module('Phase B Defect Fixes (R7, R5)', () => {
     assert.equal(afterTencentToday.items.length, 3, 'tencent quote dated today is successfully synthesized');
     assert.equal(afterTencentToday.items.at(-1).time, '2026-09-10');
     assert.equal(afterTencentToday.items.at(-1).close, 20);
+
+    // 5. The two leading sources cannot state a date themselves, so the scan hands
+    //    over the snapshot's own provenance date. The live day then merges again.
+    const akMerged = mergeLiveQuoteIntoDailyKline(history, aktoolsQuotes[0], liveDateKey, { snapshotDateKey: liveDateKey });
+    assert.equal(akMerged.items.length, 3, 'aktools row merges when the snapshot proves the trading day');
+    assert.equal(akMerged.items.at(-1).time, '2026-09-10');
+    assert.equal(akMerged.items.at(-1).close, 20);
+
+    const sinaMerged = mergeLiveQuoteIntoDailyKline(history, sinaQuote, liveDateKey, { snapshotDateKey: liveDateKey });
+    assert.equal(sinaMerged.items.length, 3, 'sina row merges when the snapshot proves the trading day');
+
+    // 6. R7 must stay fixed: a snapshot from another day, or no evidence at all,
+    //    still refuses to manufacture a today bar.
+    const otherDay = mergeLiveQuoteIntoDailyKline(history, aktoolsQuotes[0], liveDateKey, { snapshotDateKey: '20260909' });
+    assert.equal(otherDay.items.length, 2, 'snapshot dated yesterday never synthesizes today');
+    assert.strictEqual(
+      mergeLiveQuoteIntoDailyKline(history, aktoolsQuotes[0], liveDateKey, { snapshotDateKey: '' }),
+      history,
+      'no provenance at all keeps the strict no-evidence-no-synthesis rule'
+    );
+
+    // 7. A seconds timestamp must not be mistaken for a date and silently block the merge
+    const garbage = mergeLiveQuoteIntoDailyKline(history, { ...aktoolsQuotes[0], time: 1789000000 },
+      liveDateKey, { snapshotDateKey: liveDateKey });
+    assert.equal(garbage.items.length, 3, 'unparseable quote time falls back to the snapshot evidence');
+  });
+
+  QUnit.test('M1: snapshot provenance is evidence only for a fresh snapshot on the live day', assert => {
+    const live = '20260910';
+    const freshToday = { stale: false, generatedAt: Date.parse('2026-09-10T02:00:00Z') }; // 10:00 Beijing
+    const freshOtherDay = { stale: false, generatedAt: Date.parse('2026-09-09T02:00:00Z') };
+    const staleSnapshot = { stale: true, generatedAt: Date.parse('2026-09-10T02:00:00Z') };
+
+    assert.equal(snapshotEvidenceDateKey(freshToday, live), '20260910', 'fresh snapshot vouches for its own day');
+    assert.equal(snapshotEvidenceDateKey(freshToday, ''), '', 'no live day means no merge at all');
+    assert.equal(snapshotEvidenceDateKey(staleSnapshot, live), '', 'a stale snapshot can never vouch for a day');
+    assert.equal(snapshotEvidenceDateKey({ stale: false }, live), '', 'a snapshot without a timestamp has no provenance');
+    assert.equal(snapshotEvidenceDateKey(null, live), '');
+    assert.equal(snapshotEvidenceDateKey(freshOtherDay, live), '20260909',
+      'another day is reported as-is, which then fails the live-day match');
   });
 });
