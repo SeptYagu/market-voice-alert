@@ -3,6 +3,7 @@ import { fetchAktoolsSpotList } from '../aktoolsApi.js';
 import { fetchQuotes, fetchKline } from '../api.js';
 import {
   computeTenDayMomentum,
+  describeMomentumPeak,
   isMomentumEligible,
   sortMomentumItems,
   MOMENTUM_THRESHOLD_PCT
@@ -83,10 +84,7 @@ export async function scanMomentumCandidate(candidate, { signal, limitUpItems = 
   const limitUpItem = (limitUpItems || []).find((it) => it && it.code === candidate.code);
   const reason = candidate.reason || (limitUpItem && (limitUpItem.reason || limitUpItem.limitStats)) || '';
   const interpretation = candidate.interpretation || (limitUpItem && limitUpItem.interpretation) || '';
-  const pullback = Number(stats.pullbackPercent) || 0;
-  const defaultAnomaly = pullback < -0.1
-    ? `10日冲高超${MOMENTUM_THRESHOLD_PCT}%(回踩${Math.abs(pullback)}%)`
-    : `10日冲高超${MOMENTUM_THRESHOLD_PCT}%`;
+  const defaultAnomaly = describeMomentumPeak(stats, MOMENTUM_THRESHOLD_PCT);
   return {
     code: candidate.code,
     name: candidate.name || (data && data.name) || candidate.code,

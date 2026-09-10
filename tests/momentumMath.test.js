@@ -134,7 +134,7 @@ QUnit.module('services.momentumMath', () => {
     t.equal(res.maxHighDate, '2026-08-06', 'max high date matched bar 5');
   });
 
-  QUnit.test('isMomentumEligible accepts stocks touching >= 45% with positive net gain', (t) => {
+  QUnit.test('isMomentumEligible accepts stocks touching >= 45% regardless of the current gain', (t) => {
     // Touched 48%, current gain 32% -> should be eligible
     t.true(isMomentumEligible({ maxGainPercent: 48, gainPercent: 32 }, 45));
 
@@ -144,9 +144,17 @@ QUnit.module('services.momentumMath', () => {
     // Touched only 40%, current gain 30% -> not eligible
     t.false(isMomentumEligible({ maxGainPercent: 40, gainPercent: 30 }, 45));
 
-    // Touched 50% early, but plummeted below start price (gainPercent <= 0) -> not eligible
-    t.false(isMomentumEligible({ maxGainPercent: 50, gainPercent: -5 }, 45));
-    t.false(isMomentumEligible({ maxGainPercent: 50, gainPercent: 0 }, 45));
+    // Touched 50% then fell back below the entry price -> still in the pool (回踩监控的对象)
+    t.true(isMomentumEligible({ maxGainPercent: 50, gainPercent: -5 }, 45));
+    t.true(isMomentumEligible({ maxGainPercent: 50, gainPercent: 0 }, 45));
+    t.true(isMomentumEligible({ maxGainPercent: 50, gainPercent: -30 }, 45));
+
+    // Peak never reached the threshold, even if the current gain somehow is not lower
+    t.false(isMomentumEligible({ maxGainPercent: 44.99, gainPercent: 44.99 }, 45));
+
+    // Legacy entries without maxGainPercent fall back to the close-based gain
+    t.true(isMomentumEligible({ gainPercent: 50 }, 45));
+    t.false(isMomentumEligible({ gainPercent: 10 }, 45));
 
     // Null/empty input
     t.false(isMomentumEligible(null, 45));

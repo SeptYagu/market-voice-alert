@@ -12,6 +12,7 @@ import {
   MOMENTUM_LOOKBACK_TRADING_DAYS,
   MOMENTUM_THRESHOLD_PCT,
   computeTenDayMomentum,
+  isPulledBack,
   sortMomentumItems,
   getMomentumReasonText
 } from '../services/momentumMath.js';
@@ -160,7 +161,7 @@ export function renderGainCellContent(item) {
   const pullbackVal = Number(item && item.pullbackPercent);
   const dir = priceDirection(gainVal);
   const mainSpan = el('span', { class: `momentum-gain-main ${dir}` }, formatPercent(gainVal));
-  if (Number.isFinite(maxGainVal) && (maxGainVal > gainVal || pullbackVal < -0.1)) {
+  if (Number.isFinite(maxGainVal) && (maxGainVal > gainVal || isPulledBack(item))) {
     const subText = `触及 ${formatPercent(maxGainVal)} · 回踩 ${formatPercent(pullbackVal)}`;
     const subSpan = el(
       'span',
@@ -281,7 +282,11 @@ export function renderMomentumSectionView(wrap, options = {}) {
       el('th', { class: 'col-pin', 'data-field': 'pin' }, '固定'),
       el('th', { class: 'code', 'data-field': 'code' }, '代码'),
       el('th', { class: 'name', 'data-field': 'name' }, '名称'),
-      el('th', { class: 'num', 'data-field': 'gain' }, '10日涨幅'),
+      el('th', {
+        class: 'num',
+        'data-field': 'gain',
+        title: '主数值为当前 10 日累计涨幅；列表按 10 日内最高触及涨幅排序（副行显示触及值与回踩幅度）'
+      }, '10日涨幅(按冲高排序)'),
       el('th', { class: 'num', 'data-field': 'price' }, '现价'),
       el('th', { class: 'num', 'data-field': 'percent' }, '当日涨幅'),
       el('th', { class: 'num', 'data-field': 'amount' }, '成交额'),

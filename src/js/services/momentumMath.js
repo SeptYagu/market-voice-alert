@@ -108,8 +108,25 @@ export function isMomentumEligible(stats, threshold = MOMENTUM_THRESHOLD_PCT) {
   if (!stats) return false;
   const targetThreshold = Number.isFinite(Number(threshold)) ? Number(threshold) : MOMENTUM_THRESHOLD_PCT;
   const maxGain = Number(stats.maxGainPercent ?? stats.gainPercent);
-  const currentGain = Number(stats.gainPercent);
-  return Number.isFinite(maxGain) && maxGain >= targetThreshold && Number.isFinite(currentGain) && currentGain > 0;
+  // 只看「10 日窗口内是否曾触及阈值」，不要求当前涨幅为正：冲高后回落到成本线以下的标的
+  // 同样属于这个池子（这也正是回踩监控要盯的对象），回踩幅度由 pullbackPercent 单独表达，
+  // 这里不做二次筛选。要让它们离开列表，应该是显式的一档「破位」信号，而不是悄悄过滤。
+  return Number.isFinite(maxGain) && maxGain >= targetThreshold;
+}
+
+// 「算不算回踩」的唯一定义。此前这个 -0.1 分散在服务端扫描、前端兜底扫描、原因文案和涨幅
+// 单元格四处各写一遍，改一处就会让四处口径漂移，所以收敛成一个常量 + 一个判定。
+export const MOMENTUM_PULLBACK_EPSILON = 0.1;
+
+export function isPulledBack(item) {
+  return (Number(item && item.pullbackPercent) || 0) < -MOMENTUM_PULLBACK_EPSILON;
+}
+
+// 「异动/原因」列的默认文案。服务端扫描与前端兜底扫描必须给出同一句话，
+// 否则同一个池子会因为来源不同显示不同的措辞（回踩的正负号也要一致）。
+export function describeMomentumPeak(stats, threshold = MOMENTUM_THRESHOLD_PCT) {
+  const suffix = isPulledBack(stats) ? `(回踩${formatPercent(stats.pullbackPercent)})` : '';
+  return `10日冲高超${threshold}%${suffix}`;
 }
 
 export function sortMomentumItems(items, pinnedCodes = new Set()) {
@@ -137,11 +154,9 @@ export function getMomentumReasonText(item) {
   if (item.limitStats) return item.limitStats;
   if (item.anomaly) return item.anomaly;
   if (Number.isFinite(item.maxGainPercent)) {
-    const pullback = Number(item.pullbackPercent) || 0;
-    if (pullback < -0.1) {
-      return `10日触及${formatPercent(item.maxGainPercent)}(回踩${formatPercent(pullback)})`;
-    }
-    return `10日冲高${formatPercent(item.maxGainPercent)}`;
+    return isPulledBack(item)
+      ? `10日触及${formatPercent(item.maxGainPercent)}(回踩${formatPercent(item.pullbackPercent)})`
+      : `10日冲高${formatPercent(item.maxGainPercent)}`;
   }
   return `10日涨幅${formatPercent(item.gainPercent)}`;
 }
