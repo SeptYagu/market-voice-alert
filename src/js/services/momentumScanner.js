@@ -29,7 +29,12 @@ export async function fetchSharedMomentum(signal, threshold = MOMENTUM_THRESHOLD
   if (!json || json.ok !== true || !json.data) {
     throw new Error((json && json.error) || 'shared momentum cache failed');
   }
-  return json.data;
+  return {
+    ...json.data,
+    stale: json.stale,
+    generatedAt: json.generatedAt,
+    cacheSource: json.source
+  };
 }
 
 export async function startSharedMomentumScan(signal, threshold = MOMENTUM_THRESHOLD_PCT) {

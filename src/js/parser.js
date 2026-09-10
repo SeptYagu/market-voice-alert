@@ -1,4 +1,9 @@
 import { parseFutureInput } from './futures/contractCatalog.js';
+import {
+  parseBeijingDateTimeToChartSeconds,
+  parseTencentMinuteToChartSeconds,
+  chartTimeToDate
+} from './time.js';
 
 const VALID_PREFIXES = new Set(['sh', 'sz', 'bj']);
 
@@ -196,3 +201,144 @@ export function parseSinaFuture(text) {
   }
   return out;
 }
+
+function _normalizeTrendCode(data) {
+  if (!data || !data.code) return '';
+  if (data.market === 1) return `sh${data.code}`;
+  return normalizeCode(String(data.code)) || String(data.code);
+}
+
+export function calcPercent(close, prevClose) {
+  const c = Number(close);
+  const pc = Number(prevClose);
+  if (!Number.isFinite(c) || !Number.isFinite(pc) || pc <= 0) return 0;
+  return (c / pc - 1) * 100;
+}
+const _calcPercent = calcPercent;
+
+function _parseTrendRow(row, prevClose, selectedDate) {
+  if (typeof row !== 'string') return null;
+  const parts = row.split(',');
+  if (parts.length < 7) return null;
+  const time = parseBeijingDateTimeToChartSeconds(parts[0]);
+  if (!Number.isFinite(time)) return null;
+  if (selectedDate && chartTimeToDate(time) !== selectedDate) return null;
+  const open = parseFloat(parts[1]);
+  const close = parseFloat(parts[2]);
+  const high = parseFloat(parts[3]);
+  const low = parseFloat(parts[4]);
+  if (![open, close, high, low].every(Number.isFinite)) return null;
+  const volume = parseFloat(parts[5]);
+  const amount = parseFloat(parts[6]);
+  const avgPrice = parseFloat(parts[7]);
+  const percent = _calcPercent(close, prevClose);
+  return {
+    time,
+    open,
+    close,
+    high,
+    low,
+    volume: Number.isFinite(volume) ? volume : 0,
+    amount: Number.isFinite(amount) ? amount : 0,
+    avgPrice: Number.isFinite(avgPrice) ? avgPrice : 0,
+    price: close,
+    preClose: prevClose,
+    percent,
+    changePercent: percent
+  };
+}
+
+export function parseEastmoneyTrends(json, opts = {}) {
+  const d = json && json.data;
+  if (!d || typeof d !== 'object') return null;
+  const preClose = Number.isFinite(Number(d.preClose))
+    ? Number(d.preClose)
+    : (Number.isFinite(Number(opts.prevClose)) ? Number(opts.prevClose) : 0);
+  const rows = Array.isArray(d.trends) ? d.trends : [];
+  const selectedDate = opts.date || '';
+  const items = [];
+  for (const row of rows) {
+    const it = _parseTrendRow(row, preClose, selectedDate);
+    if (it) items.push(it);
+  }
+  return {
+    code: _normalizeTrendCode(d),
+    name: d.name || _normalizeTrendCode(d),
+    source: 'eastmoney-trends2',
+    preClose,
+    items
+  };
+}
+
+// Tencent minute/query rows: "HHmm price cumVolume(手) cumAmount(元)".
+// Volume/amount are day-cumulative — diff them into per-minute values.
+// avgPrice = cumAmount / (cumVolume * 100) (手 -> 股), sanity-banded against
+// the close price to absorb any upstream unit surprises (e.g. an ETF day).
+export function parseTencentMinute(json, opts = {}) {
+  const code = typeof opts.code === 'string' ? opts.code.toLowerCase() : '';
+  const payload = json && json.data && code ? json.data[code] : null;
+  const day = payload && payload.data;
+  if (!day || !Array.isArray(day.data) || !day.data.length) return null;
+  const dataDate = typeof day.date === 'string' ? day.date : '';
+  if (!/^\d{8}$/.test(dataDate)) return null;
+  const selectedDate = opts.date ? String(opts.date).replace(/-/g, '') : '';
+  if (selectedDate && dataDate !== selectedDate) return null;
+
+  const qt = payload.qt && payload.qt[code];
+  const prevClose = Number.isFinite(Number(qt && qt[4]))
+    ? Number(qt[4])
+    : (Number.isFinite(Number(opts.prevClose)) ? Number(opts.prevClose) : 0);
+
+  const items = [];
+  let prevCumVolume = 0;
+  let prevCumAmount = 0;
+  for (const row of day.data) {
+    if (typeof row !== 'string') continue;
+    const parts = row.trim().split(/\s+/);
+    if (parts.length < 2) continue;
+    const time = parseTencentMinuteToChartSeconds(`${dataDate}${parts[0]}`);
+    if (!Number.isFinite(time)) continue;
+    const price = parseFloat(parts[1]);
+    if (!Number.isFinite(price) || price <= 0) continue;
+    const cumVolume = parts.length > 2 ? parseFloat(parts[2]) : NaN;
+    const cumAmount = parts.length > 3 ? parseFloat(parts[3]) : NaN;
+    let volume = 0;
+    if (Number.isFinite(cumVolume)) {
+      volume = Math.max(0, cumVolume - prevCumVolume);
+      prevCumVolume = cumVolume;
+    }
+    let amount = 0;
+    if (Number.isFinite(cumAmount)) {
+      amount = Math.max(0, cumAmount - prevCumAmount);
+      prevCumAmount = cumAmount;
+    }
+    let avgPrice = 0;
+    if (Number.isFinite(cumAmount) && Number.isFinite(cumVolume) && cumVolume > 0) {
+      const raw = cumAmount / (cumVolume * 100);
+      if (raw >= price * 0.1 && raw <= price * 10) avgPrice = Math.round(raw * 1000) / 1000;
+    }
+    const percent = _calcPercent(price, prevClose);
+    items.push({
+      time,
+      open: price,
+      close: price,
+      high: price,
+      low: price,
+      volume,
+      amount,
+      avgPrice,
+      price,
+      preClose: prevClose,
+      percent,
+      changePercent: percent
+    });
+  }
+  return {
+    code,
+    name: (qt && qt[1]) || code,
+    source: 'tencent-minute',
+    preClose: prevClose,
+    items
+  };
+}
+

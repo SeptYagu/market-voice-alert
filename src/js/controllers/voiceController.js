@@ -31,7 +31,7 @@ export function createVoiceController({ getSettings, saveSettings, getCodes, get
       if (!quote) continue;
       const result = formatQuoteSpeechDelta(quote, manual ? null : memory.get(code), settings.fields, settings.fieldsOrder);
       if (!result.text) continue;
-      speech.speak(result.text, { volume: volume() });
+      speech.speak(result.text, { volume: volume(), code });
       if (result.spoken) memory.set(code, { ...memory.get(code), ...result.spoken });
     }
   }

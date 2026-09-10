@@ -36,36 +36,88 @@ function _createUtterance(text, opts) {
 
 export const MAX_QUEUE_SIZE = 50;
 
+let _currentUtterance = null;
+let _safetyTimer = null;
+
+function _pump() {
+  if (_currentUtterance !== null) return;
+  const synth = _synth();
+  if (!synth || !_queue.length) return;
+
+  const item = _queue[0];
+  _currentUtterance = item;
+
+  const cleanup = () => {
+    if (_safetyTimer) {
+      clearTimeout(_safetyTimer);
+      _safetyTimer = null;
+    }
+    if (_currentUtterance === item) {
+      _currentUtterance = null;
+      const i = _queue.indexOf(item);
+      if (i >= 0) _queue.splice(i, 1);
+      _pump();
+    }
+  };
+
+  if (item && typeof item === 'object') {
+    item.onend = cleanup;
+    item.onerror = cleanup;
+  }
+
+  _safetyTimer = setTimeout(cleanup, 10000);
+
+  try {
+    synth.speak(item);
+  } catch {
+    cleanup();
+  }
+}
+
 export function speak(text, userOpts = {}) {
   if (typeof text !== 'string') return;
   const trimmed = text.trim();
   if (!trimmed) return;
   const synth = _synth();
   if (!synth) return;
-  while (_queue.length >= MAX_QUEUE_SIZE) {
-    _queue.shift();
-  }
+
   const opts = { ...getDefaultVoiceOpts(), ...userOpts };
   const utterance = _createUtterance(trimmed, opts);
-  _queue.push(utterance);
-  const cleanup = () => {
-    const i = _queue.indexOf(utterance);
-    if (i >= 0) _queue.splice(i, 1);
-  };
-  if (utterance && typeof utterance === 'object') {
-    if ('onend' in utterance) utterance.onend = cleanup;
-    if ('onerror' in utterance) utterance.onerror = cleanup;
+  if (userOpts.code) utterance.code = userOpts.code;
+
+  if (userOpts.code) {
+    const existingIndex = _queue.findIndex((u, idx) => idx > 0 && u.code === userOpts.code);
+    if (existingIndex > 0) {
+      _queue[existingIndex] = utterance;
+      return;
+    }
   }
-  try {
-    synth.speak(utterance);
-  } catch {
-    /* ignore */
+
+  while (_queue.length >= MAX_QUEUE_SIZE) {
+    if (_queue.length > 1) {
+      _queue.splice(1, 1);
+    } else {
+      _queue.shift();
+    }
   }
+
+  if (userOpts.priority === 'high' && _queue.length > 1) {
+    _queue.splice(1, 0, utterance);
+  } else {
+    _queue.push(utterance);
+  }
+
+  _pump();
 }
 
 export function cancel() {
-  const synth = _synth();
+  if (_safetyTimer) {
+    clearTimeout(_safetyTimer);
+    _safetyTimer = null;
+  }
+  _currentUtterance = null;
   _queue.length = 0;
+  const synth = _synth();
   if (!synth) return;
   try {
     synth.cancel();

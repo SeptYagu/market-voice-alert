@@ -73,10 +73,17 @@ export function resolveMomentumScanDates(dateKey, tradeDates, todayKey = beijing
   if (!isLiveTradingDay) {
     return { marketDate, historyTargetDate: marketDate, liveDate: '' };
   }
-  if (beijingMinuteOfDay(now) >= 15 * 60 + 5) {
+  const minutes = beijingMinuteOfDay(now);
+  const prior = normalizedDates.filter((date) => date < marketDate).at(-1) || previousWeekday(marketDate);
+  // Pre-open (before 09:15, e.g. 08:00 scheduled scan): today's market has not opened.
+  // Last completed trading session is prior; no live quote synthesis.
+  if (minutes < 9 * 60 + 15) {
+    return { marketDate: prior, historyTargetDate: prior, liveDate: '' };
+  }
+  // Post-close (after 15:05): official daily K-line for today is already released.
+  if (minutes >= 15 * 60 + 5) {
     return { marketDate, historyTargetDate: marketDate, liveDate: '' };
   }
-  const prior = normalizedDates.filter((date) => date < marketDate).at(-1) || previousWeekday(marketDate);
   return { marketDate, historyTargetDate: prior, liveDate: marketDate };
 }
 
@@ -86,6 +93,14 @@ export function mergeLiveQuoteIntoDailyKline(data, quote, liveDateKey) {
   const open = Number(quote && quote.open);
   const volume = Number(quote && quote.volume);
   if (!liveDateKey || !Number.isFinite(price) || price <= 0 || (!(open > 0) && !(volume > 0))) return data;
+  if (quote && (quote.time || quote.date)) {
+    const rawTime = String(quote.time || quote.date);
+    const m = rawTime.match(/^(\d{4})[-/]?(\d{2})[-/]?(\d{2})/);
+    if (m) {
+      const quoteDate = `${m[1]}${m[2]}${m[3]}`;
+      if (quoteDate !== normalizeDateKey(liveDateKey)) return data;
+    }
+  }
   const time = dashDate(liveDateKey);
   if (!time) return data;
   const high = Math.max(price, Number(quote.high) || 0, open || 0);

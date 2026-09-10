@@ -7,13 +7,12 @@ import {
   toAktoolsDate
 } from '../src/js/aktoolsApi.js';
 import { parseTradeCalendar } from '../src/js/tradeCalendar.js';
-import { parseEastmoneyTrends, parseTencentMinute } from '../src/js/api.js';
-import { parseTencent, toEastmoneySecId } from '../src/js/parser.js';
+import { parseEastmoneyTrends, parseTencentMinute, parseTencent, toEastmoneySecId } from '../src/js/parser.js';
 import { fetchWithTimeout, normalizeCodeParam, mapLimit } from './utils.js';
 
 const AKTOOLS_BASE = process.env.AKTOOLS_BASE || 'http://127.0.0.1:8888';
 // 2026-09-10 live probes (10 requests per host, mid-session): push2his main
-// host failed 0/10 with server-side socket resets (UND_ERR_SOCKET), while the
+// host failed 10/10 with server-side socket resets (UND_ERR_SOCKET) (0/10 succeeded), while the
 // 90.push2his mirror succeeded 9/10 at ~450ms. Always keep the mirror in the
 // rotation and retry after a reset — a fresh connection usually succeeds.
 const EASTMONEY_TRENDS_HOSTS = Object.freeze([

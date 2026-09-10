@@ -157,6 +157,9 @@ export function formatIntradayStatus(inst) {
   const parts = [];
   if (inst.intradayLoading) parts.push('分时加载中...');
   if (inst.intradayError) parts.push('分时错误: ' + inst.intradayError);
+  const isStale = Boolean(
+    inst.intradayData && (inst.intradayData.stale || inst.intradayData.upstreamStale || inst.intradayData.cacheSource === 'stale')
+  );
   if (inst.intradayData && Array.isArray(inst.intradayData.items) && inst.intradayData.items.length) {
     const items = inst.intradayData.items;
     const last = items[items.length - 1];
@@ -170,9 +173,11 @@ export function formatIntradayStatus(inst) {
     }
     const label = intradaySourceLabel(inst.intradayData.source);
     if (label) summary.push(`(${label})`);
+    if (isStale) summary.push('(过期缓存)');
     parts.push(summary.join(' · '));
   } else if (!inst.intradayLoading && !inst.intradayError) {
-    parts.push(inst.selectedTradeDate ? `${inst.selectedTradeDate} · 暂无分时` : '点击右侧日K查看分时');
+    const staleSuffix = isStale ? ' (过期缓存)' : '';
+    parts.push(inst.selectedTradeDate ? `${inst.selectedTradeDate} · 暂无分时${staleSuffix}` : `点击右侧日K查看分时${staleSuffix}`);
   }
   return parts.join(' · ');
 }

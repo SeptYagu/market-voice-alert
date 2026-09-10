@@ -167,7 +167,7 @@ project1/
 | `/api/cache/spot/latest` | `server/` 内置模块 | 全市场实时快照共享缓存 |
 
 `/api/cache/*` 开发期由 Vite 挂载，生产期由 `npm run server` 挂载。
-服务启动时会启动服务端后台任务：10 日涨幅池会在启动时补齐当天缓存，并按北京时间 08:00、15:01 自动扫描；E2E 通过 `DISABLE_BACKGROUND_JOBS=1` 关闭真实后台扫描。
+服务启动时会启动服务端后台任务：10 日涨幅池会在启动时补齐当天缓存，并按北京时间 08:00、15:05 自动扫描；E2E 通过 `DISABLE_BACKGROUND_JOBS=1` 关闭真实后台扫描。
 
 > **涨停数据源（2026-06-05 升级）**：本项目依赖本地 AKTools 服务（Python 后端，端口 8888）拿涨停池/炸板池数据，含连板数/炸板次数/封板时间真值。安装：`pip install aktools`；启动：`aktools`（或项目根目录的 `aktools startup.bat`）。非交易日接口返回 `[]`。
 

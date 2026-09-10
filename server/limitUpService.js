@@ -10,9 +10,52 @@ function isHistoricalDate(dateKey) {
   return /^\d{8}$/.test(dateKey) && dateKey < todayKey;
 }
 
-async function readHistoricalCache(parts, ttlMs) {
+function beijingStamp(ms) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).formatToParts(new Date(Number(ms)));
+  const pick = (type) => Number(parts.find((p) => p.type === type)?.value || 0);
+  return {
+    dateKey: `${pick('year')}${String(pick('month')).padStart(2, '0')}${String(pick('day')).padStart(2, '0')}`,
+    minutes: pick('hour') * 60 + pick('minute')
+  };
+}
+
+export function isHistoricalLimitUpComplete(generatedAtMs, dateKey, data) {
+  if (!data || (!Array.isArray(data.items) && !Array.isArray(data.limitUpItems))) return false;
+  const n = Number(generatedAtMs);
+  if (!Number.isFinite(n) || n <= 0) return false;
+  const stamp = beijingStamp(n);
+  if (stamp.dateKey > dateKey) return true;
+  if (stamp.dateKey < dateKey) return false;
+  return stamp.minutes >= 15 * 60 + 5;
+}
+
+export function isHistoricalReasonsComplete(generatedAtMs, dateKey, data) {
+  if (!data || !Array.isArray(data.reasons)) return false;
+  const n = Number(generatedAtMs);
+  if (!Number.isFinite(n) || n <= 0) return false;
+  const stamp = beijingStamp(n);
+  if (data.reasons.length > 0) {
+    if (stamp.dateKey > dateKey) return true;
+    if (stamp.dateKey === dateKey && stamp.minutes >= 15 * 60 + 5) return true;
+  }
+  if (stamp.dateKey > dateKey) return true;
+  return false;
+}
+
+async function readHistoricalCache(parts, ttlMs, isCompleteFn, dateKey) {
   const cached = await readCache(parts);
   if (!cached || !Object.prototype.hasOwnProperty.call(cached, 'data')) return null;
+  if (typeof isCompleteFn === 'function' && !isCompleteFn(cached.generatedAt, dateKey, cached.data)) {
+    return null;
+  }
   return {
     source: 'cache',
     stale: false,
@@ -32,7 +75,7 @@ export async function getCachedLimitUp({ date, signal, force = false } = {}) {
 
   const parts = ['limit-up', dateKey, 'merged.json'];
   if (!force && isHistoricalDate(dateKey)) {
-    const historical = await readHistoricalCache(parts, LIMIT_UP_TTL_MS);
+    const historical = await readHistoricalCache(parts, LIMIT_UP_TTL_MS, isHistoricalLimitUpComplete, dateKey);
     if (historical) return historical;
   }
 
@@ -65,7 +108,7 @@ export async function getCachedLimitUpReasons({ date, signal, force = false } = 
 
   const parts = ['limit-up', dateKey, 'reasons.json'];
   if (!force && isHistoricalDate(dateKey)) {
-    const historical = await readHistoricalCache(parts, REASON_TTL_MS);
+    const historical = await readHistoricalCache(parts, REASON_TTL_MS, isHistoricalReasonsComplete, dateKey);
     if (historical) return historical;
   }
 

@@ -137,16 +137,19 @@ export function createMomentumController(appContext) {
       if (!item || !item.code) continue;
       const existing = appState.quotes.get(item.code);
       if (existing) {
-        appState.quotes.set(item.code, {
-          ...item,
-          ...existing,
-          price: Number.isFinite(Number(item.price)) ? Number(item.price) : existing.price,
-          changePercent: Number.isFinite(Number(item.changePercent)) ? Number(item.changePercent) : existing.changePercent,
-          amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : existing.amount,
-          type: 'stock'
-        });
+        if (existing.price === undefined || existing.price === null || existing.snapshot) {
+          appState.quotes.set(item.code, {
+            ...item,
+            ...existing,
+            price: Number.isFinite(Number(item.price)) ? Number(item.price) : existing.price,
+            changePercent: Number.isFinite(Number(item.changePercent)) ? Number(item.changePercent) : existing.changePercent,
+            amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : existing.amount,
+            type: 'stock',
+            snapshot: true
+          });
+        }
       } else {
-        appState.quotes.set(item.code, { ...item, type: 'stock' });
+        appState.quotes.set(item.code, { ...item, type: 'stock', snapshot: true });
       }
     }
   }

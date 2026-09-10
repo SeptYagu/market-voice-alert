@@ -195,7 +195,12 @@ async function fetchSharedLimitUp(opts = {}) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = await res.json();
   if (!json || json.ok !== true) throw new Error((json && json.error) || 'shared limit-up cache failed');
-  return json.data;
+  return {
+    ...json.data,
+    stale: json.stale,
+    generatedAt: json.generatedAt,
+    cacheSource: json.source
+  };
 }
 
 async function fetchSharedLimitUpReasons(opts = {}) {
@@ -207,5 +212,10 @@ async function fetchSharedLimitUpReasons(opts = {}) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = await res.json();
   if (!json || json.ok !== true) throw new Error((json && json.error) || 'shared reason cache failed');
-  return json.data;
+  return {
+    ...json.data,
+    stale: json.stale,
+    generatedAt: json.generatedAt,
+    cacheSource: json.source
+  };
 }

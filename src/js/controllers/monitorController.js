@@ -10,17 +10,21 @@ export function createMonitorController({ getState, fetchQuotes, fetchKline, sto
   let interval = null;
   let checker = null;
   let lifecycle = 0;
+  let inFlight = false;
   function getRefreshCodes() {
     const state = getState();
-    const codes = new Set([...state.watchList, ...state.subscribed]);
+    const codes = new Set([...(state.watchList || []), ...(state.subscribed || [])]);
     if (state.limitUp?.selectedDate === getBeijingDate(clock())) {
-      for (const item of state.limitUp.items || []) if (item.code) codes.add(item.code);
+      for (const item of state.limitUp.items || []) if (item?.code) codes.add(item.code);
     }
+    for (const item of state.momentum?.items || []) if (item?.code) codes.add(item.code);
     return [...codes];
   }
-  async function refresh() {
+  async function refresh({ forced = true } = {}) {
+    if (inFlight && !forced) return;
     const codes = getRefreshCodes();
     if (!codes.length) return;
+    inFlight = true;
     const token = scope.begin();
     const state = getState();
     state.loading = true;
@@ -29,13 +33,16 @@ export function createMonitorController({ getState, fetchQuotes, fetchKline, sto
     try {
       const quotes = await fetchQuotes(codes, { signal: token.signal });
       if (!scope.isCurrent(token)) return;
-      const currentCodes = new Set(getRefreshCodes());
-      for (const quote of quotes) if (currentCodes.has(quote.code)) state.quotes.set(quote.code, quote);
-      state.lastUpdate = clock();
-      onQuotes();
+      if (Array.isArray(quotes) && quotes.length > 0) {
+        const currentCodes = new Set(getRefreshCodes());
+        for (const quote of quotes) if (currentCodes.has(quote.code)) state.quotes.set(quote.code, quote);
+        state.lastUpdate = clock();
+        onQuotes();
+      }
     } catch (error) {
       if (scope.isCurrent(token) && error.name !== 'AbortError') state.error = error.message || String(error);
     } finally {
+      inFlight = false;
       if (scope.isCurrent(token)) { state.loading = false; onRefresh(); onStatus(); }
     }
   }
@@ -52,13 +59,14 @@ export function createMonitorController({ getState, fetchQuotes, fetchKline, sto
     else if (interval !== state.refreshInterval) {
       stopTimer();
       interval = state.refreshInterval;
-      timer = timers.setInterval(refresh, interval);
-      if (wasPaused || immediate) refresh();
+      timer = timers.setInterval(() => refresh({ forced: false }), interval);
+      if (wasPaused || immediate) refresh({ forced: true });
     }
     onStatus();
   }
   function stop() {
     lifecycle++;
+    inFlight = false;
     stopTimer(); scope.cancel(); preloadScope.cancel(); getState().loading = false;
     if (preloadTimer !== null) timers.clearTimeout(preloadTimer);
     preloadTimer = null;

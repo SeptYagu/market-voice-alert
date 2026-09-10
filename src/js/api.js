@@ -3,7 +3,9 @@ import {
   parseEastmoney,
   parseSinaFuture,
   toEastmoneySecId,
-  normalizeCode
+  parseEastmoneyTrends,
+  parseTencentMinute,
+  calcPercent as _calcPercent
 } from './parser.js';
 import {
   buildKlineUrl,
@@ -17,9 +19,12 @@ import {
   fetchAktoolsHistMinute
 } from './aktoolsApi.js';
 import { klineCacheGet, klineCacheSet } from './storage.js';
-import { parseBeijingDateTimeToChartSeconds, chartSecondsToTime, chartTimeToDate, parseTencentMinuteToChartSeconds } from './time.js';
+import { chartSecondsToTime, chartTimeToDate } from './time.js';
 import { isFutureCode } from './futures/instrument.js';
 import { fetchFuturesQuotes, fetchFuturesIntraday, fetchFuturesKline } from './futures/futuresApi.js';
+
+export { parseEastmoneyTrends, parseTencentMinute };
+
 
 const STOCK_RE = /^(sh|sz|bj)\d{6}$/i;
 export const FUTURE_RE = /^(?:nf_?)?[a-z]{1,3}\d{1,4}$/i;
@@ -131,37 +136,90 @@ export async function fetchSinaFuture(codes, { signal } = {}) {
 export async function fetchQuotes(codes, opts = {}) {
   const { stocks, futures } = splitCodes(codes);
   const tasks = [];
+  const errors = [];
 
   if (stocks.length) {
     tasks.push(
-      fetchTencent(stocks, opts)
-        .then((arr) => (arr.length ? arr : fetchEastmoney(stocks, opts)))
-        .catch(() => fetchEastmoney(stocks, opts).catch(() => []))
+      (async () => {
+        let tencentQuotes = [];
+        let tencentError = null;
+        try {
+          tencentQuotes = await fetchTencent(stocks, opts);
+        } catch (err) {
+          if (err && err.name === 'AbortError') throw err;
+          tencentError = err;
+        }
+        const gotCodes = new Set((tencentQuotes || []).map((q) => q && q.code).filter(Boolean));
+        const missingStocks = stocks.filter((c) => !gotCodes.has(c));
+        if (!missingStocks.length) {
+          return tencentQuotes || [];
+        }
+        try {
+          const emQuotes = await fetchEastmoney(missingStocks, opts);
+          const combined = [...(tencentQuotes || []), ...(emQuotes || [])];
+          if (!combined.length && tencentError) {
+            throw tencentError;
+          }
+          return combined;
+        } catch (err) {
+          if (err && err.name === 'AbortError') throw err;
+          if (tencentQuotes && tencentQuotes.length) return tencentQuotes;
+          throw (tencentError || err);
+        }
+      })()
     );
   }
+
   if (futures.length) {
     tasks.push(
-      fetchFuturesQuotes(futures, opts)
-        .then((arr) => (arr && arr.length ? arr : fetchSinaFuture(futures, opts)))
-        .catch(() => fetchSinaFuture(futures, opts).catch(() => []))
+      (async () => {
+        let futQuotes = [];
+        let futError = null;
+        try {
+          futQuotes = await fetchFuturesQuotes(futures, opts);
+        } catch (err) {
+          if (err && err.name === 'AbortError') throw err;
+          futError = err;
+        }
+        const gotCodes = new Set((futQuotes || []).map((q) => q && q.code).filter(Boolean));
+        const missingFutures = futures.filter((c) => !gotCodes.has(c));
+        if (!missingFutures.length) {
+          return futQuotes || [];
+        }
+        try {
+          const sinaQuotes = await fetchSinaFuture(missingFutures, opts);
+          const combined = [...(futQuotes || []), ...(sinaQuotes || [])];
+          if (!combined.length && futError) {
+            throw futError;
+          }
+          return combined;
+        } catch (err) {
+          if (err && err.name === 'AbortError') throw err;
+          if (futQuotes && futQuotes.length) return futQuotes;
+          throw (futError || err);
+        }
+      })()
     );
   }
 
-  const results = await Promise.all(tasks);
-  return results.flat();
-}
+  const results = await Promise.allSettled(tasks);
+  for (const r of results) {
+    if (r.status === 'rejected') {
+      if (r.reason && r.reason.name === 'AbortError') throw r.reason;
+      errors.push(r.reason);
+    }
+  }
 
-function _normalizeTrendCode(data) {
-  if (!data || !data.code) return '';
-  if (data.market === 1) return `sh${data.code}`;
-  return normalizeCode(String(data.code)) || String(data.code);
-}
+  const fulfilled = results
+    .filter((r) => r.status === 'fulfilled')
+    .flatMap((r) => r.value || []);
 
-function _calcPercent(close, prevClose) {
-  const c = Number(close);
-  const pc = Number(prevClose);
-  if (!Number.isFinite(c) || !Number.isFinite(pc) || pc <= 0) return 0;
-  return (c / pc - 1) * 100;
+  if ((stocks.length || futures.length) && !fulfilled.length && errors.length) {
+    const msg = errors.map((e) => (e && e.message ? e.message : String(e))).join('; ');
+    throw new Error(`行情数据源全部失败: ${msg}`);
+  }
+
+  return fulfilled;
 }
 
 function _isTradingSessionTime(time) {
@@ -181,132 +239,6 @@ function _filterIntradaySessions(data, selectedDate) {
       if (selectedDate && chartTimeToDate(it.time) !== selectedDate) return false;
       return _isTradingSessionTime(it.time);
     })
-  };
-}
-
-function _parseTrendRow(row, prevClose, selectedDate) {
-  if (typeof row !== 'string') return null;
-  const parts = row.split(',');
-  if (parts.length < 7) return null;
-  const time = parseBeijingDateTimeToChartSeconds(parts[0]);
-  if (!Number.isFinite(time)) return null;
-  if (selectedDate && chartTimeToDate(time) !== selectedDate) return null;
-  const open = parseFloat(parts[1]);
-  const close = parseFloat(parts[2]);
-  const high = parseFloat(parts[3]);
-  const low = parseFloat(parts[4]);
-  if (![open, close, high, low].every(Number.isFinite)) return null;
-  const volume = parseFloat(parts[5]);
-  const amount = parseFloat(parts[6]);
-  const avgPrice = parseFloat(parts[7]);
-  const percent = _calcPercent(close, prevClose);
-  return {
-    time,
-    open,
-    close,
-    high,
-    low,
-    volume: Number.isFinite(volume) ? volume : 0,
-    amount: Number.isFinite(amount) ? amount : 0,
-    avgPrice: Number.isFinite(avgPrice) ? avgPrice : 0,
-    price: close,
-    preClose: prevClose,
-    percent,
-    changePercent: percent
-  };
-}
-
-export function parseEastmoneyTrends(json, opts = {}) {
-  const d = json && json.data;
-  if (!d || typeof d !== 'object') return null;
-  const preClose = Number.isFinite(Number(d.preClose))
-    ? Number(d.preClose)
-    : (Number.isFinite(Number(opts.prevClose)) ? Number(opts.prevClose) : 0);
-  const rows = Array.isArray(d.trends) ? d.trends : [];
-  const selectedDate = opts.date || '';
-  const items = [];
-  for (const row of rows) {
-    const it = _parseTrendRow(row, preClose, selectedDate);
-    if (it) items.push(it);
-  }
-  return {
-    code: _normalizeTrendCode(d),
-    name: d.name || _normalizeTrendCode(d),
-    source: 'eastmoney-trends2',
-    preClose,
-    items
-  };
-}
-
-// Tencent minute/query rows: "HHmm price cumVolume(手) cumAmount(元)".
-// Volume/amount are day-cumulative — diff them into per-minute values.
-// avgPrice = cumAmount / (cumVolume * 100) (手 -> 股), sanity-banded against
-// the close price to absorb any upstream unit surprises (e.g. an ETF day).
-export function parseTencentMinute(json, opts = {}) {
-  const code = typeof opts.code === 'string' ? opts.code.toLowerCase() : '';
-  const payload = json && json.data && code ? json.data[code] : null;
-  const day = payload && payload.data;
-  if (!day || !Array.isArray(day.data) || !day.data.length) return null;
-  const dataDate = typeof day.date === 'string' ? day.date : '';
-  if (!/^\d{8}$/.test(dataDate)) return null;
-  const selectedDate = opts.date ? String(opts.date).replace(/-/g, '') : '';
-  if (selectedDate && dataDate !== selectedDate) return null;
-
-  const qt = payload.qt && payload.qt[code];
-  const prevClose = Number.isFinite(Number(qt && qt[4]))
-    ? Number(qt[4])
-    : (Number.isFinite(Number(opts.prevClose)) ? Number(opts.prevClose) : 0);
-
-  const items = [];
-  let prevCumVolume = 0;
-  let prevCumAmount = 0;
-  for (const row of day.data) {
-    if (typeof row !== 'string') continue;
-    const parts = row.trim().split(/\s+/);
-    if (parts.length < 2) continue;
-    const time = parseTencentMinuteToChartSeconds(`${dataDate}${parts[0]}`);
-    if (!Number.isFinite(time)) continue;
-    const price = parseFloat(parts[1]);
-    if (!Number.isFinite(price) || price <= 0) continue;
-    const cumVolume = parts.length > 2 ? parseFloat(parts[2]) : NaN;
-    const cumAmount = parts.length > 3 ? parseFloat(parts[3]) : NaN;
-    let volume = 0;
-    if (Number.isFinite(cumVolume)) {
-      volume = Math.max(0, cumVolume - prevCumVolume);
-      prevCumVolume = cumVolume;
-    }
-    let amount = 0;
-    if (Number.isFinite(cumAmount)) {
-      amount = Math.max(0, cumAmount - prevCumAmount);
-      prevCumAmount = cumAmount;
-    }
-    let avgPrice = 0;
-    if (Number.isFinite(cumAmount) && Number.isFinite(cumVolume) && cumVolume > 0) {
-      const raw = cumAmount / (cumVolume * 100);
-      if (raw >= price * 0.1 && raw <= price * 10) avgPrice = Math.round(raw * 1000) / 1000;
-    }
-    const percent = _calcPercent(price, prevClose);
-    items.push({
-      time,
-      open: price,
-      close: price,
-      high: price,
-      low: price,
-      volume,
-      amount,
-      avgPrice,
-      price,
-      preClose: prevClose,
-      percent,
-      changePercent: percent
-    });
-  }
-  return {
-    code,
-    name: (qt && qt[1]) || code,
-    source: 'tencent-minute',
-    preClose: prevClose,
-    items
   };
 }
 
@@ -466,7 +398,12 @@ async function _fetchIntradayFromSharedCache(code, opts = {}) {
   if (!json || json.ok !== true || !json.data) {
     throw new Error((json && json.error) || 'shared intraday cache failed');
   }
-  return json.data;
+  return {
+    ...json.data,
+    stale: json.stale,
+    generatedAt: json.generatedAt,
+    cacheSource: json.source
+  };
 }
 
 function _attachCallerSignal(promise, signal) {
@@ -561,7 +498,12 @@ async function _fetchKlineFromSharedCache(code, period, signal) {
   if (!json || json.ok !== true || !json.data) {
     throw new Error((json && json.error) || 'shared kline cache failed');
   }
-  return json.data;
+  return {
+    ...json.data,
+    stale: json.stale,
+    generatedAt: json.generatedAt,
+    cacheSource: json.source
+  };
 }
 
 async function _fetchKlineFromNetwork(code, period, signal) {
