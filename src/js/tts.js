@@ -38,39 +38,62 @@ export const MAX_QUEUE_SIZE = 50;
 
 let _currentUtterance = null;
 let _safetyTimer = null;
+let _finishCurrent = null;
 
 function _pump() {
   if (_currentUtterance !== null) return;
   const synth = _synth();
   if (!synth || !_queue.length) return;
 
+  const now = Date.now();
+  while (_queue.length && _queue[0].expiresAt && _queue[0].expiresAt <= now) {
+    const expired = _queue.shift();
+    if (typeof expired.onSpoken === 'function') {
+      try { expired.onSpoken('expired'); } catch { /* ignore */ }
+    }
+  }
+  if (!_queue.length) return;
+
   const item = _queue[0];
   _currentUtterance = item;
 
-  const cleanup = () => {
+  const finish = (reason) => {
+    _finishCurrent = null;
     if (_safetyTimer) {
       clearTimeout(_safetyTimer);
       _safetyTimer = null;
     }
-    if (_currentUtterance === item) {
-      _currentUtterance = null;
-      const i = _queue.indexOf(item);
-      if (i >= 0) _queue.splice(i, 1);
-      _pump();
+    if (_currentUtterance !== item) return;
+    if (reason === 'timeout') {
+      try {
+        synth.cancel();
+      } catch {
+        /* ignore */
+      }
     }
+    _currentUtterance = null;
+    const i = _queue.indexOf(item);
+    if (i >= 0) _queue.splice(i, 1);
+    if (typeof item.onSpoken === 'function') {
+      try { item.onSpoken(reason); } catch { /* ignore */ }
+    }
+    _pump();
   };
 
   if (item && typeof item === 'object') {
-    item.onend = cleanup;
-    item.onerror = cleanup;
+    item.onend = () => finish('end');
+    item.onerror = () => finish('error');
   }
 
-  _safetyTimer = setTimeout(cleanup, 10000);
+  _finishCurrent = finish;
+  const textLen = (item && item.text) ? item.text.length : 0;
+  const timeoutMs = Math.max(6000, Math.min(30000, textLen * 350 + 4000));
+  _safetyTimer = setTimeout(() => finish('timeout'), timeoutMs);
 
   try {
     synth.speak(item);
   } catch {
-    cleanup();
+    finish('error');
   }
 }
 
@@ -84,6 +107,10 @@ export function speak(text, userOpts = {}) {
   const opts = { ...getDefaultVoiceOpts(), ...userOpts };
   const utterance = _createUtterance(trimmed, opts);
   if (userOpts.code) utterance.code = userOpts.code;
+  if (userOpts.priority) utterance.priority = userOpts.priority;
+  if (userOpts.expiresAt) utterance.expiresAt = userOpts.expiresAt;
+  else if (userOpts.ttlMs) utterance.expiresAt = Date.now() + userOpts.ttlMs;
+  if (typeof userOpts.onSpoken === 'function') utterance.onSpoken = userOpts.onSpoken;
 
   if (userOpts.code) {
     const existingIndex = _queue.findIndex((u, idx) => idx > 0 && u.code === userOpts.code);
@@ -94,7 +121,10 @@ export function speak(text, userOpts = {}) {
   }
 
   while (_queue.length >= MAX_QUEUE_SIZE) {
-    if (_queue.length > 1) {
+    const dropIndex = _queue.findIndex((u, idx) => idx > 0 && u.priority !== 'high');
+    if (dropIndex > 0) {
+      _queue.splice(dropIndex, 1);
+    } else if (_queue.length > 1) {
       _queue.splice(1, 1);
     } else {
       _queue.shift();
@@ -115,6 +145,7 @@ export function cancel() {
     clearTimeout(_safetyTimer);
     _safetyTimer = null;
   }
+  _finishCurrent = null;
   _currentUtterance = null;
   _queue.length = 0;
   const synth = _synth();
@@ -236,5 +267,12 @@ export function buildQuoteSpeechSegments(quote) {
 }
 
 export function _internal() {
-  return { queue: _queue, adapter: _adapter };
+  return {
+    queue: _queue,
+    adapter: _adapter,
+    getCurrentUtterance: () => _currentUtterance,
+    triggerTimeout: () => {
+      if (typeof _finishCurrent === 'function') _finishCurrent('timeout');
+    }
+  };
 }

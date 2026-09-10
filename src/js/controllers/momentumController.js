@@ -214,6 +214,8 @@ export function createMomentumController(appContext) {
         }
         _mergeMomentumQuotesSafely(mState.items);
         mState.lastUpdate = new Date();
+        mState.stale = !!cached.stale;
+        mState.generatedAt = cached.generatedAt;
         return;
       }
 

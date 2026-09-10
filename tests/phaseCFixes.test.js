@@ -66,4 +66,56 @@ QUnit.module('Phase C Defect Fixes (R6 - Voice Queue & Backpressure)', (hooks) =
 
     assert.equal(_internal().queue[1].text, '🔔 茅台涨幅超5%', 'alert jumped to the head of pending queue');
   });
+
+  QUnit.test('M3: Safety timeout triggers synth.cancel() and advances queue', assert => {
+    let spokenResult = null;
+    speak('stalled speech', {
+      onSpoken: (reason) => { spokenResult = reason; }
+    });
+    speak('next queued item');
+
+    assert.equal(adapter.calls.length, 1);
+    assert.equal(adapter.calls[0].text, 'stalled speech');
+    assert.equal(adapter.cancelCount, 0);
+
+    // Simulate safety timeout firing on the stalled utterance
+    _internal().triggerTimeout();
+
+    assert.equal(adapter.cancelCount, 1, 'adapter cancel() was invoked on safety timeout');
+    assert.equal(spokenResult, 'timeout', 'onSpoken callback was notified of timeout');
+    assert.equal(adapter.calls.length, 2, 'queue advanced to next item');
+    assert.equal(adapter.calls[1].text, 'next queued item');
+  });
+
+  QUnit.test('M5: Queue overflow preferentially evicts routine items, protecting high priority alerts', assert => {
+    speak('speaking'); // currently speaking
+    speak('🔔 关键报警 1', { priority: 'high', code: 'sh600519' });
+    speak('🔔 关键报警 2', { priority: 'high', code: 'sz000001' });
+
+    // Rapidly submit routine items until MAX_QUEUE_SIZE is exceeded
+    for (let i = 0; i < 60; i++) {
+      speak(`routine quote ${i}`);
+    }
+
+    assert.equal(_internal().queue.length, MAX_QUEUE_SIZE);
+    const alert1 = _internal().queue.find(u => u.text === '🔔 关键报警 1');
+    const alert2 = _internal().queue.find(u => u.text === '🔔 关键报警 2');
+    assert.ok(alert1, 'first high priority alert was not evicted by routine burst');
+    assert.ok(alert2, 'second high priority alert was not evicted by routine burst');
+  });
+
+  QUnit.test('M5: Expired items in queue are skipped before dispatching to synthesizer', assert => {
+    speak('speaking'); // currently speaking
+    speak('expired alert', { expiresAt: Date.now() - 1000 });
+    speak('fresh alert');
+
+    assert.equal(adapter.calls.length, 1);
+
+    // Finish current speech
+    adapter.calls[0].onend();
+
+    // Next speech should be 'fresh alert', skipping 'expired alert'
+    assert.equal(adapter.calls.length, 2);
+    assert.equal(adapter.calls[1].text, 'fresh alert');
+  });
 });

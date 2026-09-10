@@ -76,7 +76,11 @@ export async function fetchLimitUpList(opts = {}) {
         const map = new Map();
         for (const it of payload.limitUpItems) if (it && it.code) map.set(it.code, it);
         for (const it of broken) if (it && it.code && !map.has(it.code)) map.set(it.code, it);
-        return [...map.values()];
+        const out = [...map.values()];
+        out.stale = payload.stale;
+        out.generatedAt = payload.generatedAt;
+        out.cacheSource = payload.cacheSource;
+        return out;
       }
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;
@@ -87,7 +91,11 @@ export async function fetchLimitUpList(opts = {}) {
     const map = new Map();
     for (const it of (res.limitUpItems || [])) if (it && it.code) map.set(it.code, it);
     for (const it of (res.brokenItems || [])) if (it && it.code && !map.has(it.code)) map.set(it.code, it);
-    return [...map.values()];
+    const out = [...map.values()];
+    out.stale = res.stale;
+    out.generatedAt = res.generatedAt;
+    out.cacheSource = res.cacheSource;
+    return out;
   }
   return await fetchAktoolsLimitUpList({
     signal: opts.signal,
@@ -103,7 +111,13 @@ export async function fetchLimitUpAndBrokenList(opts = {}) {
     try {
       const payload = await fetchSharedLimitUp(opts);
       if (payload && Array.isArray(payload.limitUpItems) && Array.isArray(payload.brokenItems)) {
-        return { limitUpItems: payload.limitUpItems, brokenItems: payload.brokenItems };
+        return {
+          limitUpItems: payload.limitUpItems,
+          brokenItems: payload.brokenItems,
+          stale: payload.stale,
+          generatedAt: payload.generatedAt,
+          cacheSource: payload.cacheSource
+        };
       }
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;

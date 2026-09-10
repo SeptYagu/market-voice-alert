@@ -1,4 +1,4 @@
-import { parseTencentMinute } from '../src/js/api.js';
+import { parseTencentMinute } from '../src/js/parser.js';
 
 // 真实样本：2026-09-10 盘中 贵州茅台 sh600519（minute/query）
 const REAL_SAMPLE = {

@@ -160,4 +160,86 @@ QUnit.module('Phase A Defect Fixes (R1, R2, R3, R4, R8)', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  QUnit.test('M2: Partial quote failure returns failedCodes and flags missing quotes as stale', async assert => {
+    const state = {
+      watchList: ['sh600000', 'sh600001'],
+      subscribed: new Set(),
+      quotes: new Map([
+        ['sh600000', { code: 'sh600000', price: 10, stale: false }],
+        ['sh600001', { code: 'sh600001', price: 20, stale: false }]
+      ]),
+      autoRefreshEnabled: true,
+      refreshInterval: 3000
+    };
+
+    const mockFetchQuotes = async (_codes) => {
+      // Only sh600000 succeeds; sh600001 fails/missing
+      const fulfilled = [{ code: 'sh600000', price: 10.5 }];
+      fulfilled.quotes = fulfilled;
+      fulfilled.failedCodes = ['sh600001'];
+      fulfilled.asOf = Date.now();
+      fulfilled.source = 'aggregated';
+      return fulfilled;
+    };
+
+    const ctl = createMonitorController({
+      getState: () => state,
+      fetchQuotes: mockFetchQuotes
+    });
+
+    await ctl.refresh();
+
+    assert.equal(state.quotes.get('sh600000').price, 10.5);
+    assert.equal(state.quotes.get('sh600000').stale, false);
+    assert.equal(state.quotes.get('sh600001').price, 20, 'old price retained for failed code');
+    assert.equal(state.quotes.get('sh600001').stale, true, 'missing code is flagged stale');
+    assert.deepEqual(state.failedCodes, ['sh600001']);
+  });
+
+  QUnit.test('M6: In-flight ownership is scoped to current token; older request completion does not clear inFlight prematurely', async assert => {
+    const state = {
+      watchList: ['sh600000'],
+      subscribed: new Set(),
+      quotes: new Map(),
+      autoRefreshEnabled: true
+    };
+    const pending = [];
+    const ctl = createMonitorController({
+      getState: () => state,
+      fetchQuotes: (_, { signal }) => new Promise((resolve) => pending.push({ resolve, signal }))
+    });
+
+    // 1. Start first request
+    const p1 = ctl.refresh({ forced: true });
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].signal.aborted, false);
+    assert.equal(ctl.inspect().inFlight, true);
+
+    // 2. Start second forced request while first is pending (first gets aborted by scope.begin)
+    const p2 = ctl.refresh({ forced: true });
+    assert.equal(pending.length, 2);
+    assert.equal(pending[0].signal.aborted, true, 'first request aborted');
+    assert.equal(pending[1].signal.aborted, false);
+    assert.equal(ctl.inspect().inFlight, true);
+
+    // 3. Resolve first (aborted) request. Its finally block executes.
+    pending[0].resolve([{ code: 'sh600000', price: 10 }]);
+    await p1;
+
+    // inFlight MUST remain true because second request is still in-flight!
+    assert.equal(ctl.inspect().inFlight, true, 'inFlight remains true while second request is active');
+
+    // 4. Non-forced refresh should be blocked because inFlight is still true
+    const p3 = ctl.refresh({ forced: false });
+    assert.equal(pending.length, 2, 'non-forced refresh was blocked');
+    await p3;
+
+    // 5. Complete second request
+    pending[1].resolve([{ code: 'sh600000', price: 11 }]);
+    await p2;
+
+    assert.equal(ctl.inspect().inFlight, false, 'inFlight released after current request completes');
+    assert.equal(state.quotes.get('sh600000').price, 11);
+  });
 });

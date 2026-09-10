@@ -31,19 +31,38 @@ export function createMonitorController({ getState, fetchQuotes, fetchKline, sto
     state.error = null;
     onStatus();
     try {
-      const quotes = await fetchQuotes(codes, { signal: token.signal });
+      const res = await fetchQuotes(codes, { signal: token.signal });
       if (!scope.isCurrent(token)) return;
+      const quotes = Array.isArray(res) ? res : (res && res.quotes) || [];
+      const failedCodes = (res && res.failedCodes) || [];
       if (Array.isArray(quotes) && quotes.length > 0) {
         const currentCodes = new Set(getRefreshCodes());
-        for (const quote of quotes) if (currentCodes.has(quote.code)) state.quotes.set(quote.code, quote);
+        for (const quote of quotes) {
+          if (currentCodes.has(quote.code)) {
+            quote.stale = false;
+            quote.lastEffectiveTime = clock();
+            state.quotes.set(quote.code, quote);
+          }
+        }
+        for (const failCode of failedCodes) {
+          if (state.quotes.has(failCode)) {
+            const old = state.quotes.get(failCode);
+            state.quotes.set(failCode, { ...old, stale: true });
+          }
+        }
         state.lastUpdate = clock();
+        state.failedCodes = failedCodes;
         onQuotes();
       }
     } catch (error) {
       if (scope.isCurrent(token) && error.name !== 'AbortError') state.error = error.message || String(error);
     } finally {
-      inFlight = false;
-      if (scope.isCurrent(token)) { state.loading = false; onRefresh(); onStatus(); }
+      if (scope.isCurrent(token)) {
+        inFlight = false;
+        state.loading = false;
+        onRefresh();
+        onStatus();
+      }
     }
   }
   function stopTimer() {
@@ -113,5 +132,5 @@ export function createMonitorController({ getState, fetchQuotes, fetchKline, sto
     state.watchList = storage.get();
   }
   return { refresh, preload, getRefreshCodes, startChecker, stop, stopTimer, applySchedule, addCodes, removeCodes,
-    inspect: () => ({ timerCount: Number(timer !== null) + Number(checker !== null) + Number(preloadTimer !== null) }) };
+    inspect: () => ({ inFlight: !!inFlight, timerCount: Number(timer !== null) + Number(checker !== null) + Number(preloadTimer !== null) }) };
 }

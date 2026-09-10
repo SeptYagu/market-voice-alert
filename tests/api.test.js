@@ -6,11 +6,11 @@ import {
   splitCodes,
   fetchKline,
   fetchIntraday,
-  parseEastmoneyTrends,
   EASTMONEY_FIELDS,
   onKlineUpdated,
   clearKlineRevalidateThrottle
 } from '../src/js/api.js';
+import { parseEastmoneyTrends } from '../src/js/parser.js';
 import { klineCacheClear, setStorageAdapter } from '../src/js/storage.js';
 
 function createMockStorage() {

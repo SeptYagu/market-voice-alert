@@ -133,7 +133,7 @@ QUnit.module('server cache and production routing', (hooks) => {
 
   QUnit.test('live quote creates or replaces the unfinished daily bar', (t) => {
     const base = { code: 'sh603533', items: [{ time: '2026-09-02', open: 25, close: 24.15, high: 26, low: 24 }] };
-    const quote = { price: 23.43, open: 24.44, high: 24.58, low: 23.20, volume: 517381, amount: 123456, changePercent: -2.98 };
+    const quote = { price: 23.43, open: 24.44, high: 24.58, low: 23.20, volume: 517381, amount: 123456, changePercent: -2.98, quoteDate: '20260903' };
     const appended = mergeLiveQuoteIntoDailyKline(base, quote, '20260903');
     t.equal(appended.items.length, 2);
     t.deepEqual(appended.items[1], {
@@ -143,7 +143,7 @@ QUnit.module('server cache and production routing', (hooks) => {
     const replaced = mergeLiveQuoteIntoDailyKline(appended, { ...quote, price: 23.88 }, '20260903');
     t.equal(replaced.items.length, 2);
     t.equal(replaced.items[1].close, 23.88);
-    t.strictEqual(mergeLiveQuoteIntoDailyKline(base, { price: 24, open: 0, volume: 0 }, '20260903'), base);
+    t.strictEqual(mergeLiveQuoteIntoDailyKline(base, { price: 24, open: 0, volume: 0, quoteDate: '20260903' }, '20260903'), base);
   });
 
   QUnit.test('default server dates use Beijing calendar date', (t) => {

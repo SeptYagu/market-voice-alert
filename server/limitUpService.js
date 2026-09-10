@@ -44,7 +44,7 @@ export function isHistoricalReasonsComplete(generatedAtMs, dateKey, data) {
   const stamp = beijingStamp(n);
   if (data.reasons.length > 0) {
     if (stamp.dateKey > dateKey) return true;
-    if (stamp.dateKey === dateKey && stamp.minutes >= 15 * 60 + 5) return true;
+    if (stamp.dateKey === dateKey && stamp.minutes >= 20 * 60 + 30) return true;
   }
   if (stamp.dateKey > dateKey) return true;
   return false;

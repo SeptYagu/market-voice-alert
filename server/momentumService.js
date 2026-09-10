@@ -93,14 +93,17 @@ export function mergeLiveQuoteIntoDailyKline(data, quote, liveDateKey) {
   const open = Number(quote && quote.open);
   const volume = Number(quote && quote.volume);
   if (!liveDateKey || !Number.isFinite(price) || price <= 0 || (!(open > 0) && !(volume > 0))) return data;
-  if (quote && (quote.time || quote.date)) {
-    const rawTime = String(quote.time || quote.date);
-    const m = rawTime.match(/^(\d{4})[-/]?(\d{2})[-/]?(\d{2})/);
-    if (m) {
-      const quoteDate = `${m[1]}${m[2]}${m[3]}`;
-      if (quoteDate !== normalizeDateKey(liveDateKey)) return data;
-    }
+  const rawDate = quote && (quote.quoteDate || quote.date);
+  const rawTime = quote && (quote.updateTime || quote.time);
+  let evidence = '';
+  if (rawDate) {
+    evidence = String(rawDate).replace(/\D/g, '');
+  } else if (rawTime) {
+    const str = String(rawTime);
+    const m = str.match(/^(\d{4})[-/]?(\d{2})[-/]?(\d{2})/);
+    if (m) evidence = `${m[1]}${m[2]}${m[3]}`;
   }
+  if (!evidence || evidence !== normalizeDateKey(liveDateKey)) return data;
   const time = dashDate(liveDateKey);
   if (!time) return data;
   const high = Math.max(price, Number(quote.high) || 0, open || 0);

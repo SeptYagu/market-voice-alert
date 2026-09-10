@@ -4,7 +4,6 @@ import {
   parseSinaFuture,
   toEastmoneySecId,
   parseEastmoneyTrends,
-  parseTencentMinute,
   calcPercent as _calcPercent
 } from './parser.js';
 import {
@@ -23,7 +22,8 @@ import { chartSecondsToTime, chartTimeToDate } from './time.js';
 import { isFutureCode } from './futures/instrument.js';
 import { fetchFuturesQuotes, fetchFuturesIntraday, fetchFuturesKline } from './futures/futuresApi.js';
 
-export { parseEastmoneyTrends, parseTencentMinute };
+// `source`: indicates original market data provider (e.g. 'tencent', 'sina', 'aktools').
+// `cacheSource`: indicates cache tier / resolution layer (e.g. 'shared-cache', 'memory', 'upstream').
 
 
 const STOCK_RE = /^(sh|sz|bj)\d{6}$/i;
@@ -120,10 +120,23 @@ export async function fetchEastmoneyOne(code, { signal } = {}) {
 
 export async function fetchEastmoney(codes, opts = {}) {
   const list = Array.isArray(codes) ? codes : [codes];
-  const results = await Promise.all(
-    list.map((c) => fetchEastmoneyOne(c, opts).catch(() => null))
+  const results = await Promise.allSettled(
+    list.map((c) => fetchEastmoneyOne(c, opts))
   );
-  return results.filter(Boolean);
+  const out = [];
+  const errors = [];
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value) {
+      out.push(r.value);
+    } else if (r.status === 'rejected') {
+      if (r.reason && r.reason.name === 'AbortError') throw r.reason;
+      errors.push(r.reason);
+    }
+  }
+  if (!out.length && errors.length) {
+    throw errors[0];
+  }
+  return out;
 }
 
 export async function fetchSinaFuture(codes, { signal } = {}) {
@@ -218,6 +231,16 @@ export async function fetchQuotes(codes, opts = {}) {
     const msg = errors.map((e) => (e && e.message ? e.message : String(e))).join('; ');
     throw new Error(`行情数据源全部失败: ${msg}`);
   }
+
+  const requestedList = Array.isArray(codes) ? codes : [codes];
+  const requestedCodes = [...new Set(requestedList.filter(Boolean))];
+  const gotCodes = new Set(fulfilled.map((q) => q && q.code).filter(Boolean));
+  const failedCodes = requestedCodes.filter((c) => !gotCodes.has(c));
+
+  fulfilled.quotes = fulfilled;
+  fulfilled.failedCodes = failedCodes;
+  fulfilled.asOf = Date.now();
+  fulfilled.source = 'aggregated';
 
   return fulfilled;
 }

@@ -160,6 +160,7 @@ export function createLimitUpController(appContext) {
     parts.push(`共 ${total} 只涨停`);
     if (lu.loading) parts.push('加载中...');
     if (lu.error) parts.push(`错误: ${lu.error}`);
+    if (lu.stale) parts.push('(过期缓存)');
     if (lu.consecutiveEmptyFetches > 0 && lu.lastNonEmptyAt) {
       const ts = lu.lastNonEmptyAt.toLocaleTimeString();
       parts.push(`缓存自 ${ts} · 已空 ${lu.consecutiveEmptyFetches} 次`);
@@ -296,6 +297,8 @@ export function createLimitUpController(appContext) {
       });
       if (!listScope.isCurrent(token) || requestSeq !== lu.requestSeq || lu.selectedDate !== date) return;
       lu.lastUpdate = new Date();
+      lu.stale = !!rawItems.stale;
+      lu.generatedAt = rawItems.generatedAt;
       const updated = applyLimitUpFetchResult(lu, rawItems);
       Object.assign(lu, updated);
       if (!patchLimitUpQuoteCells()) {

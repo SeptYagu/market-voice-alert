@@ -1156,7 +1156,7 @@ function processAlerts() {
   if (!result.triggered.length) return;
   const volume = clampVolume(state.voice.volume) / 100;
   for (const item of result.triggered) {
-    if (isSpeechSupported()) ttsSpeak(item.message, { volume });
+    if (isSpeechSupported()) ttsSpeak(item.message, { volume, priority: 'high', code: item.code, ttlMs: 30000 });
     if (isNotificationSupported() && state.notifPermission === 'granted') {
       showNotification('价格提醒', item.message);
     }
