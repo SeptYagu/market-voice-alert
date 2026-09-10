@@ -157,11 +157,16 @@ function _detailNumber(value, digits = 2) {
   return Number.isFinite(n) ? n.toFixed(digits) : '--';
 }
 
+// The detail legend is inserted as a sibling ABOVE the chart host (normal
+// flow), not overlaid inside it — an absolute overlay always covers the
+// price action near the top of the plot (e.g. a big-gain chart whose curve
+// hugs the top edge).
 function _createDetailLegend(container, className) {
   if (typeof document === 'undefined') return null;
   const legend = document.createElement('div');
   legend.className = `chart-crosshair-detail ${className || ''}`.trim();
-  container.appendChild(legend);
+  const parent = container.parentNode || container;
+  parent.insertBefore(legend, container);
   return legend;
 }
 

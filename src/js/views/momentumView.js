@@ -138,7 +138,7 @@ export function renderMomentumChartRow(item, colCount, ctx) {
   status.textContent = statusParts.join(' · ');
   if (inst && inst.error) status.className = 'chart-status has-error';
 
-  const host = el('div', { class: 'chart-host', id: `momentum-chart-host-${item.code}` });
+  const host = el('div', { class: 'chart-host momentum-chart-host', id: `momentum-chart-host-${item.code}` });
   const pane = el(
     'div',
     { class: 'chart-split momentum-chart-split' },

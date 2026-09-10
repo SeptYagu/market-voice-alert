@@ -571,19 +571,20 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   height: 360px;
   min-height: 320px;
 }
+/* Detail legend lives ABOVE the chart host in normal flow (inserted as a
+   sibling by chart.js) so it never covers the candles. */
 .chart-crosshair-detail {
-  position: absolute;
-  z-index: 4;
-  top: 5px;
-  left: 8px;
-  right: 58px;
   pointer-events: none;
+  margin: 0 0 4px;
   color: var(--text-color);
   background: color-mix(in srgb, var(--card-bg) 88%, transparent);
   border-radius: 3px;
   padding: 2px 5px;
   font: 11px/1.45 "Roboto Mono", "Consolas", monospace;
   white-space: normal;
+}
+.chart-crosshair-detail:empty {
+  display: none;
 }
 .watch-table tbody tr.chart-row .period-tabs {
   margin: 0;
@@ -758,7 +759,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   background: var(--card-bg);
   border-bottom: 2px solid var(--accent-color);
 }
-.momentum-chart-host {
+/* .chart-host.momentum-chart-host: must outrank the generic .chart-host rule
+   further down (height 400px); position:relative keeps absolutely positioned
+   children (none today, but defense-in-depth) anchored to the host. */
+.chart-host.momentum-chart-host {
   position: relative;
   width: 100%;
   height: 340px;
@@ -885,6 +889,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .chart-host,
 .lu-chart-host {
+  position: relative;
   width: 100%;
   height: 400px;
   min-height: 360px;
