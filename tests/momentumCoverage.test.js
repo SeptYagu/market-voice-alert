@@ -1,12 +1,12 @@
 import QUnit from 'qunit';
 import { rm } from 'node:fs/promises';
 import { cachePath, readCache, writeCache } from '../server/cacheStore.js';
-import { getCachedTenDayMomentum, startTenDayMomentumScan } from '../server/momentumService.js';
+import { getCachedTenDayMomentum, startTenDayMomentumScan, MOMENTUM_RULE } from '../server/momentumService.js';
 
 QUnit.module('Momentum market coverage');
-QUnit.test('legacy cached subset is returned as partial without rescanning or mutating disk', async assert => {
+QUnit.test('subset cache written under the current rule is still served as partial without mutating disk', async assert => {
   const parts = ['momentum', '20260907', 'ten-day-46pct.json'];
-  const data = { status: 'complete', spotSource: 'tencent-batch-quotes', universeSize: 33, items: [{ code: 'sh600519' }] };
+  const data = { rule: MOMENTUM_RULE, status: 'complete', spotSource: 'tencent-batch-quotes', universeSize: 33, items: [{ code: 'sh600519' }] };
   await writeCache(parts, { data }, { skipPrune: true });
   const result = await getCachedTenDayMomentum({ date: '20260907', threshold: 46 });
   assert.strictEqual(result.data.status, 'partial');
@@ -14,6 +14,25 @@ QUnit.test('legacy cached subset is returned as partial without rescanning or mu
   assert.true(result.data.message.includes('33 只股票'));
   assert.deepEqual(result.data.items, data.items, 'valid partial results retained');
   assert.strictEqual((await readCache(parts)).data.status, 'complete', 'read-only correction of legacy file');
+});
+
+QUnit.test('cache left over from an older momentum rule is not served and asks for a rescan', async assert => {
+  // 口径升级后，按旧口径扫出来的池子不是「今天的池子」：既不能当结果返回，
+  // 也不能让 ensureStartupMomentumScan 认为今天已经扫过（否则新逻辑要等到下一个定时扫描）。
+  const parts = ['momentum', '20260907', 'ten-day-45pct.json'];
+  const legacy = {
+    status: 'complete',
+    universeComplete: true,
+    scanned: 5400,
+    latestMarketDate: '20260907',
+    items: [{ code: 'sh600519', gainPercent: 52.3, anomaly: '10日涨幅超45%' }]
+  };
+  await writeCache(parts, { data: legacy }, { skipPrune: true });
+  const result = await getCachedTenDayMomentum({ date: '20260907', threshold: 45 });
+  assert.strictEqual(result.source, 'empty', 'stale-rule cache must not be served as a result');
+  assert.deepEqual(result.data.items, [], 'old-rule items are not exposed to the client');
+  assert.true(result.data.message.includes('判定规则已更新'), `message carries the rule-upgrade hint: ${result.data.message}`);
+  assert.strictEqual((await readCache(parts, { skipTouch: true })).data.rule, undefined, 'disk untouched by the read');
 });
 
 QUnit.test('actual scan cannot report whole-market completion when every cached candidate succeeds', async assert => {

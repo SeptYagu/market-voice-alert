@@ -30,6 +30,11 @@ export function normalizeMomentumCoverage(data) {
 
 const MOMENTUM_TTL_MS = 5 * 60 * 1000;
 const CONCURRENCY = 32;
+// 判定规则的版本号。缓存的键名只区分「日期 + 阈值」，不区分口径，所以每次改动
+// isMomentumEligible / computeTenDayMomentum 的语义（阈值含义、窗口、排序依据）都必须
+// 提升这个版本号：否则旧口径的产物会被 getCachedTenDayMomentum 当作本轮结果返回，
+// 而 ensureStartupMomentumScan 见到 items 非空又会跳过启动扫描 —— 新版逻辑会静默不生效。
+export const MOMENTUM_RULE = 'peak-touch-v1';
 const SCHEDULED_SCAN_TIMES = Object.freeze([
   Object.freeze({ hour: 8, minute: 0, label: 'pre-open' }),
   Object.freeze({ hour: 15, minute: 5, label: 'after-close' })
@@ -296,6 +301,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt, 
   let progressWrite = Promise.resolve();
   await commit(() => writeMomentumProgress(parts, {
     ...coverage,
+    rule: MOMENTUM_RULE,
     status: 'scanning',
     date: dateKey,
     threshold,
@@ -359,6 +365,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt, 
       if (scanned.count > 0 && scanned.count % 100 === 0) {
         const progress = {
           ...coverage,
+          rule: MOMENTUM_RULE,
           status: 'scanning',
           date: dateKey,
           threshold,
@@ -393,6 +400,7 @@ async function buildMomentum({ dateKey, threshold, parts, signal, jobStartedAt, 
   const totalFailures = refreshFailures + universeRefreshFailures;
   const isComplete = totalFailures === 0;
   return normalizeMomentumCoverage({
+    rule: MOMENTUM_RULE,
     status: isComplete ? 'complete' : 'partial',
     date: dateKey,
     threshold,
@@ -446,11 +454,26 @@ export async function getCachedTenDayMomentum({ date, threshold: rawThreshold, s
         jobStartedAt: jobState.startedAt,
         universeSize: sameJob ? Number(priorData.universeSize) || 0 : 0,
         scanned: sameJob ? Number(priorData.scanned) || 0 : 0,
-        items: Array.isArray(priorData.items) ? priorData.items : []
+        // 扫描已经开始的这段时间里，上一次的进度快照可能还是旧口径的产物，不能顺势展示。
+        items: priorData.rule === MOMENTUM_RULE && Array.isArray(priorData.items) ? priorData.items : []
       }
     };
   }
   if (cached && cached.data) {
+    if (cached.data.rule !== MOMENTUM_RULE) {
+      // 判定规则升级前的缓存（旧口径结果，或上一次扫描失败的快照）不能当作本轮结果：
+      // 交由启动扫描 / 定时扫描重建。保留上一次的失败原因，避免用户毫无线索。
+      const legacyError = cached.data.status === 'error' ? cached.data.error : '';
+      return {
+        source: 'empty',
+        stale: false,
+        generatedAt: nowMs(),
+        ttlMs: MOMENTUM_TTL_MS,
+        data: emptyMomentumData(dateKey, threshold, legacyError
+          ? `${legacyError}；判定规则已更新为 ${MOMENTUM_RULE}，等待重新扫描`
+          : `判定规则已更新为 ${MOMENTUM_RULE}，服务端将重新扫描 ${dateKey} 的强势股池`)
+      };
+    }
     const fresh = isFresh(cached, MOMENTUM_TTL_MS);
     return {
       source: fresh ? 'cache' : 'stale',
@@ -507,15 +530,18 @@ function ensureStartupMomentumScan(logger) {
   const parts = cacheParts(dateKey, threshold);
 
   return readCache(parts, { skipTouch: true }).then((cached) => {
-    if (cached && cached.data && normalizeMomentumCoverage(cached.data).universeComplete !== false &&
+    // rule 必须匹配：口径升级后旧缓存不能算「今天已经扫过」，否则新逻辑要等到下一个定时扫描才生效。
+    if (cached && cached.data && cached.data.rule === MOMENTUM_RULE &&
+        normalizeMomentumCoverage(cached.data).universeComplete !== false &&
         Array.isArray(cached.data.items) && cached.data.items.length) {
       if (logger && logger.info) {
-        logger.info(`momentum shared cache present for ${dateKey}, skipping startup scan`);
+        logger.info(`momentum shared cache present for ${dateKey} (${MOMENTUM_RULE}), skipping startup scan`);
       }
       return null;
     }
     if (logger && logger.info) {
-      logger.info(`momentum shared cache missing for ${dateKey}, starting background startup scan`);
+      const why = cached && cached.data && cached.data.rule !== MOMENTUM_RULE ? 'stale rule' : 'missing';
+      logger.info(`momentum shared cache ${why} for ${dateKey}, starting background startup scan`);
     }
     return startTenDayMomentumScan({ date: dateKey, threshold, reason: 'startup' })
       .catch((err) => {
