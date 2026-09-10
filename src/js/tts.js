@@ -40,6 +40,15 @@ let _currentUtterance = null;
 let _safetyTimer = null;
 let _finishCurrent = null;
 
+// Every terminal path (played / failed / timed out / expired / replaced / dropped /
+// cancelled) notifies the caller exactly once, so a listener can never be left
+// believing an utterance is still pending. Listener errors never break the queue.
+function _notify(item, reason) {
+  if (item && typeof item.onSpoken === 'function') {
+    try { item.onSpoken(reason); } catch { /* ignore */ }
+  }
+}
+
 function _pump() {
   if (_currentUtterance !== null) return;
   const synth = _synth();
@@ -47,10 +56,7 @@ function _pump() {
 
   const now = Date.now();
   while (_queue.length && _queue[0].expiresAt && _queue[0].expiresAt <= now) {
-    const expired = _queue.shift();
-    if (typeof expired.onSpoken === 'function') {
-      try { expired.onSpoken('expired'); } catch { /* ignore */ }
-    }
+    _notify(_queue.shift(), 'expired');
   }
   if (!_queue.length) return;
 
@@ -58,12 +64,19 @@ function _pump() {
   _currentUtterance = item;
 
   const finish = (reason) => {
-    _finishCurrent = null;
+    // Ownership first: a late onerror/onend for an already-finished utterance must
+    // not touch the timer or the handle that now belong to the current one.
+    if (_currentUtterance !== item) return;
+    if (_finishCurrent === finish) _finishCurrent = null;
     if (_safetyTimer) {
       clearTimeout(_safetyTimer);
       _safetyTimer = null;
     }
-    if (_currentUtterance !== item) return;
+    // Release the slot before touching the native synth: cancel() may invoke
+    // onerror re-entrantly, and that callback must find the slot already empty.
+    _currentUtterance = null;
+    const i = _queue.indexOf(item);
+    if (i >= 0) _queue.splice(i, 1);
     if (reason === 'timeout') {
       try {
         synth.cancel();
@@ -71,12 +84,7 @@ function _pump() {
         /* ignore */
       }
     }
-    _currentUtterance = null;
-    const i = _queue.indexOf(item);
-    if (i >= 0) _queue.splice(i, 1);
-    if (typeof item.onSpoken === 'function') {
-      try { item.onSpoken(reason); } catch { /* ignore */ }
-    }
+    _notify(item, reason);
     _pump();
   };
 
@@ -115,20 +123,24 @@ export function speak(text, userOpts = {}) {
   if (userOpts.code) {
     const existingIndex = _queue.findIndex((u, idx) => idx > 0 && u.code === userOpts.code);
     if (existingIndex > 0) {
+      const replaced = _queue[existingIndex];
       _queue[existingIndex] = utterance;
+      _notify(replaced, 'replaced');
       return;
     }
   }
 
   while (_queue.length >= MAX_QUEUE_SIZE) {
     const dropIndex = _queue.findIndex((u, idx) => idx > 0 && u.priority !== 'high');
-    if (dropIndex > 0) {
-      _queue.splice(dropIndex, 1);
-    } else if (_queue.length > 1) {
-      _queue.splice(1, 1);
-    } else {
-      _queue.shift();
+    const index = dropIndex > 0 ? dropIndex : (_queue.length > 1 ? 1 : 0);
+    const dropped = _queue[index];
+    if (index === 0 && dropped === _currentUtterance) {
+      // Never evict what the device is already playing: refuse the incoming item instead.
+      _notify(utterance, 'dropped');
+      return;
     }
+    _queue.splice(index, 1);
+    _notify(dropped, 'dropped');
   }
 
   if (userOpts.priority === 'high' && _queue.length > 1) {
@@ -145,16 +157,19 @@ export function cancel() {
     clearTimeout(_safetyTimer);
     _safetyTimer = null;
   }
+  const dropped = _queue.splice(0, _queue.length);
   _finishCurrent = null;
   _currentUtterance = null;
-  _queue.length = 0;
   const synth = _synth();
-  if (!synth) return;
-  try {
-    synth.cancel();
-  } catch {
-    /* ignore */
+  if (synth) {
+    try {
+      synth.cancel();
+    } catch {
+      /* ignore */
+    }
   }
+  // Notify after the state is clean so a listener can re-enter speak()/cancel() safely.
+  for (const item of dropped) _notify(item, 'canceled');
 }
 
 const DEFAULT_FIELD_ORDER = Object.freeze(['name', 'price', 'percent']);
@@ -271,6 +286,7 @@ export function _internal() {
     queue: _queue,
     adapter: _adapter,
     getCurrentUtterance: () => _currentUtterance,
+    hasSafetyTimer: () => _safetyTimer !== null,
     triggerTimeout: () => {
       if (typeof _finishCurrent === 'function') _finishCurrent('timeout');
     }
