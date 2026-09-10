@@ -441,12 +441,17 @@ export class ChartRowManager {
       // to its cache TTL, and this setData just overwrote whatever live tick
       // was applied earlier. Re-apply the latest quote on top so the chart's
       // last point matches the table/kline immediately instead of staying
-      // stale until the next refresh tick.
+      // stale until the next refresh tick. Best-effort: a merge failure must
+      // not mark the successful intraday load as errored.
       if (typeof this.getQuote === 'function') {
         const q = this.getQuote(code);
         if (q && Number(q.price) > 0) {
-          inst.code = code;
-          applyLiveQuoteToIntradayChart(ctl, inst, q, new Date(), this.getTradingDates());
+          try {
+            inst.code = code;
+            applyLiveQuoteToIntradayChart(ctl, inst, q, new Date(), this.getTradingDates());
+          } catch (mergeError) {
+            if (console && console.warn) console.warn('intraday quote merge failed for', code, mergeError);
+          }
         }
       }
     } catch (e) {

@@ -466,6 +466,13 @@ export function createIntradayChart(container, opts = {}) {
   let symmetricPriceRange = null;
   let symmetricPercentRange = null;
   let lastDisplayCount = 0;
+  // The display arrays behind each series (including the trailing whitespace
+  // bars of the pinned 9:30-15:00 stock grid). updatePoint() merges new
+  // values into these and re-sets the series — see updatePoint below.
+  let displayPriceData = [];
+  let displayAverageData = [];
+  let displayPercentData = [];
+  let displayVolumeData = [];
   // Keeps the full session visible: fitContent() and the fix* edge options both
   // anchor to the last bar *with a value* and ignore trailing whitespace bars,
   // so we pin the logical range to the generated display timeline instead.
@@ -589,6 +596,10 @@ export function createIntradayChart(container, opts = {}) {
         detailLegend.subLine.textContent = '';
         detailLegend.subLine.title = '';
       }
+      displayPriceData = [];
+      displayAverageData = [];
+      displayPercentData = [];
+      displayVolumeData = [];
       if (priceSeries) priceSeries.setData([]);
       if (averageSeries) averageSeries.setData([]);
       if (percentSeries) percentSeries.setData([]);
@@ -687,6 +698,10 @@ export function createIntradayChart(container, opts = {}) {
       symmetricPriceRange = null;
       symmetricPercentRange = null;
     }
+    displayPriceData = priceData;
+    displayAverageData = averageData;
+    displayPercentData = percentData;
+    displayVolumeData = volumeData;
     priceSeries.setData(priceData);
     averageSeries.setData(averageData);
     percentSeries.setData(percentData);
@@ -709,6 +724,33 @@ export function createIntradayChart(container, opts = {}) {
     pinFullSessionRange();
   }
 
+  // Merge one point into a display array. The array may already contain a
+  // (whitespace) slot for `time` — the pinned stock grid always does — in
+  // which case the slot is replaced; a genuinely new time is appended.
+  // Returns { data, appended }.
+  function _mergeDisplayPoint(arr, time, value, color) {
+    const hasValue = Number.isFinite(value);
+    const entry = hasValue
+      ? (color !== undefined ? { time, value, color } : { time, value })
+      : { time };
+    const idx = arr.findIndex((d) => Number(d.time) === time);
+    if (idx >= 0) {
+      const next = arr.slice();
+      next[idx] = entry;
+      return { data: next, appended: false };
+    }
+    if (!arr.length || time > Number(arr[arr.length - 1].time)) {
+      return { data: [...arr, entry], appended: true };
+    }
+    return { data: arr, appended: false };
+  }
+
+  // NOTE: series.update() cannot be used here. The display grid contains
+  // trailing whitespace bars up to the session close (15:00), and
+  // lightweight-charts rejects any update whose time is older than the last
+  // series item — whitespace included — with "Cannot update oldest data".
+  // So a live tick is merged into the stored display arrays and each affected
+  // series is re-set. The arrays are at most ~330 points, so this is cheap.
   function updatePoint(point) {
     if (!point || !Number.isFinite(Number(point.time))) return;
     const time = Number(point.time);
@@ -716,22 +758,32 @@ export function createIntradayChart(container, opts = {}) {
     if (!Number.isFinite(close)) return;
 
     intradayDataMap.set(_timeKey(time), point);
-    priceSeries.update({ time, value: close });
+    let appended = false;
+    const mergedPrice = _mergeDisplayPoint(displayPriceData, time, close);
+    if (mergedPrice.appended) appended = true;
+    displayPriceData = mergedPrice.data;
+    priceSeries.setData(displayPriceData);
     if (Number.isFinite(Number(point.avgPrice)) && Number(point.avgPrice) > 0) {
-      averageSeries.update({ time, value: Number(point.avgPrice) });
+      const mergedAverage = _mergeDisplayPoint(displayAverageData, time, Number(point.avgPrice));
+      if (mergedAverage.appended) appended = true;
+      displayAverageData = mergedAverage.data;
+      averageSeries.setData(displayAverageData);
     }
     if (currentPrevClose > 0) {
       const pct = (close / currentPrevClose - 1) * 100;
-      percentSeries.update({ time, value: pct });
+      const mergedPercent = _mergeDisplayPoint(displayPercentData, time, pct);
+      if (mergedPercent.appended) appended = true;
+      displayPercentData = mergedPercent.data;
+      percentSeries.setData(displayPercentData);
     }
     if (Number.isFinite(Number(point.volume))) {
       const isUp = Number(point.close) >= Number(point.open || point.close);
-      volumeSeries.update({
-        time,
-        value: Number(point.volume),
-        color: isUp ? colors.up : colors.down
-      });
+      const mergedVolume = _mergeDisplayPoint(displayVolumeData, time, Number(point.volume), isUp ? colors.up : colors.down);
+      if (mergedVolume.appended) appended = true;
+      displayVolumeData = mergedVolume.data;
+      volumeSeries.setData(displayVolumeData);
     }
+    if (appended) pinFullSessionRange();
     renderIntradayDetail(time);
   }
 
