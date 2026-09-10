@@ -1,7 +1,7 @@
 import { createVoiceController } from '../src/js/controllers/voiceController.js';
 import { isLiveTradeDate } from '../src/js/marketSession.js';
 
-function harness(codes = ['sh600000']) {
+function harness(codes = ['sh600000'], overrides = {}) {
   let now = new Date('2026-09-09T10:00:00+08:00');
   let settings = { enabled: true, interval: 5000, volume: 60,
     fields: { name: true, price: true, percent: true }, smartSchedule: { enabled: true } };
@@ -9,10 +9,16 @@ function harness(codes = ['sh600000']) {
   const spoken = [];
   const timers = new Map();
   let nextId = 0;
+  // Models the real device contract: the text is played and completion is reported
+  // back through onSpoken('end'), which is what the dedup memory keys off.
+  const defaultSpeak = (text, opts) => {
+    spoken.push(text);
+    if (opts && typeof opts.onSpoken === 'function') opts.onSpoken('end');
+  };
   const controller = createVoiceController({ getCodes: () => codes, getQuotes: () => quotes,
     getSettings: () => settings, saveSettings: patch => { settings = { ...settings, ...patch }; },
     getTradingDates: () => [], clock: () => now,
-    speech: { supported: () => true, speak: text => spoken.push(text), cancel() {} },
+    speech: { supported: () => true, speak: defaultSpeak, cancel() {}, ...(overrides.speech || {}) },
     createWorker: () => { throw new Error('use deterministic timer'); },
     timers: { setInterval: fn => { timers.set(++nextId, fn); return nextId; }, clearInterval: id => timers.delete(id) } });
   return { controller, quotes, spoken, timers, codes, settings: () => settings,
@@ -107,6 +113,73 @@ QUnit.module('Production voice controller', () => {
       h.controller.stop();
     });
   }
+
+  QUnit.test('M5: dedup memory stays empty while playback is not confirmed', assert => {
+    const stalled = [];
+    const h = harness(['sh600000'], { speech: { speak: text => stalled.push(text) } });
+    h.controller.setEnabled(true);
+    h.quotes.get('sh600000').price = 11;
+
+    const before = stalled.length;
+    h.controller.speakSubscribed();
+    const perRound = stalled.length - before;
+    assert.true(perRound > 0, 'the level was handed to the device');
+    assert.equal(h.controller.inspect().memory.size, 0,
+      'nothing was heard yet, so no dedup baseline may be recorded');
+
+    // Because nothing was remembered, the same level must be offered again rather
+    // than silently swallowed as "already announced".
+    h.controller.speakSubscribed();
+    assert.equal(stalled.length - before, perRound * 2, 'the unconfirmed level is retried, not dropped');
+    assert.equal(h.controller.inspect().memory.size, 0);
+
+    // Once the device confirms playback, the baseline advances and repeats go quiet.
+    h.controller.stop();
+    const confirmed = harness(['sh600000']);
+    confirmed.controller.setEnabled(true);
+    confirmed.quotes.get('sh600000').price = 11;
+    confirmed.controller.speakSubscribed();
+    assert.equal(confirmed.controller.inspect().memory.size, 1, 'confirmed playback seeds the baseline');
+    const beforeRepeat = confirmed.spoken.length;
+    confirmed.controller.speakSubscribed();
+    assert.equal(confirmed.spoken.length, beforeRepeat, 'unchanged level is silent once remembered');
+    confirmed.controller.stop();
+  });
+
+  QUnit.test('M5: only a real playback report advances the baseline, not a queue handoff', assert => {
+    const handoffs = [];
+    let report = null;
+    const h = harness(['sh600000'], {
+      speech: { speak: (text, opts) => { handoffs.push(text); report = opts && opts.onSpoken; } }
+    });
+    h.controller.setEnabled(true);
+    h.quotes.get('sh600000').price = 11;
+
+    const before = handoffs.length;
+    h.controller.speakSubscribed();
+    assert.equal(handoffs.length - before, 1, 'one announcement was handed to the device');
+    assert.equal(typeof report, 'function', 'the controller passes a completion callback');
+    assert.equal(h.controller.inspect().memory.size, 0, 'handoff alone is not playback');
+
+    report('timeout'); // watchdog fired: the listener never heard it
+    assert.equal(h.controller.inspect().memory.size, 0, 'a timed-out announcement must not be remembered');
+
+    report('end');
+    assert.equal(h.controller.inspect().memory.size, 1, 'a completed announcement is remembered');
+    h.controller.stop();
+  });
+
+  QUnit.test('M5: legacy adapter opts in explicitly before seeding memory synchronously', assert => {
+    const spoken = [];
+    const h = harness(['sh600000'], {
+      speech: { syncMemory: true, speak: text => spoken.push(text) }
+    });
+    h.controller.setEnabled(true);
+    h.quotes.get('sh600000').price = 11;
+    h.controller.speakSubscribed();
+    assert.equal(h.controller.inspect().memory.size, 1, 'the explicit opt-in still seeds the baseline');
+    h.controller.stop();
+  });
 
   QUnit.test('calendar completion after stop cannot revive timers', async assert => {
     const h = harness();

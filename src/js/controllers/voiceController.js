@@ -15,6 +15,9 @@ export function createVoiceController({ getSettings, saveSettings, getCodes, get
   const decision = () => decideVoiceSchedule({ codes: getCodes(), settings: getSettings(),
     now: clock(), tradingDates: getTradingDates(), previous });
   const volume = () => Math.max(0, Math.min(100, Number(getSettings().volume) || 0)) / 100;
+  // Legacy adapters cannot report playback completion. They must opt in explicitly;
+  // defaulting to "wait for confirmation" keeps the dedup baseline honest.
+  const seedsMemoryWithoutPlayback = speech.syncMemory === true;
 
   function stopTimer() {
     if (worker) { const old = worker; worker = null; old.onmessage = null; old.onerror = null; try { old.terminate(); } catch { /* already stopped */ } }
@@ -31,15 +34,16 @@ export function createVoiceController({ getSettings, saveSettings, getCodes, get
       if (!quote) continue;
       const result = formatQuoteSpeechDelta(quote, manual ? null : memory.get(code), settings.fields, settings.fieldsOrder);
       if (!result.text) continue;
-      let callbackHandled = false;
+      // The dedup baseline may only advance once the listener actually heard the
+      // announcement: a queued item that is coalesced away, expires, times out or
+      // is cancelled never reports 'end', and must not be remembered as spoken.
       const onSpoken = (reason) => {
-        callbackHandled = true;
         if (reason === 'end' && result.spoken) {
           memory.set(code, { ...memory.get(code), ...result.spoken });
         }
       };
       speech.speak(result.text, { volume: volume(), code, onSpoken });
-      if (!callbackHandled && (speech.syncMemory || speech.speak.length === 1) && result.spoken) {
+      if (seedsMemoryWithoutPlayback && result.spoken) {
         memory.set(code, { ...memory.get(code), ...result.spoken });
       }
     }
