@@ -2,6 +2,7 @@ import { request } from 'node:http';
 import { writeCache } from '../server/cacheStore.js';
 import { getCachedIntraday } from '../server/intradayService.js';
 import { createAppServer } from '../server/index.js';
+import { beijingDateKey } from '../server/utils.js';
 import { resolveStockChartDate } from '../src/js/tradeCalendar.js';
 import { parseBeijingDateTimeToChartSeconds } from '../src/js/time.js';
 
@@ -59,6 +60,42 @@ QUnit.module('runtime review regressions', hooks => {
     const result = await getCachedIntraday({ code, date: '20260908' });
     assert.ok(requests > 0, 'legacy archive is no longer frozen');
     assert.true(result.stale, 'failed recovery preserves stale history');
+  });
+
+  QUnit.test('intraday prefers tencent minute as the primary source', async assert => {
+    const code = 'sh603985';
+    const todayKey = beijingDateKey().replace(/-/g, '');
+    globalThis.fetch = async raw => {
+      const url = new URL(raw);
+      if (url.hostname.includes('gtimg') && url.pathname.includes('minute')) {
+        return Response.json({ data: { [code]: {
+          qt: { [code]: ['0', '测试股', '0', '0', '12'] },
+          data: { date: todayKey, data: ['0930 12.5 100 125000', '0931 12.6 160 189000'] }
+        } } });
+      }
+      throw new Error(`down: ${url.hostname}`);
+    };
+    const result = await getCachedIntraday({ code, date: todayKey });
+    assert.equal(result.data.source, 'tencent-minute', 'tencent minute wins over trends2');
+    assert.equal(result.data.items.length, 2);
+    assert.equal(result.data.items[1].volume, 60, 'cumulative volume is diffed into minute volume');
+    assert.equal(result.stale, false);
+  });
+
+  QUnit.test('when every upstream is down the fresher intraday snapshot beats the stale kline cache', async assert => {
+    const code = 'sh603987';
+    const todayKey = beijingDateKey().replace(/-/g, '');
+    const intradayTime = parseBeijingDateTimeToChartSeconds(`${todayKey.slice(0, 4)}-${todayKey.slice(4, 6)}-${todayKey.slice(6, 8)} 10:30`);
+    globalThis.fetch = async () => { throw new Error('all upstream down'); };
+    await writeCache(['intraday', code, `${todayKey}-0p0000.json`], { generatedAt: Date.now() - 30_000,
+      data: { source: 'eastmoney-trends2', items: [{ time: intradayTime, close: 10 }] } });
+    await writeCache(['kline', code, '1m.json'], { generatedAt: Date.now() - 3_600_000,
+      data: { items: [{ time: intradayTime - 3600, close: 9 }] } });
+    const result = await getCachedIntraday({ code, date: todayKey });
+    assert.true(result.stale, 'served snapshot is explicitly stale');
+    assert.equal(result.data.source, 'eastmoney-trends2', 'intraday snapshot wins over the old kline/1m.json');
+    assert.equal(result.data.items.length, 1);
+    assert.equal(result.data.items[0].time, intradayTime);
   });
 
   QUnit.test('stock chart uses previous trading day before auction and current day at auction', assert => {

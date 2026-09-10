@@ -5,7 +5,8 @@ import { getCachedKline } from './klineService.js';
 import {
   fetchAktoolsHistMinute,
   fetchAktoolsIntradayTicks,
-  fetchEastmoneyIntradayTrends
+  fetchEastmoneyIntradayTrends,
+  fetchTencentIntradayMinutes
 } from './marketData.js';
 import { normalizeCodeParam, normalizeDateKey, parsePositiveNumber } from './utils.js';
 
@@ -152,6 +153,17 @@ async function readHistoricalCache(parts, ttlMs) {
 async function fetchIntradayNetwork(common, allowLatestTickSource) {
   const errors = [];
   if (allowLatestTickSource) {
+    // 2026-09-10: Tencent minute/query is the primary intraday source —
+    // independent of Eastmoney infra, 10/10 stable in live probes while the
+    // push2his main host failed 0/10 with socket resets.
+    try {
+      const tencentData = await fetchTencentIntradayMinutes(common);
+      const filtered = filterIntradaySessions(tencentData, common.date);
+      if (hasItems(filtered)) return filtered;
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw e;
+      errors.push({ source: 'tencent-minute', error: e });
+    }
     try {
       const trendData = await fetchEastmoneyIntradayTrends(common);
       const filtered = filterIntradaySessions(trendData, common.date);
@@ -190,24 +202,12 @@ async function fetchIntradayNetwork(common, allowLatestTickSource) {
     }
   }
 
-  // A minute cache that is a few minutes old is a better immediate fallback
-  // than blocking the UI on another multi-upstream K-line refresh. Live quote
-  // ticks update the current point while the next background refresh retries.
-  const cachedMinute = await readCache(['kline', common.code, '1m.json']);
-  if (cachedMinute && cachedMinute.data) {
-    const decorated = decorateKlineIntraday(cachedMinute.data, {
-      ...common,
-      source: 'eastmoney-kline-1m-cache'
-    });
-    const filtered = filterIntradaySessions(decorated, common.date);
-    if (hasItems(filtered) && isHistoricalSnapshotComplete(cachedMinute.generatedAt, common.date, filtered)) {
-      return { ...filtered, archiveComplete: true };
-    }
-    if (hasItems(filtered) && !isHistoricalDate(common.date.replace(/-/g, ''))) {
-      return { ...filtered, archiveComplete: false, upstreamStale: true };
-    }
-  }
-
+  // The intraday snapshot cache (intraday/{code}/{date}.json) is rewritten on
+  // every successful poll (~10s TTL), so when every network source fails the
+  // FRESHEST fallback is simply to throw here: getOrRefresh then serves the
+  // last good intraday snapshot with its original generatedAt. A raw read of
+  // the kline/1m.json cache used to intercept this path with a much older
+  // snapshot (the "straight-line gap" regression), so it was removed.
   try {
     const klineResult = await getCachedKline({
       code: common.code,
@@ -215,12 +215,22 @@ async function fetchIntradayNetwork(common, allowLatestTickSource) {
       signal: common.signal
     });
     const klineData = klineResult && klineResult.data;
-    if (klineData) {
+    // Today: only trust a freshly fetched 1-minute source. A stale kline
+    // cache (network failed, getOrRefresh served its own old copy) is older
+    // than the intraday snapshot and must not shadow it. Historical dates
+    // still accept stale kline data — that is how closing archives recover
+    // when AKTools is down.
+    if (klineData && (!allowLatestTickSource || klineResult.source === 'network')) {
       const items = filterKlineItemsByDate(klineData.items, common.date);
       const decorated = decorateKlineIntraday({ ...klineData, items }, common);
       const filtered = filterIntradaySessions(decorated, common.date);
-      if (hasItems(filtered)) return { ...filtered, upstreamStale: !!klineResult.stale, archiveComplete: !klineResult.stale &&
-        isHistoricalSnapshotComplete(klineResult.generatedAt, common.date, filtered) };
+      if (hasItems(filtered)) {
+        // A stale-served kline cache whose generatedAt is same-day after the
+        // close is still a complete, trustworthy archive — completeness is
+        // decided by isHistoricalSnapshotComplete, not by the envelope.
+        const archiveComplete = isHistoricalSnapshotComplete(klineResult.generatedAt, common.date, filtered);
+        return { ...filtered, upstreamStale: !archiveComplete && !!klineResult.stale, archiveComplete };
+      }
     }
   } catch (e) {
     if (e && e.name === 'AbortError') throw e;

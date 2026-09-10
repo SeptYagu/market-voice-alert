@@ -17,7 +17,7 @@ import {
   fetchAktoolsHistMinute
 } from './aktoolsApi.js';
 import { klineCacheGet, klineCacheSet } from './storage.js';
-import { parseBeijingDateTimeToChartSeconds, chartSecondsToTime, chartTimeToDate } from './time.js';
+import { parseBeijingDateTimeToChartSeconds, chartSecondsToTime, chartTimeToDate, parseTencentMinuteToChartSeconds } from './time.js';
 import { isFutureCode } from './futures/instrument.js';
 import { fetchFuturesQuotes, fetchFuturesIntraday, fetchFuturesKline } from './futures/futuresApi.js';
 
@@ -234,6 +234,78 @@ export function parseEastmoneyTrends(json, opts = {}) {
     name: d.name || _normalizeTrendCode(d),
     source: 'eastmoney-trends2',
     preClose,
+    items
+  };
+}
+
+// Tencent minute/query rows: "HHmm price cumVolume(手) cumAmount(元)".
+// Volume/amount are day-cumulative — diff them into per-minute values.
+// avgPrice = cumAmount / (cumVolume * 100) (手 -> 股), sanity-banded against
+// the close price to absorb any upstream unit surprises (e.g. an ETF day).
+export function parseTencentMinute(json, opts = {}) {
+  const code = typeof opts.code === 'string' ? opts.code.toLowerCase() : '';
+  const payload = json && json.data && code ? json.data[code] : null;
+  const day = payload && payload.data;
+  if (!day || !Array.isArray(day.data) || !day.data.length) return null;
+  const dataDate = typeof day.date === 'string' ? day.date : '';
+  if (!/^\d{8}$/.test(dataDate)) return null;
+  const selectedDate = opts.date ? String(opts.date).replace(/-/g, '') : '';
+  if (selectedDate && dataDate !== selectedDate) return null;
+
+  const qt = payload.qt && payload.qt[code];
+  const prevClose = Number.isFinite(Number(qt && qt[4]))
+    ? Number(qt[4])
+    : (Number.isFinite(Number(opts.prevClose)) ? Number(opts.prevClose) : 0);
+
+  const items = [];
+  let prevCumVolume = 0;
+  let prevCumAmount = 0;
+  for (const row of day.data) {
+    if (typeof row !== 'string') continue;
+    const parts = row.trim().split(/\s+/);
+    if (parts.length < 2) continue;
+    const time = parseTencentMinuteToChartSeconds(`${dataDate}${parts[0]}`);
+    if (!Number.isFinite(time)) continue;
+    const price = parseFloat(parts[1]);
+    if (!Number.isFinite(price) || price <= 0) continue;
+    const cumVolume = parts.length > 2 ? parseFloat(parts[2]) : NaN;
+    const cumAmount = parts.length > 3 ? parseFloat(parts[3]) : NaN;
+    let volume = 0;
+    if (Number.isFinite(cumVolume)) {
+      volume = Math.max(0, cumVolume - prevCumVolume);
+      prevCumVolume = cumVolume;
+    }
+    let amount = 0;
+    if (Number.isFinite(cumAmount)) {
+      amount = Math.max(0, cumAmount - prevCumAmount);
+      prevCumAmount = cumAmount;
+    }
+    let avgPrice = 0;
+    if (Number.isFinite(cumAmount) && Number.isFinite(cumVolume) && cumVolume > 0) {
+      const raw = cumAmount / (cumVolume * 100);
+      if (raw >= price * 0.1 && raw <= price * 10) avgPrice = Math.round(raw * 1000) / 1000;
+    }
+    const percent = _calcPercent(price, prevClose);
+    items.push({
+      time,
+      open: price,
+      close: price,
+      high: price,
+      low: price,
+      volume,
+      amount,
+      avgPrice,
+      price,
+      preClose: prevClose,
+      percent,
+      changePercent: percent
+    });
+  }
+  return {
+    code,
+    name: (qt && qt[1]) || code,
+    source: 'tencent-minute',
+    preClose: prevClose,
     items
   };
 }

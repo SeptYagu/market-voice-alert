@@ -37,11 +37,11 @@ async function waitForTencentSlot(kind) {
   if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
-function buildEastmoneyKlineUrl(code, period) {
+function buildEastmoneyKlineUrl(code, period, host = 'push2his.eastmoney.com') {
   const secid = toEastmoneySecId(code);
   const klt = periodToKlt(period);
   if (!secid || klt === null) return null;
-  const url = new URL('https://push2his.eastmoney.com/api/qt/stock/kline/get');
+  const url = new URL(`https://${host}/api/qt/stock/kline/get`);
   url.searchParams.set('secid', secid);
   url.searchParams.set('klt', String(klt));
   url.searchParams.set('fqt', '1');
@@ -88,27 +88,37 @@ async function fetchKlineNetwork(code, period, signal) {
       eastmoneyFailures = 0;
     }
     if (eastmoneyFailures < EASTMONEY_FAILURE_LIMIT) {
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const json = await fetchJson(emUrl, signal, {
-            referer: 'https://quote.eastmoney.com/',
-            'user-agent': 'Mozilla/5.0'
-          });
-          const parsed = parseEastmoneyKline(json);
-          if (parsed && parsed.items && parsed.items.length) {
-            eastmoneyFailures = 0;
-            eastmoneyDisabledUntil = 0;
-            return { ...parsed, upstreamSource: 'eastmoney' };
-          }
-        } catch (e) {
-          if (e && e.name === 'AbortError') throw e;
-          eastmoneyFailures += 1;
-          if (eastmoneyFailures >= EASTMONEY_FAILURE_LIMIT) {
-            eastmoneyDisabledUntil = Date.now() + EASTMONEY_COOLDOWN_MS;
-            break;
+      // 2026-09-10: the push2his main host drops programmatic connections
+      // (socket resets, 0/10 in live probes) while the 90.push2his mirror is
+      // healthy (9/10). Rotate hosts and only count one failure after a full
+      // host round fails, so a single bad round does not trip the breaker.
+      const hosts = ['push2his.eastmoney.com', '90.push2his.eastmoney.com'];
+      let lastRoundError = null;
+      for (const host of hosts) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const json = await fetchJson(buildEastmoneyKlineUrl(code, period, host), signal, {
+              referer: 'https://quote.eastmoney.com/',
+              'user-agent': 'Mozilla/5.0'
+            });
+            const parsed = parseEastmoneyKline(json);
+            if (parsed && parsed.items && parsed.items.length) {
+              eastmoneyFailures = 0;
+              eastmoneyDisabledUntil = 0;
+              return { ...parsed, upstreamSource: 'eastmoney' };
+            }
+            lastRoundError = new Error('Empty Eastmoney kline response');
+          } catch (e) {
+            if (e && e.name === 'AbortError') throw e;
+            lastRoundError = e;
           }
         }
       }
+      eastmoneyFailures += 1;
+      if (eastmoneyFailures >= EASTMONEY_FAILURE_LIMIT) {
+        eastmoneyDisabledUntil = Date.now() + EASTMONEY_COOLDOWN_MS;
+      }
+      void lastRoundError;
     }
   }
 
