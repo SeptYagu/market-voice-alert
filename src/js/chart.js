@@ -213,7 +213,10 @@ export function createKlineChart(container, opts = {}) {
       Number.isFinite(pct) ? `幅 ${_percentFormatter(pct)}` : '',
       Number.isFinite(volume) ? `量 ${Math.round(volume).toLocaleString('en-US')}` : '',
       ...maParts
-    ].filter(Boolean).join('  ');
+    ].filter(Boolean).join('  ') || '';
+    // The legend is clamped to a single CSS line (ellipsis); the title
+    // tooltip keeps the full readout accessible.
+    detailLegend.title = detailLegend.textContent;
   }
 
   if (typeof chart.subscribeCrosshairMove === 'function') {
@@ -538,7 +541,8 @@ export function createIntradayChart(container, opts = {}) {
       Number.isFinite(pct) ? `幅 ${_percentFormatter(pct)}` : '',
       average > 0 ? `均 ${_detailNumber(average)}` : '均 --',
       Number.isFinite(volume) ? `量 ${Math.round(volume).toLocaleString('en-US')}` : ''
-    ].filter(Boolean).join('  ');
+    ].filter(Boolean).join('  ') || '';
+    detailLegend.title = detailLegend.textContent;
   }
 
   if (typeof chart.subscribeCrosshairMove === 'function') {
@@ -562,7 +566,10 @@ export function createIntradayChart(container, opts = {}) {
     lastDisplayCount = 0;
     if (!arr.length) {
       currentPrevClose = null;
-      if (detailLegend) detailLegend.textContent = '';
+      if (detailLegend) {
+        detailLegend.textContent = '';
+        detailLegend.title = '';
+      }
       if (priceSeries) priceSeries.setData([]);
       if (averageSeries) averageSeries.setData([]);
       if (percentSeries) percentSeries.setData([]);
