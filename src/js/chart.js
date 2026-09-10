@@ -161,13 +161,22 @@ function _detailNumber(value, digits = 2) {
 // flow), not overlaid inside it — an absolute overlay always covers the
 // price action near the top of the plot (e.g. a big-gain chart whose curve
 // hugs the top edge).
+// Structure: a fixed TWO-line block. Line 1 = main readout (K线) or blank
+// (分时), line 2 = MA series (K线) or the readout (分时). Both panes reserve
+// the same two lines so the chart-split charts stay vertically aligned.
 function _createDetailLegend(container, className) {
   if (typeof document === 'undefined') return null;
   const legend = document.createElement('div');
   legend.className = `chart-crosshair-detail ${className || ''}`.trim();
+  const mainLine = document.createElement('div');
+  mainLine.className = 'legend-line legend-line-main';
+  const subLine = document.createElement('div');
+  subLine.className = 'legend-line legend-line-sub';
+  legend.appendChild(mainLine);
+  legend.appendChild(subLine);
   const parent = container.parentNode || container;
   parent.insertBefore(legend, container);
-  return legend;
+  return { root: legend, mainLine, subLine };
 }
 
 export function createKlineChart(container, opts = {}) {
@@ -204,19 +213,22 @@ export function createKlineChart(container, opts = {}) {
       const value = data.get(key);
       if (Number.isFinite(value)) maParts.push(`MA${period} ${_detailNumber(value)}`);
     }
-    detailLegend.textContent = [
+    const mainText = [
       _detailTime(time),
       `开 ${_detailNumber(bar.open)}`,
       `高 ${_detailNumber(bar.high)}`,
       `低 ${_detailNumber(bar.low)}`,
       `收 ${_detailNumber(bar.close)}`,
       Number.isFinite(pct) ? `幅 ${_percentFormatter(pct)}` : '',
-      Number.isFinite(volume) ? `量 ${Math.round(volume).toLocaleString('en-US')}` : '',
-      ...maParts
-    ].filter(Boolean).join('  ') || '';
-    // The legend is clamped to a single CSS line (ellipsis); the title
-    // tooltip keeps the full readout accessible.
-    detailLegend.title = detailLegend.textContent;
+      Number.isFinite(volume) ? `量 ${Math.round(volume).toLocaleString('en-US')}` : ''
+    ].filter(Boolean).join('  ');
+    const maText = maParts.join('  ');
+    // Line 1 = OHLC readout, line 2 = MA series. Each line ellipsizes when
+    // too long; the title tooltip keeps the full text accessible.
+    detailLegend.mainLine.textContent = mainText;
+    detailLegend.mainLine.title = mainText;
+    detailLegend.subLine.textContent = maText;
+    detailLegend.subLine.title = maText;
   }
 
   if (typeof chart.subscribeCrosshairMove === 'function') {
@@ -420,7 +432,7 @@ export function createKlineChart(container, opts = {}) {
     maDataMap.clear();
     klineDataMap.clear();
     volumeDataMap.clear();
-    if (detailLegend) detailLegend.remove();
+    if (detailLegend) detailLegend.root.remove();
   }
 
   return {
@@ -535,14 +547,19 @@ export function createIntradayChart(container, opts = {}) {
       : Number(point.percent);
     const average = Number(point.avgPrice);
     const volume = Number(point.volume);
-    detailLegend.textContent = [
+    const text = [
       _detailTime(time),
       `价 ${_detailNumber(close)}`,
       Number.isFinite(pct) ? `幅 ${_percentFormatter(pct)}` : '',
       average > 0 ? `均 ${_detailNumber(average)}` : '均 --',
       Number.isFinite(volume) ? `量 ${Math.round(volume).toLocaleString('en-US')}` : ''
-    ].filter(Boolean).join('  ') || '';
-    detailLegend.title = detailLegend.textContent;
+    ].filter(Boolean).join('  ');
+    // Line 1 stays blank: the K线 pane renders its MA series there, so the
+    // data rows of both panes sit on the same visual line.
+    detailLegend.mainLine.textContent = '';
+    detailLegend.mainLine.title = '';
+    detailLegend.subLine.textContent = text;
+    detailLegend.subLine.title = text;
   }
 
   if (typeof chart.subscribeCrosshairMove === 'function') {
@@ -567,8 +584,10 @@ export function createIntradayChart(container, opts = {}) {
     if (!arr.length) {
       currentPrevClose = null;
       if (detailLegend) {
-        detailLegend.textContent = '';
-        detailLegend.title = '';
+        detailLegend.mainLine.textContent = '';
+        detailLegend.mainLine.title = '';
+        detailLegend.subLine.textContent = '';
+        detailLegend.subLine.title = '';
       }
       if (priceSeries) priceSeries.setData([]);
       if (averageSeries) averageSeries.setData([]);
@@ -772,7 +791,7 @@ export function createIntradayChart(container, opts = {}) {
     }
     try { chart.remove(); } catch { /* ignore */ }
     intradayDataMap.clear();
-    if (detailLegend) detailLegend.remove();
+    if (detailLegend) detailLegend.root.remove();
   }
 
   return { setData, updatePoint, applyTheme, resize, fitContent, getVisibleRange, setVisibleRange, destroy };

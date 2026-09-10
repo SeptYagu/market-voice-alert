@@ -572,27 +572,27 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   min-height: 320px;
 }
 /* Detail legend lives ABOVE the chart host in normal flow (inserted as a
-   sibling by chart.js) so it never covers the candles. In the two-pane
-   chart-split layout both panes must reserve the SAME single line here,
-   otherwise the pane whose legend wraps gets its chart pushed down and the
-   two charts misalign. Long readouts (K线 MA 列表) ellipsize; the full text
-   is available via the title tooltip (chart.js sets it). */
+   sibling by chart.js) so it never covers the candles. It is a fixed
+   TWO-line block: K线 renders OHLC on line 1 and the MA series on line 2;
+   分时 leaves line 1 blank and puts its readout on line 2 — so both panes
+   of the chart-split layout reserve identical space and the two charts
+   stay vertically aligned. */
 .chart-crosshair-detail {
   margin: 0 0 4px;
-  height: 17px;
-  line-height: 17px;
+  height: 34px;
+  overflow: hidden;
   color: var(--text-color);
   background: color-mix(in srgb, var(--card-bg) 88%, transparent);
   border-radius: 3px;
   padding: 0 5px;
   font: 11px/17px "Roboto Mono", "Consolas", monospace;
+}
+.chart-crosshair-detail .legend-line {
+  display: block;
+  height: 17px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-/* Empty legend keeps its height (invisible) so sibling panes stay aligned. */
-.chart-crosshair-detail:empty {
-  visibility: hidden;
 }
 .watch-table tbody tr.chart-row .period-tabs {
   margin: 0;
