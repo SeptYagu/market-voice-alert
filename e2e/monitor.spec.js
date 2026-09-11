@@ -117,6 +117,8 @@ test.describe('监控页', () => {
                 code: 'sh600519',
                 name: '贵州茅台',
                 gainPercent: 48.5,
+                maxGainPercent: 52.3,
+                pullbackPercent: -3.8,
                 price: 2000,
                 changePercent: 5.2,
                 amount: 8000000000,
@@ -133,11 +135,57 @@ test.describe('监控页', () => {
     await page.getByRole('button', { name: '扫描', exact: true }).click();
     const row = page.locator('tr[data-momentum-code="sh600519"]');
     await expect(row).toBeVisible({ timeout: DEFAULT_TIMEOUT });
+    // 峰值副行：主数值为当前 10 日涨幅，副行显示触及值与回踩幅度（b321522 新 UI）
+    await expect(row.locator('.momentum-gain-main')).toContainText('+48.50%', { timeout: DEFAULT_TIMEOUT });
+    await expect(row.locator('.momentum-gain-sub')).toContainText('触及 +52.30% · 回踩 -3.80%', { timeout: DEFAULT_TIMEOUT });
     await row.click();
     const chartRow = page.locator('tr.momentum-chart-row[data-chart-for="sh600519"]');
     await expect(chartRow).toBeVisible({ timeout: DEFAULT_TIMEOUT });
     const host = page.locator('#momentum-chart-host-sh600519');
     await expect(host).toBeVisible({ timeout: DEFAULT_TIMEOUT });
     await expect(host.locator('canvas').first()).toBeVisible({ timeout: DEFAULT_TIMEOUT });
+  });
+
+  test('峰值达标但已跌回成本线以下的标的保留在列表并显示回踩副行', async ({ page }) => {
+    await page.route('**/api/cache/momentum/ten-day**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          source: 'cache',
+          data: {
+            status: 'complete',
+            date: '20260605',
+            threshold: 45,
+            lookbackDays: 10,
+            universeSize: 1,
+            scanned: 1,
+            items: [
+              {
+                code: 'sz000001',
+                name: '平安银行',
+                gainPercent: -1.2,
+                maxGainPercent: 52.3,
+                pullbackPercent: -53.5,
+                price: 11.5,
+                changePercent: -2.1,
+                amount: 3000000000,
+                industry: '银行'
+              }
+            ]
+          }
+        })
+      });
+    });
+
+    await page.goto('http://127.0.0.1:5173/');
+    await page.getByRole('button', { name: '扫描', exact: true }).click();
+    const row = page.locator('tr[data-momentum-code="sz000001"]');
+    await expect(row).toBeVisible({ timeout: DEFAULT_TIMEOUT });
+    // 当前涨幅为负也要保留（用户决策：回踩监控要盯的正是这类标的），主数值显示负涨幅
+    await expect(row.locator('.momentum-gain-main')).toContainText('-1.20%', { timeout: DEFAULT_TIMEOUT });
+    await expect(row.locator('.momentum-gain-sub')).toContainText('触及 +52.30% · 回踩 -53.50%', { timeout: DEFAULT_TIMEOUT });
+    await expect(row).toContainText('10日触及+52.30%(回踩-53.50%)', { timeout: DEFAULT_TIMEOUT });
   });
 });
