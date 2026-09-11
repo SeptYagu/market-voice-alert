@@ -12,12 +12,25 @@ export function normalizeFuture(input) {
   return null;
 }
 
-export function parseBatchInput(input) {
+export function isBatchQuery(raw) {
+  if (!raw || typeof raw !== 'string') return false;
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  // Contains comma (English or Chinese)
+  if (trimmed.includes(',') || trimmed.includes('，')) return true;
+  // Contains internal whitespace (spaces, tabs, newlines)
+  if (/\s/.test(trimmed)) return true;
+  return false;
+}
+
+export function parseBatchInput(input, { allowWhitespace = false } = {}) {
   if (!input || typeof input !== 'string') return [];
-  const tokens = input.split(/[,， ]+/);
+  const splitter = allowWhitespace ? /[,，\s]+/ : /[,， ]+/;
+  const tokens = input.split(splitter);
   const seen = new Set();
   const out = [];
   for (const tok of tokens) {
+    if (!tok) continue;
     const norm = normalizeFuture(tok) || normalizeCode(tok);
     if (norm && !seen.has(norm)) {
       seen.add(norm);
@@ -25,6 +38,55 @@ export function parseBatchInput(input) {
     }
   }
   return out;
+}
+
+export function parseBatchInputDetails(input, currentWatchList = []) {
+  if (!input || typeof input !== 'string') {
+    return {
+      validCodes: [],
+      newCodes: [],
+      duplicateCodes: [],
+      invalidTokens: [],
+      totalTokens: 0
+    };
+  }
+
+  const existingSet = new Set(Array.isArray(currentWatchList) ? currentWatchList.map((c) => String(c).toLowerCase()) : []);
+  const rawTokens = input.trim().split(/[,，\s]+/);
+  const tokens = rawTokens.map((t) => t.trim()).filter(Boolean);
+
+  const seenValid = new Set();
+  const validCodes = [];
+  const newCodes = [];
+  const duplicateCodes = [];
+  const invalidTokens = [];
+
+  for (const tok of tokens) {
+    const norm = normalizeFuture(tok) || normalizeCode(tok);
+    if (norm) {
+      if (!seenValid.has(norm)) {
+        seenValid.add(norm);
+        validCodes.push(norm);
+        if (existingSet.has(norm)) {
+          duplicateCodes.push(norm);
+        } else {
+          newCodes.push(norm);
+        }
+      } else {
+        duplicateCodes.push(norm);
+      }
+    } else {
+      invalidTokens.push(tok);
+    }
+  }
+
+  return {
+    validCodes,
+    newCodes,
+    duplicateCodes,
+    invalidTokens,
+    totalTokens: tokens.length
+  };
 }
 
 export function buildExportText(codes) {

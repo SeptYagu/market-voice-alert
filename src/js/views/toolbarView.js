@@ -36,19 +36,44 @@ export function renderToolbarView(options = {}) {
     el(
       'div',
       { class: 'add-row' },
-      el('input', {
-        type: 'text',
-        id: 'code-input',
-        placeholder: '输入代码（用逗号或空格分隔，回车添加）：600519, 000001 nf2105',
-        on: {
-          keydown: (e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              if (handlers.onAdd) handlers.onAdd();
+      el(
+        'div',
+        { class: 'search-input-wrap' },
+        el('input', {
+          type: 'text',
+          id: 'code-input',
+          placeholder: '代码 / 名称 / 拼音；多代码用逗号或空格分隔',
+          role: 'combobox',
+          'aria-autocomplete': 'list',
+          'aria-expanded': 'false',
+          'aria-controls': 'suggest-dropdown',
+          'aria-haspopup': 'listbox',
+          autocomplete: 'off',
+          autocorrect: 'off',
+          autocapitalize: 'off',
+          spellcheck: 'false',
+          on: {
+            keydown: (e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                if (handlers.onAdd) handlers.onAdd();
+              }
             }
           }
-        }
-      }),
+        }),
+        el('div', {
+          id: 'suggest-dropdown',
+          class: 'suggest-dropdown',
+          role: 'listbox',
+          hidden: true
+        }),
+        el('div', {
+          id: 'suggest-live-region',
+          class: 'sr-only',
+          'aria-live': 'polite',
+          'aria-atomic': 'true'
+        })
+      ),
       el(
         'div',
         { class: 'add-actions' },

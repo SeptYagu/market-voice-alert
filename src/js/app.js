@@ -96,6 +96,7 @@ import { renderVoiceBar as renderVoiceBarView, updateVoiceHint as updateVoiceHin
 import { renderAlertBar as renderAlertBarView, updateAlertHint as updateAlertHintView } from './views/alertBarView.js';
 import { renderHeaderView, updateMonitorAutoRefreshButton as updateMonitorAutoRefreshButtonView } from './views/headerView.js';
 import { renderToolbarView } from './views/toolbarView.js';
+import { createSearchSuggestController } from './controllers/searchSuggestController.js';
 import {
   renderTableView,
   renderRow,
@@ -522,6 +523,38 @@ export function renderMonitorPage(root) {
   renderTable();
   renderMomentumSection();
   renderStatus();
+  setupSearchSuggest();
+}
+
+let searchSuggestCtrl = null;
+
+export function getSearchSuggestController() {
+  return searchSuggestCtrl;
+}
+
+function setupSearchSuggest() {
+  if (searchSuggestCtrl) {
+    searchSuggestCtrl.destroy();
+    searchSuggestCtrl = null;
+  }
+  if (typeof document === 'undefined') return;
+  const inputEl = document.getElementById('code-input');
+  const dropdownEl = document.getElementById('suggest-dropdown');
+  const liveRegionEl = document.getElementById('suggest-live-region');
+  if (!inputEl || !dropdownEl) return;
+
+  searchSuggestCtrl = createSearchSuggestController({
+    inputElement: inputEl,
+    dropdownElement: dropdownEl,
+    liveRegionElement: liveRegionEl,
+    getWatchList: () => state.watchList,
+    onAddCodes: (codes, opts) => handleAddCodes(codes, opts),
+    onFlashMessage: (msg, type) => {
+      if (type === 'error') flashError(msg);
+      else flashInfo(msg);
+    }
+  });
+  searchSuggestCtrl.bindEvents();
 }
 
 function updateMonitorAutoRefreshButton() {
@@ -773,7 +806,25 @@ function handleRefreshChange(e) {
   restartTimer();
 }
 
+export function handleAddCodes(codes, { message = null } = {}) {
+  if (!codes || !codes.length) return;
+  const newCodes = monitorCtrl.addCodes(codes);
+  renderData();
+  refreshNow();
+  // Phase 8: 添加即预热 K 线缓存
+  if (newCodes.length) {
+    preloadKlineForCodes(newCodes);
+  }
+  if (message) {
+    flashInfo(message);
+  }
+}
+
 function handleAdd() {
+  if (searchSuggestCtrl) {
+    searchSuggestCtrl.handleSubmit();
+    return;
+  }
   const input = document.getElementById('code-input');
   if (!input) return;
   const codes = parseBatchInput(input.value);
@@ -781,15 +832,9 @@ function handleAdd() {
     flashError('未识别到有效代码');
     return;
   }
-  const newCodes = monitorCtrl.addCodes(codes);
+  handleAddCodes(codes);
   input.value = '';
   input.focus();
-  renderData();
-  refreshNow();
-  // Phase 8: 添加即预热 K 线缓存
-  if (newCodes.length) {
-    preloadKlineForCodes(newCodes);
-  }
 }
 
 // Phase 8: 后台预拉 N 只股票的 1d K 线 (限流: 每批 3 + 间隔 200ms)
@@ -1546,6 +1591,10 @@ export function startApp(root) {
         applyDataRefreshSchedule();
       },
       '#/limit-up': (r) => {
+        if (searchSuggestCtrl) {
+          searchSuggestCtrl.destroy();
+          searchSuggestCtrl = null;
+        }
         stopMonitorTimer();
         closeAllCharts();
         closeAllMomentumCharts();
@@ -1562,6 +1611,10 @@ export function startApp(root) {
 }
 
 export function stopApp() {
+  if (searchSuggestCtrl) {
+    searchSuggestCtrl.destroy();
+    searchSuggestCtrl = null;
+  }
   if (typeof state.unsubKlineUpdated === 'function') {
     state.unsubKlineUpdated();
     state.unsubKlineUpdated = null;
