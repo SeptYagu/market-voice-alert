@@ -8,7 +8,8 @@
 涨幅为正的要求），并把排序器、回踩阈值/文案、表头口径收敛为单一定义（`e188fb4`）。
 验证：lint 0 问题；单测 **768/768**；E2E **63/63**；build 通过。详见
 [`2026-09-10-momentum-peak-fix-closure.md`](docs/handoff/2026-09-10-momentum-peak-fix-closure.md)。
-遗留：新 UI（峰值副行）在单测/E2E 中零覆盖，E2E mock 需补 `maxGainPercent`。
+「新 UI 零覆盖」遗留项也已于 `73752d4` 收尾：E2E mock 补峰值字段并断言峰值副行
+（含深度回踩标的保留用例），E2E 63 → **64** 条。
 
 ## 2026-09-10 审查缺陷闭环（R1–R8 及 M1–M6、m1–m3）
 

@@ -35,9 +35,10 @@ P2「新 UI 零覆盖」**未在本轮处理**（见下「遗留」）。
 
 ## 遗留 / 下一步
 
-1. **新 UI（峰值副行）零覆盖**：E2E mock 不含 `maxGainPercent`，单测/E2E 检索
-   `momentum-gain` 零命中——63/63 全绿但新副行从未被渲染断言过。建议给 E2E
-   fixture 补 `maxGainPercent`/`pullbackPercent` 并断言副行文本。
+1. ~~**新 UI（峰值副行）零覆盖**~~：已于 `73752d4` 补齐——E2E mock 补
+   `maxGainPercent`/`pullbackPercent`，F-P0-1 用例新增副行断言，另新增
+   「深度回踩标的保留在列表」用例（主数值 -1.20% + 副行 + 异动列文案）；
+   已验证 mock 无峰值字段时用例失败（非空转断言）。E2E 63 → **64** 条。
 2. **旧缓存清理**：`data/cache/momentum/<date>/ten-day-45pct.json`（无 rule 字段）
    会在下次扫描时自动重建，无需手动清理；VPS 部署后看
    `/api/cache/diagnostics` 确认 rule=`peak-touch-v1` 即完成验收。
