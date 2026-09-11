@@ -18,6 +18,22 @@ export const MA_COLORS = ['#F39C12', '#3498DB', '#9B59B6', '#16A085'];
 export const INTRADAY_PRICE_COLOR = '#2980B9';
 export const INTRADAY_AVG_COLOR = '#F39C12';
 
+// 分时图右侧百分比网格刻度档位（正负对称生效，0% 由昨收虚线承担）。
+// 想增删档位直接改这个数组即可；超出当前对称显示范围的档位自动不画。
+export const INTRADAY_PERCENT_TICKS = [3, 7, 10, 13, 17, 20, 23, 27, 30];
+
+// 分时图右轴刻度格式化：只在档位上显示标签，其余原生刻度标签置空。
+// 轻量图表库（lightweight-charts v4）不支持自定义价格刻度位置，网格线
+// 改由 percent series 上的自定义 price lines 绘制（见 createIntradayChart），
+// 原生刻度标签靠这里遮蔽。注意：十字线右轴百分比读数也会走这里（置空），
+// 悬停百分比读数由浮层图例的「幅」提供。
+export function formatIntradayPercentTick(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '';
+  const hit = INTRADAY_PERCENT_TICKS.some((t) => Math.abs(Math.abs(n) - t) < 1e-6);
+  return hit ? _percentFormatter(n) : '';
+}
+
 const THEME_PALETTE = Object.freeze({
   warm: {
     background: '#FFFFFF',
@@ -487,6 +503,9 @@ export function createIntradayChart(container, opts = {}) {
     ..._intradayChartInteractionOptions()
   });
   chart.applyOptions({ timeScale: _intradayTimeScaleOptions(colors) });
+  // 横向网格改用 INTRADAY_PERCENT_TICKS 自定义档位（自定义 price lines），
+  // 必须关掉原生水平网格，否则 4/8/12% 的原生网格会和自定义网格并存。
+  chart.applyOptions({ grid: { horzLines: { visible: false } } });
   const priceSeries = chart.addLineSeries({
     priceScaleId: 'left',
     color: INTRADAY_PRICE_COLOR,
@@ -519,7 +538,7 @@ export function createIntradayChart(container, opts = {}) {
     lastValueVisible: false,
     crosshairMarkerVisible: false,
     autoscaleInfoProvider: () => symmetricPercentRange ? { priceRange: symmetricPercentRange } : null,
-    priceFormat: { type: 'custom', formatter: _percentFormatter }
+    priceFormat: { type: 'custom', formatter: formatIntradayPercentTick }
   });
   const volumeSeries = chart.addHistogramSeries({
     priceScaleId: 'vol',
@@ -542,6 +561,38 @@ export function createIntradayChart(container, opts = {}) {
     scaleMargins: { top: 0.08, bottom: 0.24 }
   });
   const intradayDataMap = new Map();
+  // 分时图百分比网格线（画在 percent series 上，横贯绘图区并带右轴标签）。
+  let percentTickLines = [];
+
+  // lightweight-charts v4 无法自定义价格刻度位置，用「隐藏系列 + 自定义
+  // price lines」替代原生水平网格：线用网格色、标签画成原生刻度的样子。
+  function rebuildPercentTickLines() {
+    for (const line of percentTickLines) {
+      try { percentSeries.removePriceLine(line); } catch { /* ignore */ }
+    }
+    percentTickLines = [];
+    if (!symmetricPercentRange) return;
+    const maxPercent = Math.abs(Number(symmetricPercentRange.maxValue));
+    if (!Number.isFinite(maxPercent) || maxPercent <= 0) return;
+    for (const level of INTRADAY_PERCENT_TICKS) {
+      if (level > maxPercent) continue; // 超出显示范围的档位不画
+      for (const value of [level, -level]) {
+        try {
+          percentTickLines.push(percentSeries.createPriceLine({
+            price: value,
+            color: colors.grid,
+            lineWidth: 1,
+            lineStyle: LineStyle.Solid,
+            axisLabelVisible: true,
+            // 标签底色=图表背景（徽章不可见）、文字=主题文字色，观感与原生刻度一致
+            axisLabelColor: colors.background,
+            axisLabelTextColor: colors.text,
+            title: ''
+          }));
+        } catch { /* ignore */ }
+      }
+    }
+  }
   const detailLegend = _createDetailLegend(container, 'intraday-crosshair-detail');
 
   function renderIntradayDetail(time) {
@@ -698,6 +749,7 @@ export function createIntradayChart(container, opts = {}) {
       symmetricPriceRange = null;
       symmetricPercentRange = null;
     }
+    rebuildPercentTickLines();
     displayPriceData = priceData;
     displayAverageData = averageData;
     displayPercentData = percentData;
@@ -801,6 +853,9 @@ export function createIntradayChart(container, opts = {}) {
       ..._intradayChartInteractionOptions(),
       timeScale: _intradayTimeScaleOptions(c)
     });
+    // buildChartOptions 会重置 grid，重关水平网格并按新主题色重建刻度线
+    chart.applyOptions({ grid: { horzLines: { visible: false } } });
+    rebuildPercentTickLines();
     priceSeries.applyOptions({ color: INTRADAY_PRICE_COLOR });
     averageSeries.applyOptions({ color: INTRADAY_AVG_COLOR });
     volumeSeries.applyOptions({ color: c.up });

@@ -5,7 +5,9 @@ import {
   createIntradayChart,
   CANDLE_UP_COLOR,
   CANDLE_DOWN_COLOR,
-  MA_COLORS
+  MA_COLORS,
+  INTRADAY_PERCENT_TICKS,
+  formatIntradayPercentTick
 } from '../src/js/chart.js';
 
 QUnit.module('chart.getChartThemeColors', () => {
@@ -180,6 +182,24 @@ QUnit.module('chart.createKlineChart (instance API)', (hooks) => {
 QUnit.module('chart.createIntradayChart (instance API)', (hooks) => {
   hooks.afterEach(() => {
     document.body.innerHTML = '';
+  });
+
+  QUnit.test('percent grid ticks use custom levels', (t) => {
+    t.deepEqual(
+      INTRADAY_PERCENT_TICKS,
+      [3, 7, 10, 13, 17, 20, 23, 27, 30],
+      'intraday percent grid levels'
+    );
+  });
+
+  QUnit.test('formatIntradayPercentTick labels only tick levels', (t) => {
+    t.equal(formatIntradayPercentTick(3), '+3.00%', 'level 3 labeled');
+    t.equal(formatIntradayPercentTick(-10), '-10.00%', 'negative level labeled');
+    t.equal(formatIntradayPercentTick(30), '+30.00%', 'top level labeled');
+    t.equal(formatIntradayPercentTick(4), '', 'native tick 4 blanked');
+    t.equal(formatIntradayPercentTick(12), '', 'native tick 12 blanked');
+    t.equal(formatIntradayPercentTick(0), '', 'zero blanked (昨收虚线承担)');
+    t.equal(formatIntradayPercentTick(NaN), '', 'non-finite blanked');
   });
 
   QUnit.test('setData accepts price, percent, average price, and volume fields', (t) => {
