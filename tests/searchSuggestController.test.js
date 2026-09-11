@@ -289,27 +289,39 @@ QUnit.module('搜索联想控制器测试 (S10–S13 交互与生命周期)', (h
     ctrl.destroy();
   });
 
-  // B3: destroy 移除 composition 事件监听器
+  // B3: destroy 完整移除 composition 监听器，不泄漏
   QUnit.test('B3: destroy 完整移除 composition 监听器，不泄漏', async (t) => {
-    let addCallCount = 0;
+    const added = new Map();
+    const removed = new Map();
+    const rawAdd = inputEl.addEventListener.bind(inputEl);
+    const rawRemove = inputEl.removeEventListener.bind(inputEl);
+    const bump = (m, type) => m.set(type, (m.get(type) || 0) + 1);
+    inputEl.addEventListener = (type, fn, opts) => {
+      bump(added, type);
+      return rawAdd(type, fn, opts);
+    };
+    inputEl.removeEventListener = (type, fn, opts) => {
+      bump(removed, type);
+      return rawRemove(type, fn, opts);
+    };
+
     const ctrl = createSearchSuggestController({
       inputElement: inputEl,
       dropdownElement: dropdownEl,
       liveRegionElement: liveRegionEl,
       getWatchList: () => [],
-      onAddCodes: () => { addCallCount++; },
+      onAddCodes: () => {},
       fetchFn: mockFetch,
       timers: createMockTimers()
     });
 
     ctrl.bindEvents();
-    ctrl.destroy();
+    t.equal(added.get('compositionstart') || 0, 1, 'compositionstart bound');
+    t.equal(added.get('compositionend') || 0, 1, 'compositionend bound');
 
-    // 销毁后触发 compositionstart 不应使控制器异常，随后再挂载新控制器也不受旧监听器影响
-    inputEl.dispatchEvent(new CompositionEvent('compositionstart'));
-    inputEl.value = 'sh600519';
-    inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
-    t.equal(addCallCount, 0, 'Destroyed controller does not handle keydown or leak composition handler');
+    ctrl.destroy();
+    t.equal(removed.get('compositionstart') || 0, 1, 'compositionstart unbound');
+    t.equal(removed.get('compositionend') || 0, 1, 'compositionend unbound');
   });
 
   // C5: keyCode 229 与 isComposing 兼容保护
@@ -344,14 +356,16 @@ QUnit.module('搜索联想控制器测试 (S10–S13 交互与生命周期)', (h
   });
 
   // D4: "+ 添加"按钮与 Enter 键行为完全一致
-  QUnit.test('D4: "+ 添加"按钮 (handleSubmit) 与 Enter 键两入口行为一致', async (t) => {
+  QUnit.test('D4: "+ 添加"按钮 (handleSubmit) 与 Enter 键两入口行为一致且无双重执行', async (t) => {
     const addedCodes = [];
+    const flashes = [];
     const ctrl = createSearchSuggestController({
       inputElement: inputEl,
       dropdownElement: dropdownEl,
       liveRegionElement: liveRegionEl,
       getWatchList: () => [],
       onAddCodes: (codes) => addedCodes.push(...codes),
+      onFlashMessage: (msg) => flashes.push(msg),
       fetchFn: mockFetch,
       timers: createMockTimers()
     });
@@ -368,11 +382,16 @@ QUnit.module('搜索联想控制器测试 (S10–S13 交互与生命周期)', (h
     t.deepEqual(addedCodes, ['sh600519'], 'handleSubmit from button added candidate');
     t.equal(inputEl.value, '', 'Input cleared after button submit');
 
+    // 再次测试回车路径单次触发
+    inputEl.value = 'invalid_query_code';
+    inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    t.equal(flashes.length, 1, 'Only one flash error message on Enter (no double-keydown)');
+
     ctrl.destroy();
   });
 
-  // D6: 快速连击幂等性与存储失败降级
-  QUnit.test('D6: 快速双击/连按回车幂等，存储失败保留输入并报错', async (t) => {
+  // D6: 快速连击幂等性与真实 storage 抛错降级
+  QUnit.test('D6: 快速双击/连按回车幂等，真实 storage 存储失败保留输入并报错', async (t) => {
     const addedCodes = [];
     const messages = [];
 
@@ -398,33 +417,42 @@ QUnit.module('搜索联想控制器测试 (S10–S13 交互与生命周期)', (h
     ctrl.handleSubmit();
 
     t.deepEqual(addedCodes, ['sh600519'], 'Only added once despite double submit');
+    ctrl.destroy();
 
-    // 存储失败降级测试
-    let failAttempts = 0;
-    const failingCtrl = createSearchSuggestController({
+    // 真实 storage 写入失败端到端测试
+    const { setStorageAdapter, addToWatchList } = await import('../src/js/storage.js');
+    const mockFailingAdapter = {
+      getItem: () => null,
+      setItem: () => { throw new Error('QuotaExceededError'); },
+      removeItem: () => {}
+    };
+    setStorageAdapter(mockFailingAdapter);
+
+    let storageAttempts = 0;
+    const realStorageCtrl = createSearchSuggestController({
       inputElement: inputEl,
       dropdownElement: dropdownEl,
       liveRegionElement: liveRegionEl,
       getWatchList: () => [],
-      onAddCodes: () => {
-        failAttempts++;
-        throw new Error('QuotaExceededError');
+      onAddCodes: (codes) => {
+        storageAttempts++;
+        for (const c of codes) addToWatchList(c);
       },
       onFlashMessage: (msg) => messages.push(msg),
       fetchFn: mockFetch,
       timers: createMockTimers()
     });
 
-    failingCtrl.bindEvents();
+    realStorageCtrl.bindEvents();
     inputEl.value = 'sh600000';
-    failingCtrl.handleSubmit();
+    realStorageCtrl.handleSubmit();
 
-    t.equal(failAttempts, 1, 'Attempted to add');
-    t.equal(inputEl.value, 'sh600000', 'Input preserved after storage failure');
-    t.true(messages.some((m) => m.includes('添加失败') && m.includes('QuotaExceededError')), 'Error flashed on storage failure');
+    t.equal(storageAttempts, 1, 'storage write attempted once');
+    t.equal(inputEl.value, 'sh600000', 'Input preserved when real storage fails');
+    t.true(messages.some((m) => m.includes('添加失败') && m.includes('存储空间不足或写入失败')), 'Error flashed on real storage failure');
 
-    failingCtrl.destroy();
-    ctrl.destroy();
+    setStorageAdapter(null);
+    realStorageCtrl.destroy();
   });
 
   // D2 & D3: 关键字高亮与 asOfDate 数据日期渲染
@@ -453,6 +481,85 @@ QUnit.module('搜索联想控制器测试 (S10–S13 交互与生命周期)', (h
     const asOfEl = dropdownEl.querySelector('.suggest-as-of-date');
     t.ok(asOfEl, 'asOfDate element is rendered');
     t.true(asOfEl.textContent.includes('数据日期: 2026-09-11'), 'Shows correct asOfDate');
+
+    ctrl.destroy();
+  });
+
+  // R1: 防抖窗口内输入变更后，旧 DOM 即刻清空，指针无法触发过期候选添加
+  QUnit.test('R1: 输入变更后防抖窗口内旧下拉 DOM 即刻清空，指针点击不提交过期标的', async (t) => {
+    const addedCodes = [];
+    const ctrl = createSearchSuggestController({
+      inputElement: inputEl,
+      dropdownElement: dropdownEl,
+      liveRegionElement: liveRegionEl,
+      getWatchList: () => [],
+      onAddCodes: (codes) => addedCodes.push(...codes),
+      fetchFn: mockFetch,
+      timers: createMockTimers()
+    });
+
+    ctrl.bindEvents();
+
+    inputEl.value = 'gzmt';
+    inputEl.dispatchEvent(new Event('input'));
+    await new Promise((r) => setTimeout(r, 200));
+
+    t.equal(dropdownEl.querySelectorAll('.suggest-item').length, 1, 'Has 1 candidate before change');
+
+    // 快速改变输入为 xyz
+    inputEl.value = 'xyz';
+    inputEl.dispatchEvent(new Event('input'));
+
+    // 旧 DOM 应已清空收起
+    const staleItems = dropdownEl.querySelectorAll('.suggest-item');
+    t.equal(staleItems.length, 0, 'Dropdown items immediately cleared on input change');
+    t.true(dropdownEl.hidden, 'Dropdown immediately hidden');
+    t.deepEqual(addedCodes, [], 'No code added');
+
+    ctrl.destroy();
+  });
+
+  // R5: 字典加载与搜索/渲染异常解耦，重试正常恢复
+  QUnit.test('R5: 搜索/渲染异常不污染 dictionaryError，重试可重置状态', async (t) => {
+    let fetchCalled = 0;
+    const ctrl = createSearchSuggestController({
+      inputElement: inputEl,
+      dropdownElement: dropdownEl,
+      liveRegionElement: liveRegionEl,
+      getWatchList: () => [],
+      onAddCodes: () => {},
+      fetchFn: async (url) => {
+        fetchCalled++;
+        if (url.includes('stock-suggest-dictionary')) {
+          if (fetchCalled === 1) {
+            return { ok: false, status: 500 };
+          }
+          return { ok: true, json: async () => mockDictionaryData };
+        }
+        return { ok: true, json: async () => ({ ok: true, data: { items: [] } }) };
+      },
+      timers: createMockTimers()
+    });
+
+    ctrl.bindEvents();
+
+    // 首次触发加载失败
+    inputEl.value = 'gzmt';
+    inputEl.dispatchEvent(new Event('input'));
+    await new Promise((r) => setTimeout(r, 200));
+
+    let state = ctrl.getState();
+    t.ok(state.dictionaryError, 'Dictionary error captured on network failure');
+    const retryBtn = dropdownEl.querySelector('#suggest-retry-btn');
+    t.ok(retryBtn, 'Retry button rendered');
+
+    // 点击重试
+    retryBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 250));
+
+    state = ctrl.getState();
+    t.equal(state.dictionaryError, null, 'Dictionary error cleared on successful retry');
+    t.true(state.candidates.length > 0, 'Candidates loaded after retry');
 
     ctrl.destroy();
   });

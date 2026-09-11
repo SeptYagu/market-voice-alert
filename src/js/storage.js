@@ -81,7 +81,7 @@ export function getWatchList() {
 
 export function setWatchList(list) {
   const arr = Array.isArray(list) ? list : [];
-  setJSON(STORAGE_KEYS.WATCH_LIST, arr);
+  return setJSON(STORAGE_KEYS.WATCH_LIST, arr);
 }
 
 export function addToWatchList(code) {
@@ -91,7 +91,10 @@ export function addToWatchList(code) {
   const list = getWatchList();
   if (list.includes(trimmed)) return list;
   list.push(trimmed);
-  setWatchList(list);
+  const ok = setWatchList(list);
+  if (!ok) {
+    throw new Error('存储空间不足或写入失败');
+  }
   return list;
 }
 
@@ -170,7 +173,7 @@ export function getSubscribedCodes() {
 
 export function setSubscribedCodes(list) {
   const arr = Array.isArray(list) ? list.filter((c) => typeof c === 'string') : [];
-  setJSON(STORAGE_KEY_SUBSCRIBED, arr);
+  return setJSON(STORAGE_KEY_SUBSCRIBED, arr);
 }
 
 function _getCodeList(key) {

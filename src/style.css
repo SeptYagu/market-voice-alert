@@ -306,7 +306,7 @@ button, select, input, textarea {
 
 .suggest-match-highlight {
   background: transparent;
-  color: var(--primary, #1890ff);
+  color: var(--accent-color);
   font-weight: 600;
   text-decoration: underline;
 }

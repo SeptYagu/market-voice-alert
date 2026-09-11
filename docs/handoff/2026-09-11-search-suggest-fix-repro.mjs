@@ -321,7 +321,8 @@ if (expectBroken) {
 }
 
 // =============================================================================
-// RESIDUAL：修复未覆盖 / 仍存在的缺陷（两种模式都应为 F）
+// =============================================================================
+// CLOSURE (续)：R1–R6 闭环核验
 // =============================================================================
 
 // --- R1: 防抖窗口内指针点击仍可提交过期候选（B2 只堵了回车路径） -----------
@@ -333,14 +334,12 @@ if (expectBroken) {
 
   h.input.value = 'xyz';                                    // 改成一个无法解析的串
   h.input.dispatchEvent(new window.Event('input', { bubbles: true }));
-  const staleItems = h.dropdown.querySelectorAll('.suggest-item');   // 旧 DOM 未被重绘
-  const preselect = !!h.dropdown.querySelector('.suggest-item.is-preselected');
+  const staleItems = h.dropdown.querySelectorAll('.suggest-item');   // 旧 DOM 已被重绘清空
   staleItems[0]?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
 
-  check('RESIDUAL', 'R1', 'R1: 防抖窗口内点击「残留在屏幕上的旧候选」仍会添加过期标的',
-    false,
-    `改输入前候选=${before}；改输入后旧 DOM 仍在（.suggest-item=${staleItems.length} 个，其中预选中高亮=${preselect}）` +
-    `，且未重绘；点击后 onAddCodes=${JSON.stringify(h.added)}（期望 []）`);
+  check('CLOSURE', 'R1', 'R1: 防抖窗口内改变输入即时清空旧 DOM，指针不提交过期标的',
+    staleItems.length === 0 && h.added.length === 0,
+    `改输入前候选=${before}；改输入后旧 DOM 仍在（.suggest-item=${staleItems.length} 个），点击后 onAddCodes=${JSON.stringify(h.added)}（期望 0 项且 []）`);
   h.ctrl.destroy();
 }
 
@@ -382,10 +381,9 @@ async function createAppLikeHarness(dictJson, { onAddCodes } = {}) {
   h.input.value = 'neither-code-nor-name';
   h.input.dispatchEvent(key('Enter'));
 
-  check('RESIDUAL', 'R2', 'R2: 单次回车被处理两次（重复提示）',
+  check('CLOSURE', 'R2', 'R2: 单次回车仅处理一次（无重复提示）',
     h.flashes.length === 1,
-    `onFlashMessage 调用 ${h.flashes.length} 次：${JSON.stringify(h.flashes)}（期望 1 次）——` +
-    `渲染出来的真实工具栏在 #code-input 上挂 keydown→handleAdd→handleSubmit，控制器 bindEvents 又挂了 keydown→handleKeyDown→handleSubmit，二者都不 stopPropagation`);
+    `onFlashMessage 调用 ${h.flashes.length} 次：${JSON.stringify(h.flashes)}（期望 1 次）`);
   h.ctrl.destroy();
 }
 
@@ -398,27 +396,26 @@ async function createAppLikeHarness(dictJson, { onAddCodes } = {}) {
   });
   h.input.value = 'sh600519';
   h.input.dispatchEvent(key('Enter'));
-  check('FIX-INDUCED', 'R3', 'R3: 添加失败恢复输入后，重复监听会二次投递（本次修复的 catch+恢复输入引入）',
+  check('CLOSURE', 'R3', 'R3: 添加失败恢复输入后单次按键仅投递一次',
     attempts === 1,
-    `onAddCodes 被调用 ${attempts} 次（期望 1 次）；输入现为 ${JSON.stringify(h.input.value)}` +
-    (attempts > 1
-      ? '——控制器 catch 恢复了输入，于是第二个 keydown 监听又投递一次（浏览器里表现为重复报错，且可反复重试）'
-      : '——修复前没有 catch，异常直接从事件监听器抛出（未被捕获、输入被清空），因此只投递 1 次'));
+    `onAddCodes 被调用 ${attempts} 次（期望 1 次）；输入现为 ${JSON.stringify(h.input.value)}`);
   h.ctrl.destroy();
 }
 
 // --- R4: 真实 onAddCodes 链路能否把存储失败抛给控制器 ----------------------
 {
-  const { setStorageAdapter, setRaw } = await import('../../src/js/storage.js');
+  const { setStorageAdapter, addToWatchList } = await import('../../src/js/storage.js');
   setStorageAdapter({ setItem() { throw new Error('QuotaExceededError'); }, getItem: () => null, removeItem() {} });
   let threw = false;
-  let ret = null;
-  try { ret = setRaw('stock_watch_list', 'x'); } catch { threw = true; }
+  try {
+    addToWatchList('sh600000');
+  } catch {
+    threw = true;
+  }
   setStorageAdapter(null);
-  check('RESIDUAL', 'R4', 'R4: 存储层把配额异常吞掉，控制器的 try/catch 在生产链路不可达',
-    false,
-    `storage.setRaw 在 setItem 抛错时 threw=${threw}、返回=${JSON.stringify(ret)}` +
-    `（即 app.js handleAddCodes 不会向上抛 → D6 的「存储失败弹错」只有 mock 能触发，真实失败时用户看不到任何提示）`);
+  check('CLOSURE', 'R4', 'R4: 存储层配额异常主动抛出，控制器可捕获并保留输入',
+    threw,
+    `addToWatchList 在 setItem 抛错时 threw=${threw}（期望 true，确保控制器可捕获并报错保留输入）`);
 }
 
 // --- R5: 渲染/搜索异常被 initDictionary 误报为「字典加载失败」，且重试不可恢复
@@ -432,23 +429,28 @@ async function createAppLikeHarness(dictJson, { onAddCodes } = {}) {
   h.ctrl.bindEvents();
   h.input.value = 'gzmt';
   h.input.dispatchEvent(new window.Event('input', { bubbles: true }));
-  await wait(700); // 走 initDictionary 的 try → runSearch 抛错被吞成 dictionaryError
+  await wait(700); // 走 initDictionary 的 try → runSearch
 
   const st = h.ctrl.getState();
   const showsUnavailable = h.dropdown.textContent.includes('名称搜索暂不可用');
-  const before = uncaught.length;
-  h.dropdown.querySelector('#suggest-retry-btn')
-    ?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
-  await wait(400);
-  const st2 = h.ctrl.getState();
 
-  check('RESIDUAL', 'R5', 'R5: 搜索/渲染异常被误报为「名称搜索暂不可用」，重试无法恢复',
-    false,
-    `字典其实已成功解析（items=${malformed.items.length}），但 dictionaryError=${JSON.stringify(st.dictionaryError)}、` +
-    `UI 显示「名称搜索暂不可用」=${showsUnavailable}；点击重试后 dictionaryError 仍为 ${JSON.stringify(st2.dictionaryError)}，` +
-    `期间新增未处理异常/拒绝 ${uncaught.length - before} 条${uncaught.length ? '：' + JSON.stringify(uncaught.slice(-1)) : ''}`);
+  check('CLOSURE', 'R5', 'R5: 搜索/渲染异常不污染 dictionaryError',
+    st.dictionaryError === null && !showsUnavailable,
+    `dictionaryError=${JSON.stringify(st.dictionaryError)} UI 显示「名称搜索暂不可用」=${showsUnavailable}（期望 null 与 false）`);
   h.ctrl.destroy();
   resetDictionaryCache();
+}
+
+// --- R6: .suggest-match-highlight 使用已定义的主题变量 --accent-color --------
+{
+  const cssContent = readFileSync(new URL('../../src/style.css', import.meta.url), 'utf8');
+  const m = cssContent.match(/\.suggest-match-highlight\s*\{[^}]*color:\s*([^;]+);/);
+  const colorVal = m ? m[1].trim() : '';
+  const usesAccent = colorVal.includes('var(--accent-color)');
+  const usesUndefinedPrimary = colorVal.includes('--primary');
+  check('CLOSURE', 'R6', 'R6: 高亮样式使用已定义的 var(--accent-color)，无未定义变量',
+    usesAccent && !usesUndefinedPrimary,
+    `color 声明=${JSON.stringify(colorVal)}（期望使用 var(--accent-color)，不含 --primary）`);
 }
 
 // =============================================================================

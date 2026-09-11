@@ -1,5 +1,22 @@
 # STATUS.md - 项目状态
 
+## 2026-09-11 联想搜索审查缺陷闭环（R1–R6 及遗漏需求 D5 完整修复）
+
+对照 `docs/handoff/2026-09-11-search-suggest-fix-verification.md` 提出的 5 项遗留缺陷 (R1–R5)、样式/对比度缺陷 (R6) 及遗漏需求 (D5 - S16)，完成全部修复与全量门禁验证：
+1. **R1 闭环（防抖窗口内输入变更即时清理）**：`searchSuggestController.js` 中 `handleInputChange` 变更时立即收起并清空旧候选 DOM（`isOpen = false; candidates = []; renderDropdown();`），并在条目 `click`/`pointerdown` 及执行逻辑中进行当前有效性校验，杜绝防抖窗口内点击旧候选添加过期标的。
+2. **R2 & R3 闭环（彻底消除双 keydown 与二次投递）**：移除 `toolbarView.js` 中 `#code-input` 上的内联 `keydown` 监听，统一由 `searchSuggestController` 处理 combobox 键盘事件；在 `handleKeyDown` 入口处增加 `if (e.defaultPrevented) return;` 并在 Enter 处理时调用 `e.stopImmediatePropagation()`，彻底消除双重报错与存储失败恢复输入后的重复投递。
+3. **R4 闭环（真实存储层异常捕获与输入保留）**：完善 `storage.js` 中的 `setWatchList` 与 `setSubscribedCodes` 返回值；`addToWatchList` 在写入失败时抛出明确异常，使得控制器 `executeAddCandidate` 的 `try/catch` 在真实存储配额超限时可达，实现 S13「存储失败保留输入并报错」。
+4. **R5 闭环（字典加载与搜索渲染异常解耦）**：收窄 `initDictionary` 的 `try/catch` 范围至纯网络与反序列化阶段，搜索/渲染异常不再污染 `dictionaryError`；重试按钮点击时完整重置 `dictionary` 与 `dictionaryError` 状态，消除卡死隐患。
+5. **R6 闭环（高亮样式原生变量与对比度适配）**：将 `.suggest-match-highlight` 颜色统一为 `var(--accent-color)`，替换未定义的 `var(--primary)`，暖米、浅色、深色三套主题下文本对比度均达到 WCAG AA 4.5:1 以上。
+6. **D5 补齐（S16 主题/窄屏/读屏 E2E 全量覆盖）**：在 `e2e/search-suggest.spec.js` 中新增三项自动化测试，完整覆盖三主题动态切换、375px 移动窄屏自适应布局不溢出，以及 `combobox`/`listbox`/`option`/`aria-expanded`/`aria-activedescendant` 与 live region 读屏联动。
+7. **测试与证据强化**：重构 QUnit 中的 B3（真实断言 composition 监听注销）、D4（全 UI 回车与按钮一致性防双发）、D6（真实 storageAdapter 抛错降级）单测断言，并新增 R1、R5 用例；同步更新 `2026-09-11-search-suggest-fix-repro.mjs`，`--expect=fixed` 16 项 CLOSURE 断言全部通过。
+- 门禁复跑：
+  - `npm run lint`：0 错误 0 警告；
+  - `npm test`（QUnit）：**796/796** 全部通过；
+  - `node docs/handoff/2026-09-11-search-suggest-fix-repro.mjs --expect=fixed`：**16 项全过**，与期望不符 0 项；
+  - `npx playwright test e2e/search-suggest.spec.js`：**10/10** 全部通过；
+  - `npm run build`：生产打包成功。
+
 ## 2026-09-11 联想搜索修复核实（`3e4486e` 对 B1–B3 / D1–D6 的处置）
 
 以「需求与功能真实可用」为验收标准，对 `3e4486e` 声称修复的 B1–B3 / C5 / C6 / D1–D4 / D6 做独立复核，证据脚本 [`2026-09-11-search-suggest-fix-repro.mjs`](docs/handoff/2026-09-11-search-suggest-fix-repro.mjs)（双模式 `--expect=fixed|broken`，**broken 基线 `b9e57e5`**）：

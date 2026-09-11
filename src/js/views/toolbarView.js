@@ -51,15 +51,7 @@ export function renderToolbarView(options = {}) {
           autocomplete: 'off',
           autocorrect: 'off',
           autocapitalize: 'off',
-          spellcheck: 'false',
-          on: {
-            keydown: (e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                if (handlers.onAdd) handlers.onAdd();
-              }
-            }
-          }
+          spellcheck: 'false'
         }),
         el('div', {
           id: 'suggest-dropdown',

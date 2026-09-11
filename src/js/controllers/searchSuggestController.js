@@ -48,16 +48,24 @@ export function createSearchSuggestController(options = {}) {
     if (dictionary || dictionaryLoading) return;
     dictionaryLoading = true;
     dictionaryError = null;
+    let loadedDict = null;
     try {
-      dictionary = await loadStockDictionary({ fetchFn });
-      dictionaryLoading = false;
-      if (currentQuery && isOpen) {
-        runSearch(currentQuery);
-      }
+      loadedDict = await loadStockDictionary({ fetchFn });
     } catch (err) {
       dictionaryLoading = false;
       dictionaryError = err && err.message ? err.message : String(err);
       renderDropdown();
+      return;
+    }
+    dictionary = loadedDict;
+    dictionaryLoading = false;
+    dictionaryError = null;
+    if (currentQuery && isOpen) {
+      try {
+        runSearch(currentQuery);
+      } catch (err) {
+        console.error('search error after dictionary load:', err);
+      }
     }
   }
 
@@ -146,7 +154,13 @@ export function createSearchSuggestController(options = {}) {
         retryBtn.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
-          initDictionary().then(() => runSearch(inputElement ? inputElement.value : ''));
+          dictionary = null;
+          dictionaryError = null;
+          initDictionary().then(() => {
+            if (inputElement && inputElement.value) {
+              runSearch(inputElement.value);
+            }
+          });
         });
       }
       return;
@@ -223,12 +237,14 @@ export function createSearchSuggestController(options = {}) {
       // 鼠标与触摸支持: 使用 pointerdown 优先于 blur 触发
       itemEl.addEventListener('pointerdown', (e) => {
         e.preventDefault();
-        pendingPointerCandidate = cand;
+        if (!cand.alreadyAdded && candidates.some((c) => c.code === cand.code)) {
+          pendingPointerCandidate = cand;
+        }
       });
 
       itemEl.addEventListener('click', (e) => {
         e.preventDefault();
-        if (!cand.alreadyAdded) {
+        if (!cand.alreadyAdded && candidates.some((c) => c.code === cand.code)) {
           executeAddCandidate(cand);
         }
       });
@@ -304,31 +320,42 @@ export function createSearchSuggestController(options = {}) {
       return;
     }
 
-    const watchList = getWatchList();
-    const res = searchStocks(rawVal, {
-      index: dictionary,
-      watchList,
-      spotSnapshot,
-      maxResults: 12
-    });
+    try {
+      const watchList = getWatchList();
+      const res = searchStocks(rawVal, {
+        index: dictionary,
+        watchList,
+        spotSnapshot,
+        maxResults: 12
+      });
 
-    if (currentId !== queryId) return;
+      if (currentId !== queryId) return;
 
-    candidates = res.items;
-    hasMore = res.hasMore;
-    statusNotice = res.statusNotice;
-    isOpen = true;
+      candidates = res.items;
+      hasMore = res.hasMore;
+      statusNotice = res.statusNotice;
+      isOpen = true;
 
-    // 默认预选首个可添加候选
-    defaultSelectedIndex = candidates.findIndex((c) => !c.alreadyAdded);
-    activeIndex = null;
+      // 默认预选首个可添加候选
+      defaultSelectedIndex = candidates.findIndex((c) => !c.alreadyAdded);
+      activeIndex = null;
 
-    renderDropdown();
+      renderDropdown();
 
-    if (candidates.length) {
-      announce(`找到 ${candidates.length} 个建议项`);
-    } else {
-      announce('未找到匹配标的');
+      if (candidates.length) {
+        announce(`找到 ${candidates.length} 个建议项`);
+      } else {
+        announce('未找到匹配标的');
+      }
+    } catch (err) {
+      console.error('search error:', err);
+      if (currentId !== queryId) return;
+      candidates = [];
+      hasMore = false;
+      defaultSelectedIndex = -1;
+      activeIndex = null;
+      isOpen = true;
+      renderDropdown();
     }
   }
 
@@ -336,20 +363,18 @@ export function createSearchSuggestController(options = {}) {
     if (!inputElement) return;
     const val = inputElement.value;
 
-    // 输入改变立即取消旧查询的提交资格和活动项 (§3.1)
+    // 输入改变立即取消旧查询的提交资格和活动项 (§3.1, R1)
     ++queryId;
     activeIndex = null;
     pendingPointerCandidate = null;
     candidates = [];
     defaultSelectedIndex = -1;
+    isOpen = false;
+    renderDropdown();
 
     if (isBatchQuery(val)) {
       if (debounceTimer) timers.clearTimeout(debounceTimer);
       debounceTimer = null;
-      isOpen = false;
-      candidates = [];
-      defaultSelectedIndex = -1;
-      renderDropdown();
       return;
     }
 
@@ -357,10 +382,6 @@ export function createSearchSuggestController(options = {}) {
     if (!trimmed) {
       if (debounceTimer) timers.clearTimeout(debounceTimer);
       debounceTimer = null;
-      isOpen = false;
-      candidates = [];
-      defaultSelectedIndex = -1;
-      renderDropdown();
       return;
     }
 
@@ -526,6 +547,8 @@ export function createSearchSuggestController(options = {}) {
   }
 
   function handleKeyDown(e) {
+    if (e.defaultPrevented) return;
+
     if (isComposing || e.isComposing === true || e.keyCode === 229) {
       if (e.key === 'Enter') {
         // IME 组合中回车仅确认输入法
@@ -535,6 +558,9 @@ export function createSearchSuggestController(options = {}) {
 
     if (e.key === 'Enter') {
       e.preventDefault();
+      if (typeof e.stopImmediatePropagation === 'function') {
+        e.stopImmediatePropagation();
+      }
       handleSubmit();
       return;
     }

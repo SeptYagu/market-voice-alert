@@ -832,9 +832,13 @@ function handleAdd() {
     flashError('未识别到有效代码');
     return;
   }
-  handleAddCodes(codes);
-  input.value = '';
-  input.focus();
+  try {
+    handleAddCodes(codes);
+    input.value = '';
+    input.focus();
+  } catch (err) {
+    flashError(`添加失败: ${err.message || err}`);
+  }
 }
 
 // Phase 8: 后台预拉 N 只股票的 1d K 线 (限流: 每批 3 + 间隔 200ms)
