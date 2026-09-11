@@ -216,3 +216,24 @@ if (isComposing || e.isComposing === true || e.keyCode === 229) { ... }
 | S15 多音字/前导零/北交所 | ✅ 已覆盖 | 单测 |
 | S16 主题/窄屏/读屏 | ⚠️ 无 E2E | CSS 有响应式样式，但无自动化验证 |
 | S17 性能/字典体积 | ✅ 已覆盖 | 体积 + p95 延迟测试 |
+
+---
+
+## 修复完成记录（2026-09-11）
+
+已针对报告中的所有必须修复 Bug、缺陷与质量优化项完成修复与验证：
+
+1. **B1 & C6 修复**：在 `stockSearchService.js` 与 `build-suggest-dictionary.mjs` 中更新正则，约束 `N`/`C` 状态标记必须后跟非 ASCII (中文) 字符，杜绝误判；补充针对 CATL/C919/NIO 等英文名称以及 N新锐/C浦发 等状态名称的完整单测。
+2. **B2 修复**：在 `searchSuggestController.js` 的 `handleInputChange` 中立即重置 `candidates = []` 与 `defaultSelectedIndex = -1`；在 `handleSubmit` 中增加当前输入与查询的一致性对比校验，彻底防止在防抖等待期内误提交过期候选。
+3. **B3 修复**：将 `searchSuggestController.js` 中的 `compositionstart`/`compositionend` 监听函数提取为命名函数引用，在 `destroy()` 时调用 `removeEventListener` 完全注销，避免 SPA 路由进出时的监听器累加泄漏。
+4. **C5 修复**：在 `handleKeyDown` 中加入 `e.keyCode === 229` 与 `e.isComposing === true` 兼容性检查，防止旧版/特定 Android 浏览器下在输入法确认时误触发回车提交。
+5. **C4 修复**：管理 `blurTimer` 句柄，在点击候选、执行添加以及控制器销毁时及时清理，消除延迟失焦竞态。
+6. **D1 修复**：`parseBatchInput` 参数默认值调整为 `allowWhitespace = true`，使旧路径原生支持 Tab 和换行分隔符。
+7. **D2 & D3 实现**：
+   - D2：引入安全的 DOM 纯文本节点高亮函数（使用 `createTextNode` 与 `createElement('mark')`，不拼接 HTML），对候选代码与名称进行精准关键字高亮。
+   - D3：在下拉面板底部动态渲染字典数据日期 `数据日期: ${dictionary.meta.asOfDate}`。
+8. **D4 & D6 测试补齐**：
+   - D4：补充 "+ 添加" 按钮触发 `handleSubmit` 的单元测试以及 Playwright 端到端独立测试，验证双入口行为一致。
+   - D6：补充快速连续双击回车幂等性单测，以及持久化存储失败时保留输入并弹窗报错的降级单测。
+9. **测试验证**：全部 794 个单元测试通过，Playwright 联想搜索全链路 7 项 E2E 测试全部通过，ESLint 检查 0 错误 0 警告，Vite 生产构建成功。
+

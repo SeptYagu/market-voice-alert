@@ -56,11 +56,13 @@ QUnit.module('app.parseBatchInput', () => {
   QUnit.test('tolerates full-width comma (，) for Chinese users', (t) => {
     t.deepEqual(parseBatchInput('600519，000001'), ['sh600519', 'sz000001']);
   });
-  QUnit.test('does NOT split on semicolons, newlines or other punctuation', (t) => {
-    // semicolon/newline/、 should NOT be valid separators per spec
+  QUnit.test('does NOT split on semicolons or other punctuation, but splits on whitespace/newlines/tabs', (t) => {
+    // semicolon/、 should NOT be valid separators per spec
     t.deepEqual(parseBatchInput('600519;000001'), []);
-    t.deepEqual(parseBatchInput('600519\n000001'), []);
     t.deepEqual(parseBatchInput('600519、000001'), []);
+    // whitespace (newline and tab) are valid separators per §2.1.2
+    t.deepEqual(parseBatchInput('600519\n000001'), ['sh600519', 'sz000001']);
+    t.deepEqual(parseBatchInput('600519\t000001'), ['sh600519', 'sz000001']);
   });
   QUnit.test('keeps existing prefixes intact', (t) => {
     t.deepEqual(parseBatchInput('sh600519, sz000001'), ['sh600519', 'sz000001']);

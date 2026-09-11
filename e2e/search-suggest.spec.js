@@ -42,6 +42,39 @@ test.describe('添加栏智能联想全链路', () => {
     await expect(row.locator('.name')).toContainText('贵州茅台');
   });
 
+  test('输入拼音缩写 (gzmt) → 下拉联想显示贵州茅台 → 点击 "+ 添加" 按钮提交添加 (D4 两入口一致)', async ({ page }) => {
+    await page.goto('http://127.0.0.1:5173/');
+
+    const input = page.locator('#code-input');
+    const dropdown = page.locator('#suggest-dropdown');
+    const addBtn = page.locator('.add-actions button.btn-primary');
+
+    // 聚焦并输入 gzmt
+    await input.click();
+    await input.fill('gzmt');
+
+    // 下拉框应当展开并展示贵州茅台
+    await expect(dropdown).toBeVisible({ timeout: DEFAULT_TIMEOUT });
+    await expect(input).toHaveAttribute('aria-expanded', 'true');
+
+    const firstItem = dropdown.locator('.suggest-item').first();
+    await expect(firstItem).toBeVisible();
+    await expect(firstItem.locator('.suggest-name')).toContainText('贵州茅台');
+    await expect(firstItem.locator('.suggest-code')).toHaveText('SH600519');
+
+    // 点击 "+ 添加" 按钮添加首选
+    await addBtn.click();
+
+    // 下拉列表应当收起
+    await expect(dropdown).toBeHidden();
+
+    // 自选股表格中应当成功出现贵州茅台 (sh600519)
+    const row = page.locator('tr[data-code="sh600519"]');
+    await expect(row).toBeVisible({ timeout: DEFAULT_TIMEOUT });
+    await expect(row.locator('.code')).toHaveText('sh600519');
+    await expect(row.locator('.name')).toContainText('贵州茅台');
+  });
+
   test('键盘方向键导航与 Escape 关闭', async ({ page }) => {
     await page.goto('http://127.0.0.1:5173/');
 

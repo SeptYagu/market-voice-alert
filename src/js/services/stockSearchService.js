@@ -153,9 +153,11 @@ export function validateSpotSnapshot(json, now = Date.now()) {
 export function parseStatusFlag(name) {
   if (!name || typeof name !== 'string') return null;
   const s = name.trim();
-  const m = s.match(/^(\*ST|ST|XD|XR|DR|N|C)/i);
+  const m = s.match(/^(\*ST|ST|XD|XR|DR)(?=\s*([^\x20-\x7e]|$))/i)
+    || s.match(/^([NC])(?=\s*[^\x20-\x7e])/);
   return m ? m[1].toUpperCase() : null;
 }
+
 
 /**
  * 从字典与期货目录构建内存搜索条目集合

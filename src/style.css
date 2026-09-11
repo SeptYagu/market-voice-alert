@@ -284,14 +284,16 @@ button, select, input, textarea {
 
 .suggest-state-row,
 .suggest-footer-row,
-.suggest-status-notice {
+.suggest-status-notice,
+.suggest-as-of-date {
   padding: 8px 12px;
   font-size: 12px;
   color: var(--text-secondary);
   text-align: center;
 }
 
-.suggest-footer-row {
+.suggest-footer-row,
+.suggest-as-of-date {
   border-top: 1px dashed var(--border-color);
   background: var(--hover-bg);
 }
@@ -300,6 +302,13 @@ button, select, input, textarea {
   color: var(--accent-color);
   border-top: 1px solid var(--border-color);
   background: var(--hover-bg);
+}
+
+.suggest-match-highlight {
+  background: transparent;
+  color: var(--primary, #1890ff);
+  font-weight: 600;
+  text-decoration: underline;
 }
 
 .btn-suggest-retry {

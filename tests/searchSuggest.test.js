@@ -5,9 +5,11 @@ import {
   createStockSearchIndex,
   searchStocks,
   validateSpotSnapshot,
-  beijingDateKey
+  beijingDateKey,
+  parseStatusFlag
 } from '../src/js/services/stockSearchService.js';
 import { isBatchQuery, parseBatchInputDetails, parseBatchInput } from '../src/js/services/batchExportService.js';
+import { parseBaseName } from '../scripts/build-suggest-dictionary.mjs';
 
 let indexInstance = null;
 
@@ -130,6 +132,31 @@ QUnit.module('添加栏智能联想与建议测试 (S01–S17 矩阵)', (hooks) 
     const stXifa = resST.items.find((it) => it.code === 'sz000752');
     t.ok(stXifa, 'Query "*st" matches *ST西发');
     t.equal(stXifa.status, '*ST');
+  });
+
+  QUnit.test('B1 & C6: parseStatusFlag 与 parseBaseName 仅匹配后接中文的 N/C 状态前缀，不过度匹配英文名称', (t) => {
+    // 真实状态名
+    t.equal(parseStatusFlag('N新锐'), 'N');
+    t.equal(parseStatusFlag('C浦发'), 'C');
+    t.equal(parseStatusFlag('*ST西发'), '*ST');
+    t.equal(parseStatusFlag('ST大集'), 'ST');
+    t.equal(parseStatusFlag('XD美的集'), 'XD');
+
+    // 纯英文或非状态名不应过度匹配 N / C
+    t.equal(parseStatusFlag('CATL'), null);
+    t.equal(parseStatusFlag('C919'), null);
+    t.equal(parseStatusFlag('NIO'), null);
+    t.equal(parseStatusFlag('南京银行'), null);
+    t.equal(parseStatusFlag('长江电力'), null);
+
+    // parseBaseName 验证
+    t.equal(parseBaseName('N新锐'), '新锐');
+    t.equal(parseBaseName('C浦发'), '浦发');
+    t.equal(parseBaseName('*ST西发'), '西发');
+    t.equal(parseBaseName('CATL'), 'CATL');
+    t.equal(parseBaseName('C919'), 'C919');
+    t.equal(parseBaseName('NIO'), 'NIO');
+    t.equal(parseBaseName('南京银行'), '南京银行');
   });
 
   // S07: 新/旧/跨日/未来/过期/部分/空快照、非法封套/503

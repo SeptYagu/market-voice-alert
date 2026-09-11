@@ -28,6 +28,7 @@ QUnit.module('搜索联想控制器测试 (S10–S13 交互与生命周期)', (h
   const mockDictionaryData = {
     schemaVersion: '1.0.0',
     version: '2026.09.11',
+    asOfDate: '2026-09-11',
     items: [
       { c: 'sh600519', n: '贵州茅台', i: 'gzmt', p: 'guizhoumaotai', m: '沪市主板' },
       { c: 'sz000001', n: '平安银行', i: 'payh', p: 'pinganyinhang', m: '深市主板', a: [{ name: '深发展', type: 'former', initials: 'sfz', pinyin: 'shenfazhan' }] },
@@ -247,4 +248,213 @@ QUnit.module('搜索联想控制器测试 (S10–S13 交互与生命周期)', (h
 
     ctrl.destroy();
   });
+
+  // B2: 防抖窗口内快速输入无法解析字符串并回车，不提交过期旧候选
+  QUnit.test('B2: 防抖窗口内改变输入立即取消旧候选提交资格，不提交过期结果', async (t) => {
+    const addedCodes = [];
+    const messages = [];
+
+    const ctrl = createSearchSuggestController({
+      inputElement: inputEl,
+      dropdownElement: dropdownEl,
+      liveRegionElement: liveRegionEl,
+      getWatchList: () => [],
+      onAddCodes: (codes) => addedCodes.push(...codes),
+      onFlashMessage: (msg) => messages.push(msg),
+      fetchFn: mockFetch,
+      timers: createMockTimers()
+    });
+
+    ctrl.bindEvents();
+
+    // 1. 输入 gzmt，成功检索出贵州茅台
+    inputEl.value = 'gzmt';
+    inputEl.dispatchEvent(new Event('input'));
+    await new Promise((r) => setTimeout(r, 200));
+
+    const state1 = ctrl.getState();
+    t.true(state1.isOpen, 'Dropdown open after gzmt');
+    t.equal(state1.candidates.length, 1, 'Found 贵州茅台');
+
+    // 2. 快速改成无法解析的字符串 xyz，不等 150ms 防抖立即按回车
+    inputEl.value = 'xyz';
+    inputEl.dispatchEvent(new Event('input'));
+
+    // 此时尚未等 150ms，回车不应提交旧的贵州茅台
+    inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+
+    t.deepEqual(addedCodes, [], 'Old candidate was NOT submitted during debounce window');
+    t.equal(inputEl.value, 'xyz', 'Input xyz preserved');
+
+    ctrl.destroy();
+  });
+
+  // B3: destroy 移除 composition 事件监听器
+  QUnit.test('B3: destroy 完整移除 composition 监听器，不泄漏', async (t) => {
+    let addCallCount = 0;
+    const ctrl = createSearchSuggestController({
+      inputElement: inputEl,
+      dropdownElement: dropdownEl,
+      liveRegionElement: liveRegionEl,
+      getWatchList: () => [],
+      onAddCodes: () => { addCallCount++; },
+      fetchFn: mockFetch,
+      timers: createMockTimers()
+    });
+
+    ctrl.bindEvents();
+    ctrl.destroy();
+
+    // 销毁后触发 compositionstart 不应使控制器异常，随后再挂载新控制器也不受旧监听器影响
+    inputEl.dispatchEvent(new CompositionEvent('compositionstart'));
+    inputEl.value = 'sh600519';
+    inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    t.equal(addCallCount, 0, 'Destroyed controller does not handle keydown or leak composition handler');
+  });
+
+  // C5: keyCode 229 与 isComposing 兼容保护
+  QUnit.test('C5: keyCode === 229 或 e.isComposing === true 拦截 Enter 提交', async (t) => {
+    const addedCodes = [];
+    const ctrl = createSearchSuggestController({
+      inputElement: inputEl,
+      dropdownElement: dropdownEl,
+      liveRegionElement: liveRegionEl,
+      getWatchList: () => [],
+      onAddCodes: (codes) => addedCodes.push(...codes),
+      fetchFn: mockFetch,
+      timers: createMockTimers()
+    });
+
+    ctrl.bindEvents();
+    inputEl.value = 'sh600519';
+
+    // 模拟 Android 兼容环境：keyCode 229
+    const event229 = new KeyboardEvent('keydown', { key: 'Enter' });
+    Object.defineProperty(event229, 'keyCode', { value: 229 });
+    inputEl.dispatchEvent(event229);
+    t.equal(addedCodes.length, 0, 'Enter intercepted when keyCode === 229');
+
+    // 模拟 isComposing 属性为 true 的事件
+    const eventComposing = new KeyboardEvent('keydown', { key: 'Enter' });
+    Object.defineProperty(eventComposing, 'isComposing', { value: true });
+    inputEl.dispatchEvent(eventComposing);
+    t.equal(addedCodes.length, 0, 'Enter intercepted when e.isComposing === true');
+
+    ctrl.destroy();
+  });
+
+  // D4: "+ 添加"按钮与 Enter 键行为完全一致
+  QUnit.test('D4: "+ 添加"按钮 (handleSubmit) 与 Enter 键两入口行为一致', async (t) => {
+    const addedCodes = [];
+    const ctrl = createSearchSuggestController({
+      inputElement: inputEl,
+      dropdownElement: dropdownEl,
+      liveRegionElement: liveRegionEl,
+      getWatchList: () => [],
+      onAddCodes: (codes) => addedCodes.push(...codes),
+      fetchFn: mockFetch,
+      timers: createMockTimers()
+    });
+
+    ctrl.bindEvents();
+
+    inputEl.value = 'gzmt';
+    inputEl.dispatchEvent(new Event('input'));
+    await new Promise((r) => setTimeout(r, 200));
+
+    // 模拟点击 "+ 添加" 按钮触发 handleSubmit
+    ctrl.handleSubmit();
+
+    t.deepEqual(addedCodes, ['sh600519'], 'handleSubmit from button added candidate');
+    t.equal(inputEl.value, '', 'Input cleared after button submit');
+
+    ctrl.destroy();
+  });
+
+  // D6: 快速连击幂等性与存储失败降级
+  QUnit.test('D6: 快速双击/连按回车幂等，存储失败保留输入并报错', async (t) => {
+    const addedCodes = [];
+    const messages = [];
+
+    const ctrl = createSearchSuggestController({
+      inputElement: inputEl,
+      dropdownElement: dropdownEl,
+      liveRegionElement: liveRegionEl,
+      getWatchList: () => [],
+      onAddCodes: (codes) => addedCodes.push(...codes),
+      onFlashMessage: (msg) => messages.push(msg),
+      fetchFn: mockFetch,
+      timers: createMockTimers()
+    });
+
+    ctrl.bindEvents();
+
+    inputEl.value = 'gzmt';
+    inputEl.dispatchEvent(new Event('input'));
+    await new Promise((r) => setTimeout(r, 200));
+
+    // 快速双击提交
+    ctrl.handleSubmit();
+    ctrl.handleSubmit();
+
+    t.deepEqual(addedCodes, ['sh600519'], 'Only added once despite double submit');
+
+    // 存储失败降级测试
+    let failAttempts = 0;
+    const failingCtrl = createSearchSuggestController({
+      inputElement: inputEl,
+      dropdownElement: dropdownEl,
+      liveRegionElement: liveRegionEl,
+      getWatchList: () => [],
+      onAddCodes: () => {
+        failAttempts++;
+        throw new Error('QuotaExceededError');
+      },
+      onFlashMessage: (msg) => messages.push(msg),
+      fetchFn: mockFetch,
+      timers: createMockTimers()
+    });
+
+    failingCtrl.bindEvents();
+    inputEl.value = 'sh600000';
+    failingCtrl.handleSubmit();
+
+    t.equal(failAttempts, 1, 'Attempted to add');
+    t.equal(inputEl.value, 'sh600000', 'Input preserved after storage failure');
+    t.true(messages.some((m) => m.includes('添加失败') && m.includes('QuotaExceededError')), 'Error flashed on storage failure');
+
+    failingCtrl.destroy();
+    ctrl.destroy();
+  });
+
+  // D2 & D3: 关键字高亮与 asOfDate 数据日期渲染
+  QUnit.test('D2 & D3: 关键字安全高亮与数据日期 UI 渲染', async (t) => {
+    const ctrl = createSearchSuggestController({
+      inputElement: inputEl,
+      dropdownElement: dropdownEl,
+      liveRegionElement: liveRegionEl,
+      getWatchList: () => [],
+      onAddCodes: () => {},
+      fetchFn: mockFetch,
+      timers: createMockTimers()
+    });
+
+    ctrl.bindEvents();
+    inputEl.value = '600519';
+    inputEl.dispatchEvent(new Event('input'));
+    await new Promise((r) => setTimeout(r, 200));
+
+    // 验证高亮 mark 存在
+    const marks = dropdownEl.querySelectorAll('.suggest-match-highlight');
+    t.true(marks.length > 0, 'Highlight marks rendered safely');
+    t.equal(marks[0].textContent, '600519', 'Mark text matches query');
+
+    // 验证 asOfDate 数据日期元素渲染
+    const asOfEl = dropdownEl.querySelector('.suggest-as-of-date');
+    t.ok(asOfEl, 'asOfDate element is rendered');
+    t.true(asOfEl.textContent.includes('数据日期: 2026-09-11'), 'Shows correct asOfDate');
+
+    ctrl.destroy();
+  });
 });
+

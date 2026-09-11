@@ -2,7 +2,8 @@
 import {
   loadStockDictionary,
   searchStocks,
-  detectQueryMode
+  detectQueryMode,
+  normalizeQuery
 } from '../services/stockSearchService.js';
 import {
   isBatchQuery,
@@ -41,6 +42,7 @@ export function createSearchSuggestController(options = {}) {
   let statusNotice = null;
   let spotSnapshot = null;
   let pendingPointerCandidate = null;
+  let blurTimer = null;
 
   async function initDictionary() {
     if (dictionary || dictionaryLoading) return;
@@ -84,6 +86,30 @@ export function createSearchSuggestController(options = {}) {
   function announce(text) {
     if (!liveRegionElement || !text) return;
     liveRegionElement.textContent = text;
+  }
+
+  function renderHighlightedText(container, text, query) {
+    if (!text) return;
+    const q = (query || '').trim();
+    if (!q) {
+      container.textContent = text;
+      return;
+    }
+    const idx = text.toLowerCase().indexOf(q.toLowerCase());
+    if (idx === -1) {
+      container.textContent = text;
+      return;
+    }
+    container.innerHTML = '';
+    const before = text.slice(0, idx);
+    const matched = text.slice(idx, idx + q.length);
+    const after = text.slice(idx + q.length);
+    if (before) container.appendChild(document.createTextNode(before));
+    const mark = document.createElement('mark');
+    mark.className = 'suggest-match-highlight';
+    mark.textContent = matched;
+    container.appendChild(mark);
+    if (after) container.appendChild(document.createTextNode(after));
   }
 
   function renderDropdown() {
@@ -155,13 +181,13 @@ export function createSearchSuggestController(options = {}) {
       // 规范代码
       const codeSpan = document.createElement('span');
       codeSpan.className = 'suggest-code';
-      codeSpan.textContent = cand.displayCode;
+      renderHighlightedText(codeSpan, cand.displayCode, currentQuery);
       itemEl.appendChild(codeSpan);
 
       // 名称
       const nameSpan = document.createElement('span');
       nameSpan.className = 'suggest-name';
-      nameSpan.textContent = cand.name;
+      renderHighlightedText(nameSpan, cand.name, currentQuery);
       itemEl.appendChild(nameSpan);
 
       // 板块/市场/期货标签
@@ -225,6 +251,13 @@ export function createSearchSuggestController(options = {}) {
       noticeEl.className = 'suggest-status-notice';
       noticeEl.textContent = statusNotice;
       dropdownElement.appendChild(noticeEl);
+    }
+
+    if (dictionary?.meta?.asOfDate) {
+      const asOfEl = document.createElement('div');
+      asOfEl.className = 'suggest-as-of-date';
+      asOfEl.textContent = `数据日期: ${dictionary.meta.asOfDate}`;
+      dropdownElement.appendChild(asOfEl);
     }
 
     if (inputElement) {
@@ -303,16 +336,19 @@ export function createSearchSuggestController(options = {}) {
     if (!inputElement) return;
     const val = inputElement.value;
 
-    // 输入改变立即取消旧查询的提交资格和活动项
+    // 输入改变立即取消旧查询的提交资格和活动项 (§3.1)
     ++queryId;
     activeIndex = null;
     pendingPointerCandidate = null;
+    candidates = [];
+    defaultSelectedIndex = -1;
 
     if (isBatchQuery(val)) {
       if (debounceTimer) timers.clearTimeout(debounceTimer);
       debounceTimer = null;
       isOpen = false;
       candidates = [];
+      defaultSelectedIndex = -1;
       renderDropdown();
       return;
     }
@@ -323,6 +359,7 @@ export function createSearchSuggestController(options = {}) {
       debounceTimer = null;
       isOpen = false;
       candidates = [];
+      defaultSelectedIndex = -1;
       renderDropdown();
       return;
     }
@@ -335,6 +372,9 @@ export function createSearchSuggestController(options = {}) {
 
   function executeAddCandidate(cand) {
     if (!cand || cand.alreadyAdded) return;
+    if (blurTimer) timers.clearTimeout(blurTimer);
+    blurTimer = null;
+    const prevVal = inputElement ? inputElement.value : '';
     isOpen = false;
     candidates = [];
     activeIndex = null;
@@ -345,7 +385,14 @@ export function createSearchSuggestController(options = {}) {
       inputElement.focus();
     }
     renderDropdown();
-    onAddCodes([cand.code]);
+    try {
+      onAddCodes([cand.code]);
+    } catch (err) {
+      if (inputElement) {
+        inputElement.value = prevVal;
+      }
+      onFlashMessage(`添加失败: ${err.message || err}`, 'error');
+    }
   }
 
   function executeBatchAdd(inputVal) {
@@ -373,12 +420,21 @@ export function createSearchSuggestController(options = {}) {
     isOpen = false;
     candidates = [];
     activeIndex = null;
+    defaultSelectedIndex = -1;
+    pendingPointerCandidate = null;
     if (inputElement) {
       inputElement.value = '';
       inputElement.focus();
     }
     renderDropdown();
-    onAddCodes(details.newCodes, { message: feedback });
+    try {
+      onAddCodes(details.newCodes, { message: feedback });
+    } catch (err) {
+      if (inputElement) {
+        inputElement.value = inputVal;
+      }
+      onFlashMessage(`批量添加失败: ${err.message || err}`, 'error');
+    }
   }
 
   /**
@@ -429,13 +485,25 @@ export function createSearchSuggestController(options = {}) {
       }
       isOpen = false;
       candidates = [];
+      defaultSelectedIndex = -1;
+      activeIndex = null;
+      pendingPointerCandidate = null;
       renderDropdown();
-      onAddCodes([directCode]);
+      try {
+        onAddCodes([directCode]);
+      } catch (err) {
+        if (inputElement) {
+          inputElement.value = trimmed;
+        }
+        onFlashMessage(`添加失败: ${err.message || err}`, 'error');
+      }
       return;
     }
 
     // 5. 下拉打开、查询与输入一致、有默认可添加候选
-    if (isOpen && defaultSelectedIndex >= 0 && candidates[defaultSelectedIndex]) {
+    const normInput = normalizeQuery(inputVal);
+    const normCurrent = normalizeQuery(currentQuery);
+    if (isOpen && normInput === normCurrent && defaultSelectedIndex >= 0 && candidates[defaultSelectedIndex]) {
       const cand = candidates[defaultSelectedIndex];
       if (!cand.alreadyAdded) {
         executeAddCandidate(cand);
@@ -458,7 +526,7 @@ export function createSearchSuggestController(options = {}) {
   }
 
   function handleKeyDown(e) {
-    if (isComposing) {
+    if (isComposing || e.isComposing === true || e.keyCode === 229) {
       if (e.key === 'Enter') {
         // IME 组合中回车仅确认输入法
         return;
@@ -542,8 +610,10 @@ export function createSearchSuggestController(options = {}) {
     if (e.relatedTarget && e.relatedTarget.closest('.add-row')) {
       return;
     }
+    if (blurTimer) timers.clearTimeout(blurTimer);
     // 延迟关闭以便点击事件触发
-    timers.setTimeout(() => {
+    blurTimer = timers.setTimeout(() => {
+      blurTimer = null;
       if (isOpen) {
         isOpen = false;
         activeIndex = null;
@@ -552,6 +622,14 @@ export function createSearchSuggestController(options = {}) {
     }, 150);
   }
 
+  const handleCompositionStart = () => {
+    isComposing = true;
+  };
+  const handleCompositionEnd = () => {
+    isComposing = false;
+    handleInputChange();
+  };
+
   function bindEvents() {
     if (!inputElement) return;
 
@@ -559,26 +637,24 @@ export function createSearchSuggestController(options = {}) {
     inputElement.addEventListener('keydown', handleKeyDown);
     inputElement.addEventListener('focus', handleFocus);
     inputElement.addEventListener('blur', handleBlur);
-
-    inputElement.addEventListener('compositionstart', () => {
-      isComposing = true;
-    });
-    inputElement.addEventListener('compositionend', () => {
-      isComposing = false;
-      handleInputChange();
-    });
+    inputElement.addEventListener('compositionstart', handleCompositionStart);
+    inputElement.addEventListener('compositionend', handleCompositionEnd);
 
     startSpotRefreshLoop();
   }
 
   function destroy() {
     if (debounceTimer) timers.clearTimeout(debounceTimer);
+    if (blurTimer) timers.clearTimeout(blurTimer);
+    blurTimer = null;
     stopSpotRefreshLoop();
     if (inputElement) {
       inputElement.removeEventListener('input', handleInputChange);
       inputElement.removeEventListener('keydown', handleKeyDown);
       inputElement.removeEventListener('focus', handleFocus);
       inputElement.removeEventListener('blur', handleBlur);
+      inputElement.removeEventListener('compositionstart', handleCompositionStart);
+      inputElement.removeEventListener('compositionend', handleCompositionEnd);
     }
   }
 

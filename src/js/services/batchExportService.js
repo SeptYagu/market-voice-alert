@@ -23,7 +23,7 @@ export function isBatchQuery(raw) {
   return false;
 }
 
-export function parseBatchInput(input, { allowWhitespace = false } = {}) {
+export function parseBatchInput(input, { allowWhitespace = true } = {}) {
   if (!input || typeof input !== 'string') return [];
   const splitter = allowWhitespace ? /[,，\s]+/ : /[,， ]+/;
   const tokens = input.split(splitter);

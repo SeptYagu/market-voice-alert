@@ -72,8 +72,11 @@ export function inferBoard(code) {
 
 export function parseBaseName(displayName) {
   if (!displayName) return '';
-  // 去除 ST, *ST, XD, XR, DR, N, C 等前缀
-  const cleaned = displayName.replace(/^(\*ST|ST|XD|XR|DR|N|C)/i, '').trim();
+  // 去除 ST, *ST, XD, XR, DR, N, C 等前缀，其中 N/C 仅在后续为非 ASCII (中文) 时去除
+  const cleaned = displayName
+    .replace(/^(\*ST|ST|XD|XR|DR)(?=\s*[^\x20-\x7e])/i, '')
+    .replace(/^([NC])(?=\s*[^\x20-\x7e])/, '')
+    .trim();
   return cleaned || displayName;
 }
 
