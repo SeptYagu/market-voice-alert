@@ -1,4 +1,5 @@
 import { createSearchSuggestController } from '../src/js/controllers/searchSuggestController.js';
+import { resetDictionaryCache } from '../src/js/services/stockSearchService.js';
 
 const KeyboardEvent = globalThis.KeyboardEvent || (typeof window !== 'undefined' && window.KeyboardEvent);
 const CompositionEvent = globalThis.CompositionEvent || (typeof window !== 'undefined' && window.CompositionEvent);
@@ -53,6 +54,7 @@ QUnit.module('搜索联想控制器测试 (S10–S13 交互与生命周期)', (h
   };
 
   hooks.beforeEach(() => {
+    resetDictionaryCache();
     container = document.createElement('div');
     document.body.appendChild(container);
 
@@ -71,6 +73,7 @@ QUnit.module('搜索联想控制器测试 (S10–S13 交互与生命周期)', (h
   });
 
   hooks.afterEach(() => {
+    resetDictionaryCache();
     if (container && container.parentNode) {
       container.parentNode.removeChild(container);
     }
@@ -521,7 +524,7 @@ QUnit.module('搜索联想控制器测试 (S10–S13 交互与生命周期)', (h
 
   // R5: 字典加载与搜索/渲染异常解耦，重试正常恢复
   QUnit.test('R5: 搜索/渲染异常不污染 dictionaryError，重试可重置状态', async (t) => {
-    let fetchCalled = 0;
+    let dictFetchCalled = 0;
     const ctrl = createSearchSuggestController({
       inputElement: inputEl,
       dropdownElement: dropdownEl,
@@ -529,9 +532,9 @@ QUnit.module('搜索联想控制器测试 (S10–S13 交互与生命周期)', (h
       getWatchList: () => [],
       onAddCodes: () => {},
       fetchFn: async (url) => {
-        fetchCalled++;
         if (url.includes('stock-suggest-dictionary')) {
-          if (fetchCalled === 1) {
+          dictFetchCalled++;
+          if (dictFetchCalled === 1) {
             return { ok: false, status: 500 };
           }
           return { ok: true, json: async () => mockDictionaryData };
@@ -554,7 +557,7 @@ QUnit.module('搜索联想控制器测试 (S10–S13 交互与生命周期)', (h
     t.ok(retryBtn, 'Retry button rendered');
 
     // 点击重试
-    retryBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    retryBtn.click();
     await new Promise((r) => setTimeout(r, 250));
 
     state = ctrl.getState();

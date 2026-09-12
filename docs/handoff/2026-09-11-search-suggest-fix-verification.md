@@ -118,3 +118,36 @@ cd <old-tree> && node node_modules/qunit/bin/qunit.js --require ./tests/_jsdom-s
 | 3 | **R2 / R3** | 控制器 `handleKeyDown` 里加 `if (e.defaultPrevented) return;`，或在工具栏 `onAdd` 里判断事件来源，保证一次按键只提交一次 |
 | 4 | **R5** | 把 `initDictionary` 的 `try` 收窄到 `loadStockDictionary` 一行；重试时清 `dictionaryError`；渲染/搜索异常单独处理 |
 | 5 | **D5 + R6** | 补 S16 的 E2E（三主题切换后下拉配色、窄屏布局、读屏 role 流程）；高亮改用已有的 `--accent-color`（顺带解决未定义变量与对比度） |
+
+---
+
+## 八、闭环修复与最终核实（针对 R1–R6 及 D5）
+
+- **实施提交**：`dd03f7d` fix(search-suggest): 闭环修复联想搜索审查缺陷 (R1-R6) 并补齐 S16 E2E 测试 (D5)
+- **核实日期**：2026-09-12
+
+### 1. 缺陷逐项闭环验证
+
+| 项 | 处置动作 | 验证手段 | 最终结论 |
+|----|----------|----------|----------|
+| **R1** | `handleInputChange` 输入变化时立即调用 `isOpen = false; candidates = []; renderDropdown();`，并在点击事件与添加执行逻辑中校验候选有效性 | repro 脚本 R1 项 + QUnit R1 用例 | ✅ **已闭环**：防抖窗口内输入变更后旧下拉 DOM 即刻清空，指针无法再点击过期标的 |
+| **R2 & R3** | 移除 `toolbarView.js` 中 `#code-input` 上的重复 keydown 监听；在控制器 `handleKeyDown` 中加入 `if (e.defaultPrevented) return;` 并在 Enter 处理分支调用 `e.stopImmediatePropagation()` | repro 脚本 R2 & R3 项 + QUnit D4 用例 | ✅ **已闭环**：单次回车仅触发一次提示；存储失败恢复输入后不会产生二次投递 |
+| **R4** | `storage.js` 中 `setWatchList`/`setSubscribedCodes` 透传布尔值，`addToWatchList` 在写入失败时明确抛出异常 | repro 脚本 R4 项 + QUnit D6 用例（改用真实抛错 storageAdapter） | ✅ **已闭环**：真实存储配额超限时控制器能可靠捕获异常并保留用户输入 (S13) |
+| **R5** | `initDictionary` 将 `try/catch` 范围严格收窄为词典加载逻辑；重试按钮重置 `dictionary`、`dictionaryError` 与缓存 | repro 脚本 R5 项 + QUnit R5 用例 | ✅ **已闭环**：搜索与渲染异常不再污染词典状态，重试按钮可正常清错恢复 |
+| **R6** | `src/style.css` 中 `.suggest-match-highlight` 颜色统一改为 `var(--accent-color)`，移除未定义的 `--primary` | repro 脚本 R6 项 + 三套主题静态色值对比度核查 | ✅ **已闭环**：暖米、浅色、深色三套主题下文本对比度均稳定高于 WCAG AA 4.5:1 |
+| **D5** | 在 `e2e/search-suggest.spec.js` 中新增 3 项 Playwright 自动化测试（三套主题配色、375px 移动窄屏防溢出、ARIA Combobox/Live Region 读屏全流程） | Playwright E2E（用例数由 7 项增至 10 项） | ✅ **已闭环**：S16 遗漏需求已实现端到端自动化测试覆盖 |
+
+### 2. 测试夹具与测试套件自愈
+
+- **修复 R5 单测挂起与失败缺陷**：在 `tests/searchSuggestController.test.js` 中，修复了 mock `fetchFn` 未针对词典 URL 隔离计数导致首次网络失败未被触发的问题；在 `hooks.beforeEach` 与 `hooks.afterEach` 中增加 `resetDictionaryCache()`，消除跨用例缓存污染；改用 DOM 原生 `click()` 触发重试按钮，消除未定义 `MouseEvent` 导致的异常与未清理定时器造成的 Node 进程挂起。
+
+### 3. 最终门禁实测结果
+
+| 门禁项 | 命令 | 结果 | 状态 |
+|--------|------|------|------|
+| 代码规范 | `npm run lint` | 0 错误 0 警告 | ✅ 通过 |
+| 单元测试 | `npm test` | **796/796 passed**, 0 fail | ✅ 通过 |
+| 缺陷复现回归 | `node docs/handoff/2026-09-11-search-suggest-fix-repro.mjs --expect=fixed` | **16 项 CLOSURE 全过**, 与期望不符 0 项 | ✅ 通过 |
+| 端到端测试 | `npx playwright test e2e/search-suggest.spec.js` | **10/10 passed** (15.4s) | ✅ 通过 |
+| 生产打包 | `npm run build` | built in 4.37s, 52 modules | ✅ 通过 |
+
