@@ -1,5 +1,20 @@
 # STATUS.md - 项目状态
 
+## 2026-09-12 全项目代码独立审查与演进路线交付
+
+本轮审查在完全隔离历史代码审查/修复 handoff 文档的前提下，针对全量前端（`src/`）、缓存代理服务端（`server/`）、构建离线字典脚本（`scripts/`）、需求规范（`SPEC.md`）及自动化测试套件（`test/` & `e2e/`）开展了全面的独立工程与架构审查。报告详见 [`docs/handoff/2026-09-12-independent-full-codebase-review-handoff.md`](docs/handoff/2026-09-12-independent-full-codebase-review-handoff.md)。
+
+- **审查结论摘要**：
+  1. **需求与功能**：主干自选监控、涨停看板、10日强势股、分时/K线双图表联动、语音告警、期货合约扩展与智能联想搜索均高质量闭环。细节上识别出自选股导出当前仅绑定了 CSV 路径，未提供 `SPEC.md` §3.2 规定的 6 位纯数字无前缀 `txt` 导出入口（底层 `buildExportText` 存在但未在 UI 暴露）。
+  2. **Bug 与逻辑风险**：发现 `server/index.js` 静态资源服务缺失 `.mjs`、`.txt`、`.wasm` MIME 类型映射，可能阻断模块加载或文本预览；`storage.js` LRU 淘汰在二次满配额时存在静默丢失异常隐患；`limitUpController.js` 的 `patchLimitUpQuoteCells()` 恒退化为全表 Reconcile 重绘，使 `limitUpRowsMatchDom` 纯函数在生产链路中沦为死代码；`chartRowController.js` 在 SWR 异步回填时若未锁定用户视口范围会强制 `fitContent()` 导致缩放跳变。
+  3. **效率、DRY 与优雅度**：指出 `parser.js`、`api.js`、`server/intradayService.js` 中存在三重重复的 VWAP 分时累积均价算法；巨型文件 `app.js`（1643 行）事件胶水过重，需拆离 `settingsController`；监控与看板表格行未采用事件委托（Event Delegation）。
+  4. **演进方案制定**：规划了 P0（MIME 补充、LRU 逐级降级、TXT 导出入口）、P1（`quoteMath.js` 算法共享、`app.js` 瘦身、图表视口防跳变）、P2（事件委托、Patch 逻辑理顺）三阶段实施路线。
+- **自动化门禁基线全部验证**：
+  - `npm run lint`：0 错误 0 警告；
+  - `npm test`（QUnit）：**796/796** 全部通过；
+  - `npm run e2e`（Playwright）：**74/74** 真实浏览器测试全部通过。
+
+
 ## 2026-09-11 联想搜索审查缺陷闭环（R1–R6 及遗漏需求 D5 完整修复）
 
 对照 `docs/handoff/2026-09-11-search-suggest-fix-verification.md` 提出的 5 项遗留缺陷 (R1–R5)、样式/对比度缺陷 (R6) 及遗漏需求 (D5 - S16)，完成全部修复与全量门禁验证：
