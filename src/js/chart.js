@@ -451,6 +451,29 @@ export function createKlineChart(container, opts = {}) {
     if (detailLegend) detailLegend.root.remove();
   }
 
+  function subscribeVisibleRange(handler) {
+    if (typeof handler !== 'function') return () => {};
+    const listener = (newRange) => {
+      try {
+        handler(newRange || getVisibleRange());
+      } catch {
+        /* ignore */
+      }
+    };
+    try {
+      chart.timeScale().subscribeVisibleTimeRangeChange(listener);
+    } catch {
+      /* ignore */
+    }
+    return () => {
+      try {
+        chart.timeScale().unsubscribeVisibleTimeRangeChange(listener);
+      } catch {
+        /* ignore */
+      }
+    };
+  }
+
   return {
     setKline,
     setVolume,
@@ -467,6 +490,7 @@ export function createKlineChart(container, opts = {}) {
     fitContent,
     getVisibleRange,
     setVisibleRange,
+    subscribeVisibleRange,
     destroy
   };
 }

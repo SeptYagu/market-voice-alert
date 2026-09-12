@@ -21,6 +21,7 @@ import { klineCacheGet, klineCacheSet } from './storage.js';
 import { chartSecondsToTime, chartTimeToDate } from './time.js';
 import { isFutureCode } from './futures/instrument.js';
 import { fetchFuturesQuotes, fetchFuturesIntraday, fetchFuturesKline } from './futures/futuresApi.js';
+import { computeVwap } from './services/quoteMath.js';
 
 // `source`: indicates original market data provider (e.g. 'tencent', 'sina', 'aktools').
 // `cacheSource`: indicates cache tier / resolution layer (e.g. 'shared-cache', 'memory', 'upstream').
@@ -295,17 +296,7 @@ function _decorateKlineIntraday(data, opts = {}) {
 
     let avgPrice = Number(it.avgPrice);
     if (!Number.isFinite(avgPrice) || avgPrice <= 0) {
-      if (cumVolume > 0 && cumAmount > 0) {
-        const rawRatio = cumAmount / cumVolume;
-        const closePrice = Number(it.close);
-        if (Number.isFinite(closePrice) && closePrice > 0) {
-          if (rawRatio >= closePrice * 0.1 && rawRatio <= closePrice * 10) {
-            avgPrice = Math.round(rawRatio * 1000) / 1000;
-          } else if ((rawRatio / 100) >= closePrice * 0.1 && (rawRatio / 100) <= closePrice * 10) {
-            avgPrice = Math.round((rawRatio / 100) * 1000) / 1000;
-          }
-        }
-      }
+      avgPrice = computeVwap(cumAmount, cumVolume, it.close);
     }
 
     return {

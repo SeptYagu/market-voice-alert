@@ -892,14 +892,19 @@ async function handleDeleteSelected() {
   renderData();
 }
 
-function handleExport(scope) {
+export function handleExport(scope, format = 'csv') {
   const codes = scope === 'selected' ? [...state.selected] : state.watchList;
   if (!codes.length) {
     flashError(scope === 'selected' ? '请先选中标的' : '列表为空');
     return;
   }
-  const csv = buildExportCsv(codes, state.quotes);
-  downloadText(csv, makeExportFilename('stocks', new Date(), 'csv'));
+  if (format === 'txt') {
+    const text = buildExportText(codes);
+    downloadText(text, makeExportFilename('stocks', new Date(), 'txt'));
+  } else {
+    const csv = buildExportCsv(codes, state.quotes);
+    downloadText(csv, makeExportFilename('stocks', new Date(), 'csv'));
+  }
 }
 
 function handleRefreshNow() {

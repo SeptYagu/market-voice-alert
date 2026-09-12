@@ -21,9 +21,12 @@ import { PRODUCT_MAP } from './futures/contractCatalog.js';
 import { DEFAULT_PORT, errorEnvelope, jsonResponse, okEnvelope } from './utils.js';
 
 const distRoot = fileURLToPath(new URL('../dist/', import.meta.url));
-const MIME_TYPES = Object.freeze({
+export const MIME_TYPES = Object.freeze({
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.wasm': 'application/wasm',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.map': 'application/json; charset=utf-8',

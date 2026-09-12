@@ -7,7 +7,7 @@ import {
   readCache,
   writeCache
 } from '../server/cacheStore.js';
-import { createAppServer } from '../server/index.js';
+import { createAppServer, MIME_TYPES } from '../server/index.js';
 import { getKlineTtlMs, hasMomentumKlineCoverage, _internal as klineInternal } from '../server/klineService.js';
 import {
   computeTenDayMomentum,
@@ -215,6 +215,14 @@ QUnit.module('server cache and production routing', (hooks) => {
 
     // Clean up
     klineInternal.resetEastmoneyBreaker();
+  });
+
+  QUnit.test('MIME_TYPES includes .mjs, .txt, and .wasm mappings for production static serving', (t) => {
+    t.equal(MIME_TYPES['.mjs'], 'text/javascript; charset=utf-8');
+    t.equal(MIME_TYPES['.txt'], 'text/plain; charset=utf-8');
+    t.equal(MIME_TYPES['.wasm'], 'application/wasm');
+    t.equal(MIME_TYPES['.js'], 'text/javascript; charset=utf-8');
+    t.equal(MIME_TYPES['.html'], 'text/html; charset=utf-8');
   });
 });
 

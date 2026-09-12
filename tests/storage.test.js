@@ -450,4 +450,52 @@ QUnit.module('storage.klineCache', (hooks) => {
     t.strictEqual(klineCacheHas('stock4', '1d'), true, 'stock4 preserved');
     t.strictEqual(klineCacheHas('stock5', '1d'), true, 'new stock5 saved on retry');
   });
+
+  QUnit.test('klineCacheSet evicts down to 3 entries when 50% eviction is not enough', (t) => {
+    for (let i = 1; i <= 6; i++) {
+      klineCacheSet(`stock${i}`, '1d', makeKline(`stock${i}`, '1d', 10));
+    }
+
+    const raw = JSON.parse(getRaw('kline-cache-v1'));
+    for (let i = 1; i <= 6; i++) {
+      raw.entries[`stock${i}|1d`].lastAccessedAt = i * 1000;
+    }
+    setRaw('kline-cache-v1', JSON.stringify(raw));
+
+    let attempts = 0;
+    const origSetItem = mock.setItem;
+    mock.setItem = (k, v) => {
+      attempts++;
+      // Fail on normal write and 50% write, succeed on 3-item write
+      if (attempts <= 2) {
+        throw new Error('Quota exceeded mock');
+      }
+      origSetItem(k, v);
+    };
+
+    klineCacheSet('stock7', '1d', makeKline('stock7', '1d', 10));
+
+    // Remaining should be the 3 newest entries (stock5, stock6, stock7)
+    t.strictEqual(klineCacheHas('stock1', '1d'), false, 'stock1 evicted');
+    t.strictEqual(klineCacheHas('stock2', '1d'), false, 'stock2 evicted');
+    t.strictEqual(klineCacheHas('stock3', '1d'), false, 'stock3 evicted');
+    t.strictEqual(klineCacheHas('stock4', '1d'), false, 'stock4 evicted');
+    t.strictEqual(klineCacheHas('stock5', '1d'), true, 'stock5 preserved');
+    t.strictEqual(klineCacheHas('stock6', '1d'), true, 'stock6 preserved');
+    t.strictEqual(klineCacheHas('stock7', '1d'), true, 'stock7 preserved');
+  });
+
+  QUnit.test('klineCacheSet falls back to in-memory cache when localStorage always fails', (t) => {
+    mock.setItem = () => {
+      throw new Error('Disk full permanently');
+    };
+
+    const data = makeKline('stock_mem', '1d', 15);
+    klineCacheSet('stock_mem', '1d', data);
+
+    t.ok(klineCacheHas('stock_mem', '1d'), 'in-memory cache has entry despite disk failure');
+    const cached = klineCacheGet('stock_mem', '1d');
+    t.ok(cached, 'retrieved from in-memory fallback');
+    t.equal(cached.items.length, 15, 'correct items length');
+  });
 });

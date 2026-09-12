@@ -97,8 +97,26 @@ export function renderToolbarView(options = {}) {
         class: 'btn-danger',
         on: { click: () => handlers.onDeleteSelected && handlers.onDeleteSelected() }
       }, '删除选中'),
-      el('button', { on: { click: () => handlers.onExport && handlers.onExport('selected') } }, '导出选中'),
-      el('button', { on: { click: () => handlers.onExport && handlers.onExport('all') } }, '导出全部')
+      el('button', {
+        id: 'btn-export-selected',
+        title: '导出选中股票/期货为 CSV 格式（含行情）',
+        on: { click: () => handlers.onExport && handlers.onExport('selected', 'csv') }
+      }, '导出选中 (CSV)'),
+      el('button', {
+        id: 'btn-export-selected-txt',
+        title: '导出选中股票代码为 TXT 格式（每行纯代码）',
+        on: { click: () => handlers.onExport && handlers.onExport('selected', 'txt') }
+      }, '导出选中 (TXT)'),
+      el('button', {
+        id: 'btn-export-all',
+        title: '导出全部自选为 CSV 格式（含行情）',
+        on: { click: () => handlers.onExport && handlers.onExport('all', 'csv') }
+      }, '导出全部 (CSV)'),
+      el('button', {
+        id: 'btn-export-all-txt',
+        title: '导出全部自选代码为 TXT 格式（每行纯代码）',
+        on: { click: () => handlers.onExport && handlers.onExport('all', 'txt') }
+      }, '导出全部 (TXT)')
     )
   );
 }

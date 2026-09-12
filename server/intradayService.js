@@ -1,5 +1,6 @@
 import { filterKlineItemsByDate } from '../src/js/kline.js';
 import { chartSecondsToTime, chartTimeToDate } from '../src/js/time.js';
+import { computeVwap } from '../src/js/services/quoteMath.js';
 import { getOrRefresh, readCache } from './cacheStore.js';
 import { getCachedKline } from './klineService.js';
 import {
@@ -70,17 +71,7 @@ function decorateKlineIntraday(data, opts = {}) {
 
     let avgPrice = Number(it.avgPrice);
     if (!Number.isFinite(avgPrice) || avgPrice <= 0) {
-      if (cumVolume > 0 && cumAmount > 0) {
-        const rawRatio = cumAmount / cumVolume;
-        const closePrice = Number(it.close);
-        if (Number.isFinite(closePrice) && closePrice > 0) {
-          if (rawRatio >= closePrice * 0.1 && rawRatio <= closePrice * 10) {
-            avgPrice = Math.round(rawRatio * 1000) / 1000;
-          } else if ((rawRatio / 100) >= closePrice * 0.1 && (rawRatio / 100) <= closePrice * 10) {
-            avgPrice = Math.round((rawRatio / 100) * 1000) / 1000;
-          }
-        }
-      }
+      avgPrice = computeVwap(cumAmount, cumVolume, it.close);
     }
 
     return {

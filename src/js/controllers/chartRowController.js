@@ -81,6 +81,7 @@ export function createChartState(period = DEFAULT_PERIOD) {
 export function applyKlineDataToChart(ctl, inst, data) {
   if (!ctl || !inst || !data) return;
   if (typeof ctl.setPeriod === 'function') ctl.setPeriod(inst.period);
+  const activeRange = inst._visibleRange || (typeof ctl.getVisibleRange === 'function' ? ctl.getVisibleRange() : null);
   const candles = formatCandleColors(data.items, data.code, data.name);
   ctl.setKline(candles);
   ctl.setVolume(formatVolumeBars(data.items));
@@ -89,6 +90,9 @@ export function applyKlineDataToChart(ctl, inst, data) {
     const n = MA_PERIODS[i];
     const series = calcMA(data.items, n);
     if (series.length) ctl.setMA(n, series, MA_COLORS[i] || '#888');
+  }
+  if (activeRange) {
+    inst._visibleRange = activeRange;
   }
   restoreRangeOrFit(ctl, inst._visibleRange);
 }
@@ -245,6 +249,14 @@ export class ChartRowManager {
       if (this.hasIntraday && typeof ctl.subscribeBarClick === 'function') {
         ctl.subscribeBarClick((time) => {
           this.handleKlineBarClick(code, time);
+        });
+      }
+      if (typeof ctl.subscribeVisibleRange === 'function') {
+        ctl.subscribeVisibleRange((range) => {
+          const currentInst = this.getInst(code);
+          if (currentInst && range) {
+            currentInst._visibleRange = range;
+          }
         });
       }
       this.klineCtlMap.set(code, ctl);

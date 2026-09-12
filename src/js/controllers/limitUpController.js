@@ -14,7 +14,7 @@ import {
   resolveLatestTradingDate
 } from '../tradeCalendar.js';
 import { getBeijingDate } from '../time.js';
-import { formatCacheAge } from '../format.js';
+import { formatCacheAge, formatNumber, formatPercent, formatAmount } from '../format.js';
 import { fetchQuotes } from '../api.js';
 import {
   createChartState
@@ -177,7 +177,38 @@ export function createLimitUpController(appContext) {
     const groupsSection = limitUpRootEl.querySelector('#lu-groups');
     if (!groupsSection) return false;
 
-    rerenderLimitUpPage();
+    const lu = getLimitUpState();
+    if (!limitUpRowsMatchDom(groupsSection, lu.groups, lu.items, lu.pinnedCodes, lu.pinnedSort)) {
+      return false;
+    }
+
+    const itemMap = new Map((lu.items || []).map((it) => [it.code, it]));
+    const rows = groupsSection.querySelectorAll('tr[data-code]');
+    for (const row of rows) {
+      const code = row.getAttribute('data-code');
+      const item = itemMap.get(code);
+      if (!item) continue;
+
+      const priceEl = row.querySelector('[data-field="price"]');
+      if (priceEl) priceEl.textContent = formatNumber(item.price);
+
+      const pctEl = row.querySelector('[data-field="percent"]');
+      if (pctEl) {
+        pctEl.textContent = formatPercent(item.changePercent);
+        const direction = item.changePercent > 0 ? 'up' : item.changePercent < 0 ? 'down' : 'flat';
+        pctEl.className = `lu-pct num ${direction}`;
+      }
+
+      const amountEl = row.querySelector('[data-field="amount"]');
+      if (amountEl) amountEl.textContent = formatAmount(item.amount);
+
+      const reasonEl = row.querySelector('[data-field="reason"]');
+      if (reasonEl) {
+        reasonEl.textContent = item.reason || '—';
+        reasonEl.title = item.interpretation || '无龙虎榜信息';
+      }
+    }
+
     updateLimitUpStatusBar();
     return true;
   }

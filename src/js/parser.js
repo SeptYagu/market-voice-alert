@@ -4,6 +4,7 @@ import {
   parseTencentMinuteToChartSeconds,
   chartTimeToDate
 } from './time.js';
+import { computeVwap } from './services/quoteMath.js';
 
 const VALID_PREFIXES = new Set(['sh', 'sz', 'bj']);
 
@@ -312,11 +313,7 @@ export function parseTencentMinute(json, opts = {}) {
       amount = Math.max(0, cumAmount - prevCumAmount);
       prevCumAmount = cumAmount;
     }
-    let avgPrice = 0;
-    if (Number.isFinite(cumAmount) && Number.isFinite(cumVolume) && cumVolume > 0) {
-      const raw = cumAmount / (cumVolume * 100);
-      if (raw >= price * 0.1 && raw <= price * 10) avgPrice = Math.round(raw * 1000) / 1000;
-    }
+    const avgPrice = computeVwap(cumAmount, cumVolume, price, true);
     const percent = _calcPercent(price, prevClose);
     items.push({
       time,

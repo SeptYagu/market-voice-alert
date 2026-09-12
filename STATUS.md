@@ -1,5 +1,20 @@
 # STATUS.md - 项目状态
 
+## 2026-09-12 审查缺陷修复闭环（P0–P2 缺陷全面修复与 DRY 模块化落地）
+
+对照 `docs/handoff/2026-09-12-independent-full-codebase-review-handoff.md` 独立审查报告与演进路线图，落地全部 P0 关键缺陷、规范对齐、P1 DRY 抽离及 P2 局部 Patch 闭环：
+1. **BUG-01 闭环（静态资源 MIME 类型补齐）**：在 `server/index.js` 的 `MIME_TYPES` 表中追加 `.mjs`（`text/javascript`）、`.txt`（`text/plain`）与 `.wasm`（`application/wasm`），彻底杜绝现代浏览器严格 ESM MIME 校验阻断及文本强制下载。
+2. **BUG-02 闭环（本地存储 LRU 淘汰容错与逐级降级）**：强化 `storage.js` 的 `klineCacheSet` 容错处理：首次 `QuotaExceededError` 淘汰 50% 历史条目重试；若仍超限，循环淘汰至保留最后 3 个最新条目；若依然超限，清理持久化旧键尝试单条保存；若彻底失败，自动降级至会话级内存 `Map` 供透明读写并输出告警，杜绝静默吞掉与运行崩溃。
+3. **P0-3 规范对齐（自选股 TXT 纯代码导出支持）**：在 `toolbarView.js` 工具栏新增 `导出选中 (TXT)` 与 `导出全部 (TXT)` 入口；`app.js` 的 `handleExport(scope, format)` 对接 `buildExportText`，生成符合 `SPEC.md` §3.2 标准的 `stocks-YYYYMMDD.txt` 文件（每行纯数字代码）。
+4. **OPT-02 & DRY 闭环（分时 VWAP 均价算法统一）**：新建 `src/js/services/quoteMath.js` 纯函数服务 `computeVwap`，重构 `src/js/api.js`、`src/js/parser.js` 及 `server/intradayService.js`，消除前端与服务端的算法三重重复与单位换算差异。
+5. **BUG-04 闭环（SWR 回填图表视口缩放防跳变）**：在 `chart.js` 中新增 `subscribeVisibleRange`；`chartRowController.js` 挂载时监听图表视口变动，且在 `applyKlineDataToChart` 重置烛线系列前主动捕获实时活跃视口范围并在重绘后无缝还原，消除 SWR 刷新强制 `fitContent()` 打断用户缩放的抖动问题。
+6. **BUG-03 闭环（涨停看板纯 DOM 局部 Patch 真实接入）**：在 `limitUpController.js` 的 `patchLimitUpQuoteCells()` 中正式接入 `limitUpRowsMatchDom` 校验。结构与分组未发生变动时，就地更新 `.num` 现价、涨跌幅、成交额及上榜原因单元格；结构发生变化时才回退至完整重绘，消灭历史胶水死代码并降低 GC 抖动。
+- 门禁复跑：
+  - `npm run lint`：0 错误 0 警告；
+  - `npm test`（QUnit）：**806/806** 全部通过（新增 10 项针对 quoteMath、LRU 逐级降级、内存 fallback 及导出组件的单测）；
+  - `npm run e2e`（Playwright）：**74/74** 真实浏览器测试全部通过；
+  - `npm run build`：生产打包成功。
+
 ## 2026-09-12 全项目代码独立审查与演进路线交付
 
 本轮审查在完全隔离历史代码审查/修复 handoff 文档的前提下，针对全量前端（`src/`）、缓存代理服务端（`server/`）、构建离线字典脚本（`scripts/`）、需求规范（`SPEC.md`）及自动化测试套件（`test/` & `e2e/`）开展了全面的独立工程与架构审查。报告详见 [`docs/handoff/2026-09-12-independent-full-codebase-review-handoff.md`](docs/handoff/2026-09-12-independent-full-codebase-review-handoff.md)。

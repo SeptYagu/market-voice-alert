@@ -8,6 +8,8 @@ import {
   makeExportFilename,
   buildExportText,
   buildExportCsv,
+  handleExport,
+  renderToolbarView,
   stopApp,
   REFRESH_OPTIONS,
   DEFAULT_REFRESH,
@@ -194,6 +196,42 @@ QUnit.module('app.buildExportCsv', () => {
   QUnit.test('handles empty codes gracefully', (t) => {
     const csv = buildExportCsv([], new Map());
     t.ok(csv.startsWith('\uFEFF代码,名称'), 'outputs header even when empty');
+  });
+});
+
+QUnit.module('app.handleExport and toolbarView export buttons', () => {
+  QUnit.test('toolbarView provides CSV and TXT export buttons', (t) => {
+    let exported = null;
+    const dom = renderToolbarView({
+      handlers: {
+        onExport: (scope, format) => { exported = { scope, format }; }
+      }
+    });
+    const btnSelectedCsv = dom.querySelector('#btn-export-selected');
+    const btnSelectedTxt = dom.querySelector('#btn-export-selected-txt');
+    const btnAllCsv = dom.querySelector('#btn-export-all');
+    const btnAllTxt = dom.querySelector('#btn-export-all-txt');
+
+    t.ok(btnSelectedCsv, 'selected CSV button exists');
+    t.ok(btnSelectedTxt, 'selected TXT button exists');
+    t.ok(btnAllCsv, 'all CSV button exists');
+    t.ok(btnAllTxt, 'all TXT button exists');
+
+    btnSelectedTxt.click();
+    t.deepEqual(exported, { scope: 'selected', format: 'txt' });
+
+    btnAllCsv.click();
+    t.deepEqual(exported, { scope: 'all', format: 'csv' });
+  });
+
+  QUnit.test('handleExport handles empty selections gracefully', (t) => {
+    t.expect(1);
+    try {
+      handleExport('selected', 'txt');
+      t.ok(true, 'handled empty selection without throwing');
+    } catch (e) {
+      t.notOk(e, 'threw: ' + e);
+    }
   });
 });
 
