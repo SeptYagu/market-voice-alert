@@ -53,10 +53,7 @@
 
 ### 4.1 审查派发规则（Dispatch Protocol）
 - **目标目录**：仓库根目录 `D:\AiPrograms\project1\market-voice-alert`。
-- **模型调度优先级**：
-  1. **优先级 1（首选）**：`deepseek-v4.1-flash`（逻辑与代码审查专精）；
-  2. **优先级 2（备选）**：`glm-5.3-flash`（若首选超时、网络故障或不可用时自动降级回退）。
-- **派发方式**：调用 `workbuddy-bridge` 技能（CLI `workbuddy_cli.py run` 或 MCP 工具），以非阻塞后台任务派发，Antigravity 挂起等待回传。
+- **派发方式**：调用 `workbuddy-bridge` 技能（模型调度与执行策略遵循该技能内建规则），以非阻塞后台任务派发，Antigravity 挂起等待回传。
 
 ### 4.2 WorkBuddy 标准提示词模板（Reviewer Prompt）
 派发给 WorkBuddy 的任务描述按如下标准模板组织：
