@@ -516,15 +516,49 @@ export function klineCacheSet(code, period, data) {
   const allKeys = new Set([...Object.keys(obj.entries), ..._klineMemoryCache.keys()]);
   if (allKeys.size > KLINE_MAX_ENTRIES) {
     const sortedKeys = Array.from(allKeys).sort((k1, k2) => {
+      // 1. 当前正在写入的 key 绝不能在容量淘汰中被误淘汰
+      if (k1 === key) return 1;
+      if (k2 === key) return -1;
+
       const e1 = obj.entries[k1] || _klineMemoryCache.get(k1);
       const e2 = obj.entries[k2] || _klineMemoryCache.get(k2);
-      return _getEntryLastAccessed(e1, k1) - _getEntryLastAccessed(e2, k2);
+      const t1 = _getEntryLastAccessed(e1, k1);
+      const t2 = _getEntryLastAccessed(e2, k2);
+      if (t1 !== t2) {
+        return t1 - t2;
+      }
+
+      // 2. 时间戳相等时：仅存在于内存的孤岛条目优先淘汰
+      const m1 = !obj.entries[k1] && _klineMemoryCache.has(k1);
+      const m2 = !obj.entries[k2] && _klineMemoryCache.has(k2);
+      if (m1 !== m2) {
+        return m1 ? -1 : 1;
+      }
+
+      // 3. 确定性稳定 tie-break：按 key 字典序排序
+      return k1.localeCompare(k2);
     });
     const toRemove = sortedKeys.slice(0, allKeys.size - KLINE_MAX_ENTRIES);
     for (const k of toRemove) {
       delete obj.entries[k];
       _klineAccessTimes.delete(k);
       _klineMemoryCache.delete(k);
+    }
+  }
+
+  // 兜底不变式加固：若内存中条目依然超限，直接淘汰最旧内存条目
+  if (_klineMemoryCache.size > KLINE_MAX_ENTRIES) {
+    const memKeys = Array.from(_klineMemoryCache.keys()).sort((k1, k2) => {
+      if (k1 === key) return 1;
+      if (k2 === key) return -1;
+      const t1 = _getEntryLastAccessed(_klineMemoryCache.get(k1), k1);
+      const t2 = _getEntryLastAccessed(_klineMemoryCache.get(k2), k2);
+      return t1 !== t2 ? t1 - t2 : k1.localeCompare(k2);
+    });
+    const extra = memKeys.slice(0, _klineMemoryCache.size - KLINE_MAX_ENTRIES);
+    for (const k of extra) {
+      _klineMemoryCache.delete(k);
+      _klineAccessTimes.delete(k);
     }
   }
 

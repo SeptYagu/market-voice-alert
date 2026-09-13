@@ -1,6 +1,34 @@
 # STATUS.md - 项目状态
 
-## 2026-09-13 当前状态：WorkBuddy 独立审查（round 2）—— P0/P3 修复有效，但新增 LRU 淘汰单测偶发失败（P2，未通过）
+## 2026-09-13 当前状态：WorkBuddy 审查（round 2）缺陷全面闭环（LRU tie-break 确定性加固 / Eastmoney 量比缺失语义对齐）—— 准备提交 WorkBuddy round 3 独立审查
+
+最新交接文档：[`docs/handoff/2026-09-13-storage-lru-tiebreak-and-parser-ratio-round2-closure-handoff.md`](docs/handoff/2026-09-13-storage-lru-tiebreak-and-parser-ratio-round2-closure-handoff.md)
+前序审查报告：[`docs/handoff/2026-09-13-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-13-workbuddy-code-review-round2-handoff.md)
+审查基线：`518495d`
+
+针对 round 2 独立审查指出的 1 项 P2 阻塞缺陷与 1 项 P3 语义对齐缺陷完成全面彻底闭环：
+
+1. **【P2 闭环】LRU 容量淘汰 tie-break 确定性加固与单测稳定性** ✅：
+   - 在 `src/js/storage.js` 的 `klineCacheSet` LRU 容量淘汰排序比较器中实施三级确定性防线：
+     1. **当前写入键保底保护**：`if (k1 === key) return 1; if (k2 === key) return -1;` 绝不在容量淘汰中误淘汰当前键；
+     2. **毫秒相等二级 tie-breaker**：当 `_getEntryLastAccessed` 返回相同毫秒时，优先淘汰仅存在于内存中的孤岛副本（`const m1 = !obj.entries[k1] && _klineMemoryCache.has(k1); ... return m1 ? -1 : 1`）；
+     3. **三级字典序稳定排序**：`k1.localeCompare(k2)` 保证跨引擎全排列确定性；
+     4. **内存上限兜底防御裁剪**：若淘汰后 `_klineMemoryCache.size > KLINE_MAX_ENTRIES`，直接对多余内存条目按最旧访问时间兜底裁剪；
+   - 在 `tests/storage.test.js` 中新增冻结时钟（`Date.now = () => fixedTime`）确定性单测，验证在所有条目均处于同一毫秒时孤岛条目 100% 优先被淘汰；
+   - 连续执行 50 次 `tests/storage.test.js`：**50/50 全部通过（0 偶发失败）**。
+2. **【P3 闭环】Eastmoney 量比缺失语义对齐** ✅：
+   - 修复 `src/js/parser.js` 中的 `parseEastmoney`：将 `volumeRatio: div100(d.f50)` 重构为当 `d.f50` 为 `undefined`、`null` 或 `'-'` 时返回 `undefined`（渲染为 `-`），仅当具有有效数值时除以 100 并保留 2 位小数（若为真实 `0` 则保留 `0` 渲染为 `0.00`），与 Tencent 行情源完全对齐；
+   - 在 `tests/parser.test.js` 中新增覆盖正常数值、真实 0、缺失及 `'-'` 破折号等全部情况的单元测试。
+
+**证据与门禁验证**：
+- `tests/storage.test.js` 连续 50 次压力测试：**50/50 全部通过（0 偶发失败）**；
+- `npm run lint`：0 错误 0 警告；
+- `npm test`（QUnit）：**812/812 全部通过**；
+- `npm run build`：生产打包成功；
+- `npm run e2e`（Playwright）：**74/74 全部通过**；
+- 证据脚本 `node docs/handoff/2026-09-13-review-round1-repro.mjs --expect=fixed`：**5/5 全部通过**。
+
+## 2026-09-13 历史状态：WorkBuddy 独立审查（round 2）—— P0/P3 修复有效，但新增 LRU 淘汰单测偶发失败（P2，未通过）
 
 审查报告：[`docs/handoff/2026-09-13-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-13-workbuddy-code-review-round2-handoff.md)
 被审 HEAD：`ffe92b3`　审查基线：`58f3f64`

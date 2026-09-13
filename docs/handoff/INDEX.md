@@ -4,7 +4,8 @@
 
 > **当前最新状态速读**：
 > - 状态综述：查阅项目根目录 [`STATUS.md`](../../STATUS.md)
-> - 最新交接（审查）：[`2026-09-13-workbuddy-code-review-round2-handoff.md`](2026-09-13-workbuddy-code-review-round2-handoff.md)（独立审查 ffe92b3，round 2：P0/P3 修复有效，但新增 LRU 淘汰单测偶发失败 P2 未通过）
+> - 最新交接（修复）：[`2026-09-13-storage-lru-tiebreak-and-parser-ratio-round2-closure-handoff.md`](2026-09-13-storage-lru-tiebreak-and-parser-ratio-round2-closure-handoff.md)（round 2 缺陷闭环：LRU tie-break 确定性加固、Eastmoney 量比缺失语义对齐）
+> - 审查交接：[`2026-09-13-workbuddy-code-review-round2-handoff.md`](2026-09-13-workbuddy-code-review-round2-handoff.md)（独立审查 ffe92b3，round 2：P0/P3 修复有效，但新增 LRU 淘汰单测偶发失败 P2 未通过）
 > - 修复交接：[`2026-09-13-storage-orphan-and-parser-ratio-closure-handoff.md`](2026-09-13-storage-orphan-and-parser-ratio-closure-handoff.md)（round 1 缺陷闭环：storage 孤岛副本清除、量比缺失语义与 pinnedSort 消除）
 > - 审查交接：[`2026-09-13-workbuddy-code-review-round1-handoff.md`](2026-09-13-workbuddy-code-review-round1-handoff.md)（独立审查 ad69e35：BUG-02/03 确已闭环，但新引入 storage 孤岛副本 P0 回归）
 > - 独立审查：[`2026-09-13-bug03-regression-and-storage-visibility-closure-handoff.md`](2026-09-13-bug03-regression-and-storage-visibility-closure-handoff.md)（BUG-03 回归修复与存储降级可见性闭环）
@@ -17,6 +18,7 @@
 
 | 日期 | 文档 | 说明 |
 | :--- | :--- | :--- |
+| 2026-09-13 | [`2026-09-13-storage-lru-tiebreak-and-parser-ratio-round2-closure-handoff.md`](2026-09-13-storage-lru-tiebreak-and-parser-ratio-round2-closure-handoff.md) | WorkBuddy 审查 round 2 缺陷闭环（P2 LRU tie-break 确定性加固、单测稳定性、P3 Eastmoney 量比缺失语义对齐） |
 | 2026-09-13 | [`2026-09-13-workbuddy-code-review-round2-handoff.md`](2026-09-13-workbuddy-code-review-round2-handoff.md) | 独立审查 ffe92b3（round 2）：P0/P3 有效，但 LRU 淘汰单测偶发失败（P2）+ Eastmoney 量比语义未对齐（P3），未通过 |
 | 2026-09-13 | [`2026-09-13-storage-orphan-and-parser-ratio-closure-handoff.md`](2026-09-13-storage-orphan-and-parser-ratio-closure-handoff.md) | WorkBuddy 审查缺陷全面闭环（P0 storage 孤岛副本消除、P1 LRU 单测、P2 缺失量比语义对齐、P3 pinnedSort 消除） |
 | 2026-09-13 | [`2026-09-13-workbuddy-code-review-round1-handoff.md`](2026-09-13-workbuddy-code-review-round1-handoff.md) | 独立审查 ad69e35（round 1）：确认 BUG-02/03 闭环，指出新引入 storage 孤岛副本 P0 回归 |

@@ -174,6 +174,20 @@ QUnit.module('parser.parseEastmoney', () => {
     t.equal(q.change, 42.50, 'computes change from price - prevClose');
     t.ok(Math.abs(q.changePercent - 2.35) < 0.01, 'computes changePercent');
   });
+
+  QUnit.test('parses volumeRatio from f50 and sets undefined when missing', (t) => {
+    const withRatio = parseEastmoney({ data: { ...moutai.data, f50: 185 } });
+    t.equal(withRatio.volumeRatio, 1.85, 'parses f50 / 100 as volumeRatio');
+
+    const zeroRatio = parseEastmoney({ data: { ...moutai.data, f50: 0 } });
+    t.strictEqual(zeroRatio.volumeRatio, 0, 'preserves real 0 volumeRatio');
+
+    const missingRatio = parseEastmoney(moutai);
+    t.strictEqual(missingRatio.volumeRatio, undefined, 'missing f50 returns undefined');
+
+    const dashRatio = parseEastmoney({ data: { ...moutai.data, f50: '-' } });
+    t.strictEqual(dashRatio.volumeRatio, undefined, 'dash f50 returns undefined');
+  });
 });
 
 QUnit.module('parser.parseSinaFuture', () => {

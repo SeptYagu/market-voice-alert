@@ -539,4 +539,31 @@ QUnit.module('storage.klineCache', (hooks) => {
     t.strictEqual(klineCacheHas('stock_orphan', '1d'), false, 'stock_orphan evicted by LRU capacity');
     t.strictEqual(klineCacheGet('stock_orphan', '1d'), null, 'stock_orphan cannot be read as stale cache');
   });
+
+  QUnit.test('tie-break deterministic eviction prefers evicting memory-only orphan when timestamps tie', (t) => {
+    const origNow = Date.now;
+    const fixedTime = 1700000000000;
+    Date.now = () => fixedTime;
+
+    try {
+      mock.setItem = () => {
+        throw new Error('Quota exceeded for orphan_tie');
+      };
+      klineCacheSet('orphan_tie', '1d', makeKline('orphan_tie', '1d', 10));
+      t.ok(klineCacheHas('orphan_tie', '1d'), 'orphan_tie in memory fallback');
+
+      mock.setItem = (k, v) => mock.map.set(k, String(v));
+      for (let i = 0; i < KLINE_MAX_ENTRIES; i++) {
+        klineCacheSet(`stock_tie_${i}`, '1d', makeKline(`stock_tie_${i}`, '1d', 5));
+      }
+
+      // 此时总条目为 KLINE_MAX_ENTRIES + 1 = 101，均落入相同时间戳
+      // tie-breaker 必须优先淘汰 memory-only 的 orphan_tie
+      t.strictEqual(klineCacheHas('orphan_tie', '1d'), false, 'orphan_tie evicted deterministically on timestamp tie');
+      t.strictEqual(klineCacheGet('orphan_tie', '1d'), null, 'cannot read evicted orphan_tie');
+      t.strictEqual(klineCacheHas(`stock_tie_${KLINE_MAX_ENTRIES - 1}`, '1d'), true, 'latest written key is preserved');
+    } finally {
+      Date.now = origNow;
+    }
+  });
 });
