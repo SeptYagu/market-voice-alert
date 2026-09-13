@@ -1,6 +1,22 @@
 # STATUS.md - 项目状态
 
-## 2026-09-13 当前状态：WorkBuddy 审查缺陷全面闭环 —— storage 孤岛副本彻底清除、量比缺失语义对齐与 pinnedSort 消除
+## 2026-09-13 当前状态：WorkBuddy 独立审查（round 2）—— P0/P3 修复有效，但新增 LRU 淘汰单测偶发失败（P2，未通过）
+
+审查报告：[`docs/handoff/2026-09-13-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-13-workbuddy-code-review-round2-handoff.md)
+被审 HEAD：`ffe92b3`　审查基线：`58f3f64`
+
+对 `ffe92b3`（round 1 缺陷闭环提交）逐行独立复核，结论 **未通过**（1 项 P2、1 项 P3）：
+
+1. **【P2 · 阻塞】新增 LRU 淘汰单测偶发失败 + 淘汰 tie-break 不确定** ❌：
+   `storage.js:516-528` 淘汰候选集以 `[...持久化键, ...内存键]` 构造并依赖稳定排序；当孤岛与后续写压**落在同一毫秒**时，并列的内存孤岛排在持久化键之后，每次仅淘汰 1 条，故在 `KLINE_MAX_ENTRIES + 10` 次写压窗口内**不被淘汰**。实测 `tests/storage.test.js:539` 断言偶发失败：QUnit 下 `11/40` 次失败，紧凑循环探针孤岛存活率 `0.497–0.547`；冻结时钟可确定性复现。→ 「810/810」不可复现地成立，验收标准 #2/#5 不达标。
+2. **【P3】Eastmoney 分支缺失量比仍渲染 `0.00`** ⚠️：
+   `parser.js:118` 的 `volumeRatio: div100(d.f50)` 未随 Tencent 分支（`parser.js:65-66`）对齐；`fetchQuotes` 回退 Eastmoney 且 `f50` 缺失时显示 `0.00` 而非 `-`（探针 D 实测）。
+3. **已独立确认有效的修复** ✅：P0 常规/永久失败场景内存有界（探针 A：基线 250→HEAD 100）；P1 用例方向正确但见第 1 项；P2 Tencent 分支语义正确；P3 `pinnedSort` 死参数已消除（探针 E 对照：HEAD `patch=true` / 基线 `false`）。
+4. **门禁**：证据脚本 `--expect=fixed` 5/5 ✅；`npm run lint` 0 ✅；`npm run build` 成功 ✅；`npm test` 本次 810/810 通过，但受第 1 项影响不稳定。
+
+**处置建议**：优先修复 P2（淘汰排序增加确定性「内存优先/不淘汰当前键」次关键字 + 淘汰后兜底裁剪），并将新增单测改为不依赖 `Date.now()` 粒度的确定性用例；再对齐 P3。
+
+## 2026-09-13 历史状态：WorkBuddy 审查缺陷全面闭环（round 1 提出项）—— storage 孤岛副本清除、量比缺失语义对齐与 pinnedSort 消除（**经 round 2 复核：P0 常规场景有效、P1 单测不稳定**）
 
 最新交接文档：[`docs/handoff/2026-09-13-storage-orphan-and-parser-ratio-closure-handoff.md`](docs/handoff/2026-09-13-storage-orphan-and-parser-ratio-closure-handoff.md)
 审查报告：[`docs/handoff/2026-09-13-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-13-workbuddy-code-review-round1-handoff.md)
