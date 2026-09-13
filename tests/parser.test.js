@@ -187,6 +187,12 @@ QUnit.module('parser.parseEastmoney', () => {
 
     const dashRatio = parseEastmoney({ data: { ...moutai.data, f50: '-' } });
     t.strictEqual(dashRatio.volumeRatio, undefined, 'dash f50 returns undefined');
+
+    const emptyRatio = parseEastmoney({ data: { ...moutai.data, f50: '' } });
+    t.strictEqual(emptyRatio.volumeRatio, undefined, 'empty string f50 returns undefined');
+
+    const whitespaceRatio = parseEastmoney({ data: { ...moutai.data, f50: '   ' } });
+    t.strictEqual(whitespaceRatio.volumeRatio, undefined, 'whitespace f50 returns undefined');
   });
 });
 

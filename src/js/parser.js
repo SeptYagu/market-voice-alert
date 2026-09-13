@@ -115,7 +115,7 @@ export function parseEastmoney(json) {
     low: div100(d.f45),
     volume: Number(d.f47) || 0,
     amount: Number(d.f48) || 0,
-    volumeRatio: (d.f50 !== undefined && d.f50 !== null && d.f50 !== '-' && Number.isFinite(Number(d.f50)))
+    volumeRatio: (d.f50 !== undefined && d.f50 !== null && d.f50 !== '-' && (typeof d.f50 !== 'string' || d.f50.trim() !== '') && Number.isFinite(Number(d.f50)))
       ? Number((Number(d.f50) / 100).toFixed(2))
       : undefined,
     openChangePercent: (prevClose > 0 && open > 0) ? Number((((open - prevClose) / prevClose) * 100).toFixed(2)) : 0,

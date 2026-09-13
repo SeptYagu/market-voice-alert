@@ -1,6 +1,17 @@
 # STATUS.md - 项目状态
 
-## 2026-09-13 当前状态：WorkBuddy 独立审查（round 3）—— 审查通过（无 P0/P1/P2，遗留 2 项 P3）
+## 2026-09-13 当前状态：WorkBuddy 独立审查 round 3 通过（双智能体闭环达成）& 审查上限调整为 10 轮 & 遗留 P3 收尾
+
+审查报告：[`docs/handoff/2026-09-13-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-13-workbuddy-code-review-round3-handoff.md)
+审查结论：**审查通过（P0=0, P1=0, P2=0, P3=2，满足全部审查通过条件）**
+被审 HEAD：`2f94e08`　审查基线：`518495d`　审查报告提交：`ea44e75`
+
+本阶段工作：
+1. **审查上限调整为 10 轮** ✅：根据用户指示，将 `AGENTS.md`、`docs/templates/DUAL_AGENT_REVIEW_WORKFLOW.md` 以及全局 `workbuddy-plugin/rules/AGENTS.md` 中的安全熔断限制由 3 轮统一升级为 10 轮；
+2. **P3-R3F1 闭环（Eastmoney 空串/空白量比解析为 `undefined`）** ✅：在 `parser.js` 中增加 `(typeof d.f50 !== 'string' || d.f50.trim() !== '')` 防御，避免 `Number('') === 0` 陷阱导致空串/纯空白解析为 `0.00`，与 Tencent 完全对齐并在 `tests/parser.test.js` 补齐断言；
+3. **P3-R3F2 闭环（LRU tie-break 显式码元字典序）** ✅：将 `storage.js:539/556` 中的 `localeCompare` 替换为显式码元字典序 `k1 < k2 ? -1 : (k1 > k2 ? 1 : 0)`，消除默认 locale 规则潜在的排序歧义与跨引擎开销。
+
+## 2026-09-13 历史状态：WorkBuddy 独立审查（round 3）—— 审查通过（无 P0/P1/P2，遗留 2 项 P3）
 
 审查报告：[`docs/handoff/2026-09-13-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-13-workbuddy-code-review-round3-handoff.md)
 被审 HEAD：`2f94e08`　审查基线：`518495d`

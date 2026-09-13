@@ -535,8 +535,8 @@ export function klineCacheSet(code, period, data) {
         return m1 ? -1 : 1;
       }
 
-      // 3. 确定性稳定 tie-break：按 key 字典序排序
-      return k1.localeCompare(k2);
+      // 3. 确定性稳定 tie-break：按 key 码元字典序排序
+      return k1 < k2 ? -1 : (k1 > k2 ? 1 : 0);
     });
     const toRemove = sortedKeys.slice(0, allKeys.size - KLINE_MAX_ENTRIES);
     for (const k of toRemove) {
@@ -553,7 +553,7 @@ export function klineCacheSet(code, period, data) {
       if (k2 === key) return -1;
       const t1 = _getEntryLastAccessed(_klineMemoryCache.get(k1), k1);
       const t2 = _getEntryLastAccessed(_klineMemoryCache.get(k2), k2);
-      return t1 !== t2 ? t1 - t2 : k1.localeCompare(k2);
+      return t1 !== t2 ? t1 - t2 : (k1 < k2 ? -1 : (k1 > k2 ? 1 : 0));
     });
     const extra = memKeys.slice(0, _klineMemoryCache.size - KLINE_MAX_ENTRIES);
     for (const k of extra) {
