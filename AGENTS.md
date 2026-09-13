@@ -59,42 +59,24 @@
 - **派发方式**：调用 `workbuddy-bridge` 技能（CLI `workbuddy_cli.py run` 或 MCP 工具），以非阻塞后台任务派发，Antigravity 挂起等待回传。
 
 ### 4.2 WorkBuddy 标准提示词模板（Reviewer Prompt）
-派发给 WorkBuddy 的任务描述必须严格遵循以下标准模板：
+派发给 WorkBuddy 的任务描述按如下标准模板组织：
 ```text
-你现在扮演独立代码审查员（Independent Code Auditor）。
+你是独立代码审查员（Independent Code Auditor）。
 
 【目标工作区】
 当前工作目录为：D:\AiPrograms\project1\market-voice-alert
 
 【审查任务】
-Antigravity 刚刚完成了任务「{TASK_DESCRIPTION}」的代码提交并已推送远端。请对最新改动进行严格、独立的质量审查与缺陷核验。
-
-【标准执行流水线】
-1. 同步最新代码：执行 `git pull --ff-only`，核对最新 HEAD 提交哈希与 diff。
-2. 独立基线复测：执行 `npm run lint` 与 `npm test`，核实提交声称的测试结果是否真实。
-3. 深度审查改动：
-   - 目标问题是否真正彻底闭环，有无边界遗漏？
-   - 是否破坏了现有功能，有无隐蔽 Regression？
-   - 是否符合项目规范（ESM、纯函数、单一状态源、内存泄漏防护）？
-   - 如发现疑难缺陷或有争议的边界，必须编写独立复现脚本（docs/handoff/{DATE}-review-repro.mjs）。
-4. 编写交接文档（docs/handoff/{DATE}-workbuddy-round{N}-code-review-handoff.md）：
-   - 必须在文档顶部以结构化格式声明最终裁决：
-     ## 审查结论速览
-     - **最终裁决**：[VERDICT: PASS] 或 [VERDICT: DEFECTS_FOUND]
-     - **缺陷统计**：{N} Critical / {N} Major / {N} Minor / {N} Nit
-     - **核心缺陷清单**（若有）：列出问题点、所在行号与影响。
-5. 更新与推送：
-   - 更新 STATUS.md 记录本轮审查轮次与结论；在 docs/handoff/INDEX.md 登记新文档；
-   - 执行 `git add docs/handoff/ STATUS.md`；
-   - 执行 `git commit -m "docs(review): WorkBuddy round-{N} code review handoff"` 并 `git push origin <当前分支>`。
+Antigravity 刚刚完成了任务「{TASK_DESCRIPTION}」的代码提交并已推送远端。请执行 `git pull --ff-only` 拉取最新代码，运行基线测试（`npm run lint` 与 `npm test`），并对最新改动进行严格、独立的质量审查与缺陷核验：
+1. 若发现问题：请将缺陷定位、根因与方案写入新 handoff（`docs/handoff/{DATE}-workbuddy-code-review-round{N}-handoff.md`），更新 `STATUS.md` 与 `docs/handoff/INDEX.md`，并执行 `git commit` 与 `git push` 推送远端。
+2. 若无问题：简要回复说明审查通过与测试验证结论即可，无需额外生成文档与提交。
 ```
 
 ### 4.3 反馈决策与自愈循环（Resolution Loop）
-1. **唤醒与同步**：Antigravity 收到 WorkBuddy 任务完成通知后，立即执行 `git pull --ff-only` 同步新生成的交接文档与脚本。
-2. **裁决分支**：
-   - **分支 A（通过：[VERDICT: PASS]）**：0 Critical 且 0 Major，且无任何回归缺陷 ➔ 审查闭环通过，向用户汇报最终成果，流程结束。
-   - **分支 B（未通过：[VERDICT: DEFECTS_FOUND]）**：存在 Critical/Major 或未闭环缺陷 ➔ 详细分析交接文档与 repro 脚本 ➔ 修复代码并补充单测 ➔ 本地门禁验证 ➔ `git commit` & `git push` ➔ 再次派发 WorkBuddy 审查（进入 round N+1）。
-3. **安全熔断（Safeguard）**：
+1. **唤醒与判断**：
+   - **分支 A（无问题）**：WorkBuddy 回复确认审查通过，且无新增缺陷 handoff ➔ 审查闭环通过，向用户汇报最终成果，流程结束。
+   - **分支 B（有缺陷）**：WorkBuddy 发现了问题并推送了新 handoff ➔ Antigravity 执行 `git pull --ff-only` 同步交接文档 ➔ 根据 handoff 修改代码并补充测试 ➔ 本地门禁验证 ➔ `git commit` & `git push` ➔ 再次派发 WorkBuddy 审查（进入 round N+1）。
+2. **安全熔断（Safeguard）**：
    - 最大自动循环次数为 **3 轮**。若达到 3 轮仍存在分歧或未通过，自动中断循环，整理双方论据向用户汇报，由用户裁决。
 
 ---
