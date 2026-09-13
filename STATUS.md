@@ -1,6 +1,21 @@
 # STATUS.md - 项目状态
 
-## 2026-09-12 当前状态：`b601d1b` 修复核实 —— BUG-03 未闭环且引入回归（待修）
+## 2026-09-13 当前状态：BUG-03 回归与 BUG-02 降级可见性闭环修复
+
+针对 [`docs/handoff/2026-09-12-review-fix-verification.md`](docs/handoff/2026-09-12-review-fix-verification.md) 核查报告指出的 BUG-03 回归与 BUG-02 Minor 缺陷完成全面闭环：
+1. **BUG-03 彻底闭环（消除重复补丁，统一视图行级更新）**：
+   - 将 `limitUpController.js` 中的脆弱硬编码字段补丁完全重构，在 `src/js/limitUpView.js` 中封装并导出统一的行级补丁 `patchRow` 与 `patchLimitUpRows`（同时将 `limitUpRowsMatchDom` 下沉至视图层维护并向前兼容重导出）；
+   - `limitUpController.js` 的 `patchLimitUpQuoteCells()` 纯粹作为决策分支调度 `patchLimitUpRows`。结构未变时就地复用已有的全量字段补丁，一次性覆盖 `count`、`price`、`percent`、`open`、`volumeRatio`、`amount`、`final`、`break`、`reason`、`name` 及 ST 徽标；
+   - 彻底修复涨停看板在行情富集后开盘价恒为 `0.00`、量比恒为 `-` 的 DOM 与 state 脱钩问题。
+2. **BUG-02 闭环加固（内存降级条目可见性修复）**：
+   - 修复 `storage.js` 的 `_readKlineCacheEntry`：当持久化条目存在但未命中当前 key 时，继续穿透回查 `_klineMemoryCache`，确保写入降级条目在后续读取及配额恢复后依然可见。
+3. **测试基线与回归保护补齐**：
+   - 在 `tests/limitUpView.test.js` 中新增针对 `patchLimitUpRows` 字段完备性与开盘价/量比更新的单测断言；
+   - 在 `tests/storage.test.js` 中新增配额恢复后内存回退条目持续可见性单测；
+   - 运行证据脚本 `node docs/handoff/2026-09-12-review-fix-verification-repro.mjs --expect=fixed`：**15/15 全部 PASS**（此前失败的 BUG-03 open 与 ratio 2 项全部转为 PASS）；
+   - 完整门禁验证：ESLint 0 错误 0 警告，QUnit 单元测试 **808/808** 全部通过，Playwright E2E **74/74** 全部通过，Vite 生产构建打包成功。
+
+## 2026-09-12 历史状态：`b601d1b` 修复核实 —— BUG-03 未闭环且引入回归（已于 09-13 闭环）
 
 对 `b601d1b`（*fix: 闭环修复独立审查报告缺陷 (BUG-01~04/P0-3/OPT-02)*）做独立复核，证据脚本 [`2026-09-12-review-fix-verification-repro.mjs`](docs/handoff/2026-09-12-review-fix-verification-repro.mjs)（双模式，**broken 基线 `0f134e3`**），报告 [`2026-09-12-review-fix-verification.md`](docs/handoff/2026-09-12-review-fix-verification.md)。
 

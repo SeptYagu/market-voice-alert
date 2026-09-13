@@ -7,14 +7,15 @@ import {
   clearLimitUpMetadataCache
 } from '../limitUpApi.js';
 import { buildLimitUpGroups, mergeLiveTicks, sortLimitUpGroupItems } from '../limitUp.js';
-import { renderLimitUpPage, getLimitUpViewGroups } from '../limitUpView.js';
+import { renderLimitUpPage, getLimitUpViewGroups, patchLimitUpRows } from '../limitUpView.js';
+export { limitUpRowsMatchDom } from '../limitUpView.js';
 import {
   fetchTradeCalendar,
   getAdjacentTradingDates,
   resolveLatestTradingDate
 } from '../tradeCalendar.js';
 import { getBeijingDate } from '../time.js';
-import { formatCacheAge, formatNumber, formatPercent, formatAmount } from '../format.js';
+import { formatCacheAge } from '../format.js';
 import { fetchQuotes } from '../api.js';
 import {
   createChartState
@@ -23,57 +24,6 @@ import {
   setLimitUpPinnedCodes,
   patchLimitUpSettings
 } from '../storage.js';
-
-/**
- * 结构校验（R3 回归，纯函数便于测试）：DOM 的分组数量/顺序/每组行序
- * 必须与最新计算的 groups/items 完全一致。行情变化（如炸板）可能把
- * 个股在分组间移动或改变组内排序，只改单元格会把行留在错误分组且
- * 计数过期；任一不匹配返回 false，由调用方走全量重绘。
- *
- * 置顶分组感知（2026-09-09 审查修正）：limitUpView.buildGroups 始终在最前
- * 渲染一个 data-group="pinned" 的置顶分组（空置顶也渲染），且置顶股会从
- * 其原分组中剔除。因此比较时跳过首位置的 pinned 区，并把 expectedGroups
- * 中的置顶股从各组剔除后逐组比对；置顶区按独立排序配置校验代码序列；总行数必须等于
- * items.length。置顶/取消置顶引起的变化会自然导致计数不匹配而触发重绘。
- * @param {Element} groupsSection - 包含 #lu-groups 的容器元素
- * @param {Array<{key: string, items: Array<{code: string}>}>} expectedGroups
- * @param {Array<{code: string}>} items - 全部涨停项（含置顶股）
- * @param {Set<string>|string[]} [pinnedCodes] - 当前置顶代码集合
- * @returns {boolean}
- */
-export function limitUpRowsMatchDom(groupsSection, expectedGroups, items, pinnedCodes, pinnedSort = { key: 'amount', direction: 'desc' }) {
-  if (!groupsSection) return false;
-  const domGroups = Array.from(groupsSection.querySelectorAll('section.lu-group[data-group]'));
-  const groups = expectedGroups || [];
-  const pins = pinnedCodes instanceof Set ? pinnedCodes : new Set(pinnedCodes || []);
-
-  // 渲染器始终在最前渲染置顶分组；有置顶时普通组已剔除置顶股
-  const hasPinnedSection = domGroups.length > 0 && domGroups[0].getAttribute('data-group') === 'pinned';
-  const itemByCode = new Map((items || []).map(item => [item.code, item]));
-  const pinnedItems = sortLimitUpGroupItems(
-    [...pins].map(code => itemByCode.get(code)).filter(Boolean), pinnedSort.key, pinnedSort.direction
-  );
-  const pinnedRows = hasPinnedSection ? [...domGroups[0].querySelectorAll('tr[data-code]')] : [];
-  if (pinnedRows.length !== pinnedItems.length ||
-      pinnedRows.some((row, index) => row.getAttribute('data-code') !== pinnedItems[index].code)) return false;
-  const dataGroups = hasPinnedSection ? domGroups.slice(1) : domGroups;
-  if (dataGroups.length !== groups.length) return false;
-
-  let totalRows = hasPinnedSection ? domGroups[0].querySelectorAll('tr[data-code]').length : 0;
-  for (let i = 0; i < groups.length; i++) {
-    const g = groups[i];
-    const sec = dataGroups[i];
-    if (sec.getAttribute('data-group') !== g.key) return false;
-    const domRows = sec.querySelectorAll('tr[data-code]');
-    const gItems = (g.items || []).filter((it) => !pins.has(it.code));
-    totalRows += gItems.length;
-    if (domRows.length !== gItems.length) return false;
-    for (let j = 0; j < gItems.length; j++) {
-      if (domRows[j].getAttribute('data-code') !== gItems[j].code) return false;
-    }
-  }
-  return totalRows === (items || []).length;
-}
 
 import { DEFAULT_PERIOD, isValidPeriod } from '../kline.js';
 
@@ -174,41 +124,10 @@ export function createLimitUpController(appContext) {
 
   function patchLimitUpQuoteCells() {
     if (!limitUpRootEl) return false;
-    const groupsSection = limitUpRootEl.querySelector('#lu-groups');
-    if (!groupsSection) return false;
-
     const lu = getLimitUpState();
-    if (!limitUpRowsMatchDom(groupsSection, lu.groups, lu.items, lu.pinnedCodes, lu.pinnedSort)) {
+    if (!patchLimitUpRows(limitUpRootEl, lu)) {
       return false;
     }
-
-    const itemMap = new Map((lu.items || []).map((it) => [it.code, it]));
-    const rows = groupsSection.querySelectorAll('tr[data-code]');
-    for (const row of rows) {
-      const code = row.getAttribute('data-code');
-      const item = itemMap.get(code);
-      if (!item) continue;
-
-      const priceEl = row.querySelector('[data-field="price"]');
-      if (priceEl) priceEl.textContent = formatNumber(item.price);
-
-      const pctEl = row.querySelector('[data-field="percent"]');
-      if (pctEl) {
-        pctEl.textContent = formatPercent(item.changePercent);
-        const direction = item.changePercent > 0 ? 'up' : item.changePercent < 0 ? 'down' : 'flat';
-        pctEl.className = `lu-pct num ${direction}`;
-      }
-
-      const amountEl = row.querySelector('[data-field="amount"]');
-      if (amountEl) amountEl.textContent = formatAmount(item.amount);
-
-      const reasonEl = row.querySelector('[data-field="reason"]');
-      if (reasonEl) {
-        reasonEl.textContent = item.reason || '—';
-        reasonEl.title = item.interpretation || '无龙虎榜信息';
-      }
-    }
-
     updateLimitUpStatusBar();
     return true;
   }

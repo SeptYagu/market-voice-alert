@@ -585,27 +585,102 @@ function viewContext(state, cb) {
 
 const pageIndexes = new WeakMap();
 
-function patchRow(row, item, ctx) {
-  const active = ctx.expandedCodes.has(item.code);
-  const pinned = ctx.pinnedCodes.has(item.code);
+export function limitUpRowsMatchDom(groupsSection, expectedGroups, items, pinnedCodes, pinnedSort = { key: 'amount', direction: 'desc' }) {
+  if (!groupsSection) return false;
+  const domGroups = Array.from(groupsSection.querySelectorAll('section.lu-group[data-group]'));
+  const groups = expectedGroups || [];
+  const pins = pinnedCodes instanceof Set ? pinnedCodes : new Set(pinnedCodes || []);
+
+  // 渲染器始终在最前渲染置顶分组；有置顶时普通组已剔除置顶股
+  const hasPinnedSection = domGroups.length > 0 && domGroups[0].getAttribute('data-group') === 'pinned';
+  const itemByCode = new Map((items || []).map(item => [item.code, item]));
+  const pinnedItems = sortLimitUpGroupItems(
+    [...pins].map(code => itemByCode.get(code)).filter(Boolean), pinnedSort.key, pinnedSort.direction
+  );
+  const pinnedRows = hasPinnedSection ? [...domGroups[0].querySelectorAll('tr[data-code]')] : [];
+  if (pinnedRows.length !== pinnedItems.length ||
+      pinnedRows.some((row, index) => row.getAttribute('data-code') !== pinnedItems[index].code)) return false;
+  const dataGroups = hasPinnedSection ? domGroups.slice(1) : domGroups;
+  if (dataGroups.length !== groups.length) return false;
+
+  let totalRows = hasPinnedSection ? domGroups[0].querySelectorAll('tr[data-code]').length : 0;
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i];
+    const sec = dataGroups[i];
+    if (sec.getAttribute('data-group') !== g.key) return false;
+    const domRows = sec.querySelectorAll('tr[data-code]');
+    const gItems = (g.items || []).filter((it) => !pins.has(it.code));
+    totalRows += gItems.length;
+    if (domRows.length !== gItems.length) return false;
+    for (let j = 0; j < gItems.length; j++) {
+      if (domRows[j].getAttribute('data-code') !== gItems[j].code) return false;
+    }
+  }
+  return totalRows === (items || []).length;
+}
+
+export function patchRow(row, item, ctx) {
+  const active = ctx.expandedCodes && ctx.expandedCodes.has(item.code);
+  const pinned = ctx.pinnedCodes && ctx.pinnedCodes.has(item.code);
   row.classList.toggle('lu-active', active);
   row.classList.toggle('lu-pinned-row', pinned);
   row.setAttribute('aria-expanded', String(active));
-  row.querySelector('input[data-row-code]').checked = ctx.selectedCodes.has(item.code);
+  const checkInput = row.querySelector('input[data-row-code]');
+  if (checkInput) checkInput.checked = !!(ctx.selectedCodes && ctx.selectedCodes.has(item.code));
   const pin = row.querySelector('.pin-btn');
-  pin.classList.toggle('active', pinned);
-  pin.textContent = pinned ? '取消固定' : '固定';
-  pin.title = pin.textContent;
-  pin.setAttribute('aria-label', `${pin.textContent} ${item.name || item.code}`);
+  if (pin) {
+    pin.classList.toggle('active', pinned);
+    pin.textContent = pinned ? '取消固定' : '固定';
+    pin.title = pin.textContent;
+    pin.setAttribute('aria-label', `${pin.textContent} ${item.name || item.code}`);
+  }
   const values = { count: `${item.limitUpCount || 0} 板`, price: formatNumber(item.price),
     percent: formatPercent(item.changePercent), open: formatNumber(item.open), ratio: formatNumber(item.volumeRatio),
     amount: formatAmount(item.amount), final: item.lastLimitTime || '-', break: String(item.breakCount || 0), reason: item.reason || '—' };
-  for (const [field, value] of Object.entries(values)) row.querySelector(`[data-field="${field}"]`).textContent = value;
-  row.querySelector('[data-field="percent"]').className = `lu-pct num ${Number(item.changePercent) > 0 ? 'up' : Number(item.changePercent) < 0 ? 'down' : 'flat'}`;
-  row.querySelector('[data-field="reason"]').title = item.interpretation || '无龙虎榜信息';
+  for (const [field, value] of Object.entries(values)) {
+    const cell = row.querySelector(`[data-field="${field}"]`);
+    if (cell) cell.textContent = value;
+  }
+  const pctEl = row.querySelector('[data-field="percent"]');
+  if (pctEl) {
+    pctEl.className = `lu-pct num ${Number(item.changePercent) > 0 ? 'up' : Number(item.changePercent) < 0 ? 'down' : 'flat'}`;
+  }
+  const reasonEl = row.querySelector('[data-field="reason"]');
+  if (reasonEl) {
+    reasonEl.title = item.interpretation || '无龙虎榜信息';
+  }
   const name = row.querySelector('[data-field="name"]');
-  name.textContent = item.name || '-';
-  if (item.isST) name.appendChild(el('span', { class: 'lu-st-badge', title: 'ST / *ST 股票' }, 'ST'));
+  if (name) {
+    name.textContent = item.name || '-';
+    if (item.isST) name.appendChild(el('span', { class: 'lu-st-badge', title: 'ST / *ST 股票' }, 'ST'));
+  }
+}
+
+export function patchLimitUpRows(root, state) {
+  if (!root) return false;
+  const groupsSection = root.querySelector('#lu-groups');
+  if (!groupsSection) return false;
+
+  const lu = state || {};
+  if (!limitUpRowsMatchDom(groupsSection, lu.groups, lu.items, lu.pinnedCodes, lu.pinnedSort)) {
+    return false;
+  }
+
+  const index = pageIndexes.get(root);
+  const ctx = index ? index.ctx : viewContext(lu, {});
+  ctx.selectedCodes = lu.selectedCodes || ctx.selectedCodes || new Set();
+  ctx.expandedCodes = lu.expandedCodes || ctx.expandedCodes || new Set();
+  ctx.pinnedCodes = lu.pinnedCodes || ctx.pinnedCodes || new Set();
+
+  const itemMap = new Map((lu.items || []).map((it) => [it.code, it]));
+  const rows = groupsSection.querySelectorAll('tr[data-code]');
+  for (const row of rows) {
+    const code = row.getAttribute('data-code');
+    const item = itemMap.get(code);
+    if (!item) continue;
+    patchRow(row, item, ctx);
+  }
+  return true;
 }
 
 function reconcileGroups(index, state) {

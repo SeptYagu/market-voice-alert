@@ -4,7 +4,8 @@
 
 > **当前最新状态速读**：
 > - 状态综述：查阅项目根目录 [`STATUS.md`](../../STATUS.md)
-> - 最新交接：[`2026-09-12-review-fix-verification.md`](2026-09-12-review-fix-verification.md)（独立核验 b601d1b，BUG-03 遗留回归及验证记录）
+> - 最新交接：[`2026-09-13-bug03-regression-and-storage-visibility-closure-handoff.md`](2026-09-13-bug03-regression-and-storage-visibility-closure-handoff.md)（BUG-03 回归修复与存储降级可见性闭环）
+> - 独立核验：[`2026-09-12-review-fix-verification.md`](2026-09-12-review-fix-verification.md)（独立核验 b601d1b，发现 BUG-03 回归）
 > - 独立审查：[`2026-09-12-independent-full-codebase-review-handoff.md`](2026-09-12-independent-full-codebase-review-handoff.md)（全仓架构与工程审查结论）
 
 ---
@@ -13,6 +14,7 @@
 
 | 日期 | 文档 | 说明 |
 | :--- | :--- | :--- |
+| 2026-09-13 | [`2026-09-13-bug03-regression-and-storage-visibility-closure-handoff.md`](2026-09-13-bug03-regression-and-storage-visibility-closure-handoff.md) | BUG-03 回归修复与存储降级可见性彻底闭环 |
 | 2026-09-12 | [`2026-09-12-review-fix-verification.md`](2026-09-12-review-fix-verification.md) | 核实 b601d1b 对独立审查缺陷修复（BUG-03 未闭环且引入回归） |
 | 2026-09-12 | [`2026-09-12-review-fix-verification-repro.mjs`](2026-09-12-review-fix-verification-repro.mjs) | 独立审查缺陷修复复现与证据脚本 |
 | 2026-09-12 | [`2026-09-12-independent-full-codebase-review-handoff.md`](2026-09-12-independent-full-codebase-review-handoff.md) | 全项目代码独立审查与演进路线交付 |

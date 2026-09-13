@@ -1,4 +1,4 @@
-import { renderLimitUpPage, shiftDateString } from '../src/js/limitUpView.js';
+import { renderLimitUpPage, shiftDateString, patchLimitUpRows } from '../src/js/limitUpView.js';
 import { getBeijingDate, shiftCalendarDate } from '../src/js/time.js';
 
 QUnit.module('limitUpView.renderLimitUpPage (sort/select/checkboxes)', (hooks) => {
@@ -801,5 +801,100 @@ QUnit.module('limitUpView.renderLimitUpPage (date buttons)', (hooks) => {
     }), cb);
     root.querySelector('#lu-date-today').click();
     t.equal(captured, '2026-06-05', `expected 2026-06-05, got ${captured}`);
+  });
+});
+
+QUnit.module('limitUpView.patchLimitUpRows', (hooks) => {
+  let root;
+  hooks.beforeEach(() => {
+    root = document.createElement('div');
+    document.body.appendChild(root);
+  });
+  hooks.afterEach(() => {
+    document.body.removeChild(root);
+  });
+
+  function buildItem(over = {}) {
+    return Object.assign(
+      {
+        code: 'sh600519',
+        name: '贵州茅台',
+        price: 1800,
+        change: 100,
+        changePercent: 10,
+        open: 0,
+        volumeRatio: undefined,
+        limitUpCount: 1,
+        firstLimitTime: '09:35',
+        lastLimitTime: '09:35',
+        breakCount: 0,
+        isST: false,
+        amount: 1000000000,
+        reason: '白酒'
+      },
+      over
+    );
+  }
+
+  function buildState(over = {}) {
+    return Object.assign(
+      {
+        items: [],
+        groups: [
+          { key: '3+', label: '3 连板及以上', items: [] },
+          { key: '2', label: '2 连板', items: [] },
+          { key: '1', label: '1 连板 / 首板', items: [] },
+          { key: 'broken', label: '炸板', items: [] }
+        ],
+        lastUpdate: null,
+        loading: false,
+        error: null,
+        refreshInterval: 30000,
+        sortKey: 'amount',
+        selectedCodes: new Set(),
+        expandedCodes: new Set(),
+        chartInstances: new Map(),
+        pinnedCodes: new Set()
+      },
+      over
+    );
+  }
+
+  QUnit.test('patchLimitUpRows updates open, ratio, price, percent in place', (t) => {
+    const item = buildItem({
+      code: 'sh600519',
+      price: 1800,
+      open: 0,
+      volumeRatio: undefined,
+      changePercent: 10
+    });
+    const state = buildState({
+      items: [item],
+      groups: [
+        { key: '3+', label: '3 连板及以上', items: [] },
+        { key: '2', label: '2 连板', items: [] },
+        { key: '1', label: '1 连板 / 首板', items: [item] },
+        { key: 'broken', label: '炸板', items: [] }
+      ]
+    });
+    renderLimitUpPage(root, state, {});
+
+    const row = root.querySelector('tr[data-code="sh600519"]');
+    t.ok(row, 'row exists in DOM');
+    t.equal(row.querySelector('[data-field="open"]').textContent, '0.00', 'initial open is 0.00');
+    t.equal(row.querySelector('[data-field="ratio"]').textContent, '-', 'initial ratio is -');
+
+    // 行情富集更新
+    item.open = 1808.5;
+    item.volumeRatio = 1.85;
+    item.price = 1850;
+    item.changePercent = 10.01;
+
+    const ok = patchLimitUpRows(root, state);
+    t.strictEqual(ok, true, 'patchLimitUpRows returned true when structure matches');
+    t.equal(row.querySelector('[data-field="open"]').textContent, '1808.50', 'patched open matches updated state');
+    t.equal(row.querySelector('[data-field="ratio"]').textContent, '1.85', 'patched ratio matches updated state');
+    t.equal(row.querySelector('[data-field="price"]').textContent, '1850.00', 'patched price matches updated state');
+    t.equal(row.querySelector('[data-field="percent"]').textContent, '+10.01%', 'patched percent matches updated state');
   });
 });

@@ -498,4 +498,25 @@ QUnit.module('storage.klineCache', (hooks) => {
     t.ok(cached, 'retrieved from in-memory fallback');
     t.equal(cached.items.length, 15, 'correct items length');
   });
+
+  QUnit.test('in-memory fallback entry remains readable after subsequent successful write to persistent storage', (t) => {
+    mock.setItem = () => {
+      throw new Error('Quota exceeded for c1');
+    };
+    const c1 = makeKline('stock_c1', '1d', 10);
+    klineCacheSet('stock_c1', '1d', c1);
+
+    t.ok(klineCacheHas('stock_c1', '1d'), 'c1 is readable from memory fallback');
+
+    // 配额恢复，写入 c2 成功
+    mock.setItem = (k, v) => mock.map.set(k, String(v));
+    const c2 = makeKline('stock_c2', '1d', 20);
+    klineCacheSet('stock_c2', '1d', c2);
+
+    t.ok(klineCacheHas('stock_c2', '1d'), 'c2 written to persistent storage');
+    t.ok(klineCacheHas('stock_c1', '1d'), 'c1 in memory fallback remains readable even when missing in persistent entries');
+    const readC1 = klineCacheGet('stock_c1', '1d');
+    t.ok(readC1, 'c1 retrieved successfully');
+    t.equal(readC1.items.length, 10, 'c1 has correct items');
+  });
 });

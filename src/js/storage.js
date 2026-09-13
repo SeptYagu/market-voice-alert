@@ -353,8 +353,8 @@ function _readKlineCacheEntry(code, period) {
     const raw = getRaw(KLINE_CACHE_KEY);
     if (raw) {
       const obj = JSON.parse(raw);
-      if (obj && typeof obj === 'object' && obj.entries) {
-        return obj.entries[key] || null;
+      if (obj && typeof obj === 'object' && obj.entries && obj.entries[key]) {
+        return obj.entries[key];
       }
     }
   } catch {
