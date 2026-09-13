@@ -2,7 +2,9 @@
 
 > **使用指南**：
 > 本模板用于在任何项目中建立**「主开发者（如 Antigravity）编写 ➔ 独立审查员（如 WorkBuddy）质检 ➔ 自动反馈与自愈」**的闭环协同机制。
-> 可以直接将下方的核心 Markdown 章节复制并追加至目标项目的 `AGENTS.md`（或 `CLAUDE.md`）中。
+> **接入两步法**：
+> 1. **工作区探测**：通过 `workbuddy_cli.py projects` 确认 WorkBuddy 宿主路径，填入第 1 节的 `--cwd`；
+> 2. **提示词固化**：将第 2 节的 `{REPO_NAME}`（仓库名）和 `{GATE_COMMANDS}`（真实门禁，如 TS 项目为 `npx tsc --noEmit`、`npm run lint` 与 `npm test`；纯 JS 项目为 `npm run lint` 与 `npm test`；Python 项目为 `pytest` 与 `ruff check`）直接替换为确定结果。**固化后日常派发仅允许替换 `{TASK_DESCRIPTION}`，严禁在【审查任务】一节添加任何额外自定义提示词**。
 
 ```markdown
 ## 双智能体协同与代码审查闭环（Antigravity ↔ WorkBuddy）
@@ -10,14 +12,9 @@
 当主开发智能体（Antigravity）完成功能开发或缺陷修复并推送到 Git 后，自动触发 WorkBuddy 独立审查，形成免人工干预的代码质量自愈闭环：
 
 ### 1. 审查派发规则（Dispatch Protocol）
-- **初始化与工作区探测（Workspace Discovery，初始化配置时执行）**：
-  - 在新项目配置或首次引入本流程时，**先查询 WorkBuddy 工作区列表**：调用 `workbuddy_cli.py projects`（或 `wb.list_projects()`）；
-  - 检查目标代码仓库物理路径所属的 WorkBuddy 宿主工作区：
-    - 若当前仓库位于已存在的工作区内（如父级目录 `{HOST_WORKSPACE}`），**将该宿主工作区作为 `--cwd` 固化写入具体项目的 AGENTS.md**，确保会话直接同步至用户桌面端当前项目窗口并继承项目记忆库，严禁直接传子目录新建隔离项目；
-    - 计算出代码仓库相对于该工作区的相对子目录（如 `{REPO_SUBDIR}`），并在提示词中**直接写入确定的结果**；
-    - 若未匹配到任何已存在的工作区，则以仓库根目录作为 `--cwd`。
-- **派发方式**：调用 `workbuddy-bridge` 技能（直接传入已固化的 `--cwd`），以非阻塞后台任务派发，主智能体挂起等待回传。
-- **调度策略**：模型选择、网络重试与执行权限自动遵循 `workbuddy-bridge` 插件规则。
+- **WorkBuddy 宿主工作区（cwd）**：`{HOST_WORKSPACE_PATH}`（新项目接入时通过 `projects` 探测并固化；若属父级项目则填父级路径，若为独立项目则填仓库根目录）。
+- **目标代码仓库**：`{REPO_NAME}`（如子目录名或仓库名）。
+- **派发方式**：调用 `workbuddy-bridge` 技能（指定已固化的 `--cwd`，模型调度与执行策略遵循技能内建规则），以非阻塞后台任务派发，主智能体挂起等待回传。
 
 ### 2. 独立审查员标准提示词模板（Reviewer Prompt）
 派发给 WorkBuddy 的任务描述必须严格遵循如下标准模板，仅允许将 {TASK_DESCRIPTION} 替换为当前任务简报，严禁在【审查任务】一节中额外添加任何自定义或非标准提示词：
@@ -25,7 +22,7 @@
 ```text
 你是独立代码审查员（Independent Code Auditor）。
 【审查任务】
-Antigravity 刚刚完成了任务「{TASK_DESCRIPTION}」的代码提交并已推送远端。请执行 `git pull --ff-only` 拉取最新代码，运行基线测试（`npx tsc --noEmit`、`{LINT_CMD}` 与 `{TEST_CMD}`），并对最新改动进行严格、独立的质量审查与缺陷核验：
+Antigravity 刚刚完成了 {REPO_NAME} 仓库的任务「{TASK_DESCRIPTION}」的代码提交并已推送远端。请在仓库目录下执行 `git pull --ff-only` 拉取最新代码，运行基线测试（{GATE_COMMANDS}），并对最新改动进行严格、独立的质量审查与缺陷核验：
 1. 若发现问题：请将缺陷定位、根因与方案写入新 handoff（`docs/handoff/{DATE}-workbuddy-code-review-round{N}-handoff.md`），更新 `STATUS.md` 与 `docs/handoff/INDEX.md`，并执行 `git commit` 与 `git push` 推送远端。
 2. 若无问题：简要回复说明审查通过与测试验证结论即可，无需额外生成文档与提交。
 ```
