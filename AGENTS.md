@@ -56,16 +56,21 @@
 - **目标代码仓库**：子目录 `market-voice-alert`（完整路径：`D:\AiPrograms\project1\market-voice-alert`）。
 - **派发方式**：调用 `workbuddy-bridge` 技能（指定 `--cwd "D:\AiPrograms\project1"`，模型调度与执行策略遵循技能内建规则），以非阻塞后台任务派发，Antigravity 挂起等待回传。
 
-### 4.2 独立审查员标准提示词模板（Reviewer Prompt）
-派发给 WorkBuddy 的任务描述必须严格遵循如下标准模板，仅允许将 {TASK_DESCRIPTION} 替换为当前任务简报，严禁在【审查任务】一节中额外添加任何自定义或非标准提示词：
+### 4.2 独立审查员提示词规范（Reviewer Prompt Reference）
+代码审查提示词已外置并收敛于 WorkBuddy 技能基座的标准规范文件中，项目内仅做路径引用：
 
-```text
-你是独立代码审查员（Independent Code Auditor）。
-【审查任务】
-Antigravity 刚刚完成了 market-voice-alert 仓库的任务「{TASK_DESCRIPTION}」的代码提交并已推送远端。请在仓库目录下执行 `git pull --ff-only` 拉取最新代码，运行基线测试（`npm run lint` 与 `npm test`），并对最新改动及其对整体项目的连带影响（回归风险与系统兼容性）进行严格、独立的质量审查与缺陷核验：
-1. 若发现问题：请将缺陷定位、根因与方案写入新 handoff（`docs/handoff/{DATE}-workbuddy-code-review-round{N}-handoff.md`），更新 `STATUS.md` 与 `docs/handoff/INDEX.md`，并执行 `git commit` 与 `git push` 推送远端。
-2. 若无问题：简要回复说明审查通过与测试验证结论即可，无需额外生成文档与提交。
-```
+- **规范模板文件**：`C:\Users\12915\.gemini\config\plugins\workbuddy-plugin\skills\workbuddy-bridge\code-review-prompt.md`
+
+- **派发调用约定**：
+  派发给 WorkBuddy 的任务提示词必须读取上述模板文件，仅允许将模板中的占位符严格替换为当前任务真实上下文：
+  - `{GOAL}`：本次任务的核心目标简报
+  - `{ACCEPTANCE_CRITERIA}`：本次任务的验收标准
+  - `{BASE_SHA}`：本次修改前的基准 Commit SHA
+  - `{HEAD_SHA}`：Antigravity 提交并推送的待审 Commit SHA
+  - `{SCOPE}`：本次修改涉及的模块与文件范围
+  - `{KNOWN_LIMITATIONS}`：本次任务已知限制或技术边界（若无则填“无”）
+
+  严禁在模板之外额外添加任何自定义或非标准提示词，审查员必须严格依据规范执行代码阅读、证伪验证、缺陷分级与交付流转。
 
 ### 4.3 反馈决策与自愈循环（Resolution Loop）
 1. **唤醒与判断**：

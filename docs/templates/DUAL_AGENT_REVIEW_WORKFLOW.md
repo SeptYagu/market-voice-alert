@@ -2,9 +2,9 @@
 
 > **使用指南**：
 > 本模板用于在任何项目中建立**「主开发者（如 Antigravity）编写 ➔ 独立审查员（如 WorkBuddy）质检 ➔ 自动反馈与自愈」**的闭环协同机制。
-> **接入两步法**：
-> 1. **工作区探测**：通过 `workbuddy_cli.py projects` 确认 WorkBuddy 宿主路径，填入第 1 节的 `--cwd`；
-> 2. **提示词固化**：将第 2 节的 `{REPO_NAME}`（仓库名）和 `{GATE_COMMANDS}`（真实门禁，如 TS 项目为 `npx tsc --noEmit`、`npm run lint` 与 `npm test`；纯 JS 项目为 `npm run lint` 与 `npm test`；Python 项目为 `pytest` 与 `ruff check`）直接替换为确定结果。**固化后日常派发仅允许替换 `{TASK_DESCRIPTION}`，严禁在【审查任务】一节添加任何额外自定义提示词**。
+> **核心原则**：
+> - 审查准则、缺陷分级与证伪方法学全部**外置收敛于 WorkBuddy 技能基座标准文件**，杜绝各项目提示词漂移；
+> - 项目内仅配置**宿主工作区绑定**与**6 维上下文调用契约**。
 
 ```markdown
 ## 双智能体协同与代码审查闭环（Antigravity ↔ WorkBuddy）
@@ -16,16 +16,21 @@
 - **目标代码仓库**：`{REPO_NAME}`（如子目录名或仓库名）。
 - **派发方式**：调用 `workbuddy-bridge` 技能（指定已固化的 `--cwd`，模型调度与执行策略遵循技能内建规则），以非阻塞后台任务派发，主智能体挂起等待回传。
 
-### 2. 独立审查员标准提示词模板（Reviewer Prompt）
-派发给 WorkBuddy 的任务描述必须严格遵循如下标准模板，仅允许将 {TASK_DESCRIPTION} 替换为当前任务简报，严禁在【审查任务】一节中额外添加任何自定义或非标准提示词：
+### 2. 独立审查员提示词规范（Reviewer Prompt Reference）
+代码审查提示词已外置并收敛于 WorkBuddy 技能基座的标准规范文件中，项目内仅做路径引用：
 
-```text
-你是独立代码审查员（Independent Code Auditor）。
-【审查任务】
-Antigravity 刚刚完成了 {REPO_NAME} 仓库的任务「{TASK_DESCRIPTION}」的代码提交并已推送远端。请在仓库目录下执行 `git pull --ff-only` 拉取最新代码，运行基线测试（{GATE_COMMANDS}），并对最新改动及其对整体项目的连带影响（回归风险与系统兼容性）进行严格、独立的质量审查与缺陷核验：
-1. 若发现问题：请将缺陷定位、根因与方案写入新 handoff（`docs/handoff/{DATE}-workbuddy-code-review-round{N}-handoff.md`），更新 `STATUS.md` 与 `docs/handoff/INDEX.md`，并执行 `git commit` 与 `git push` 推送远端。
-2. 若无问题：简要回复说明审查通过与测试验证结论即可，无需额外生成文档与提交。
-```
+- **规范模板文件**：`C:\Users\12915\.gemini\config\plugins\workbuddy-plugin\skills\workbuddy-bridge\code-review-prompt.md`
+
+- **派发调用约定**：
+  派发给 WorkBuddy 的任务提示词必须读取上述模板文件，仅允许将模板中的占位符严格替换为当前任务真实上下文：
+  - `{GOAL}`：本次任务的核心目标简报
+  - `{ACCEPTANCE_CRITERIA}`：本次任务的验收标准
+  - `{BASE_SHA}`：本次修改前的基准 Commit SHA
+  - `{HEAD_SHA}`：Antigravity 提交并推送的待审 Commit SHA
+  - `{SCOPE}`：本次修改涉及的模块与文件范围
+  - `{KNOWN_LIMITATIONS}`：本次任务已知限制或技术边界（若无则填“无”）
+
+  严禁在模板之外额外添加任何自定义或非标准提示词，审查员必须严格依据规范执行代码阅读、证伪验证、缺陷分级与交付流转。
 
 ### 3. 反馈决策与自愈循环（Resolution Loop）
 1. **唤醒与判断**：
