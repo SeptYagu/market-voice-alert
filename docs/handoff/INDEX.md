@@ -4,7 +4,8 @@
 
 > **当前最新状态速读**：
 > - 状态综述：查阅项目根目录 [`STATUS.md`](../../STATUS.md)
-> - 最新交接：[`2026-09-13-bug03-regression-and-storage-visibility-closure-handoff.md`](2026-09-13-bug03-regression-and-storage-visibility-closure-handoff.md)（BUG-03 回归修复与存储降级可见性闭环）
+> - 最新交接：[`2026-09-13-workbuddy-code-review-round1-handoff.md`](2026-09-13-workbuddy-code-review-round1-handoff.md)（独立审查 ad69e35：BUG-02/03 确已闭环，但新引入 storage 孤岛副本 P0 回归）
+> - 独立审查：[`2026-09-13-bug03-regression-and-storage-visibility-closure-handoff.md`](2026-09-13-bug03-regression-and-storage-visibility-closure-handoff.md)（BUG-03 回归修复与存储降级可见性闭环）
 > - 独立核验：[`2026-09-12-review-fix-verification.md`](2026-09-12-review-fix-verification.md)（独立核验 b601d1b，发现 BUG-03 回归）
 > - 独立审查：[`2026-09-12-independent-full-codebase-review-handoff.md`](2026-09-12-independent-full-codebase-review-handoff.md)（全仓架构与工程审查结论）
 
@@ -14,6 +15,8 @@
 
 | 日期 | 文档 | 说明 |
 | :--- | :--- | :--- |
+| 2026-09-13 | [`2026-09-13-workbuddy-code-review-round1-handoff.md`](2026-09-13-workbuddy-code-review-round1-handoff.md) | 独立审查 ad69e35（round 1）：确认 BUG-02/03 闭环，指出新引入 storage 孤岛副本 P0 回归 |
+| 2026-09-13 | [`2026-09-13-review-round1-repro.mjs`](2026-09-13-review-round1-repro.mjs) | round 1 审查复现与判别力证据脚本（双模式，broken 基线 `ad69e35^`） |
 | 2026-09-13 | [`2026-09-13-bug03-regression-and-storage-visibility-closure-handoff.md`](2026-09-13-bug03-regression-and-storage-visibility-closure-handoff.md) | BUG-03 回归修复与存储降级可见性彻底闭环 |
 | 2026-09-12 | [`2026-09-12-review-fix-verification.md`](2026-09-12-review-fix-verification.md) | 核实 b601d1b 对独立审查缺陷修复（BUG-03 未闭环且引入回归） |
 | 2026-09-12 | [`2026-09-12-review-fix-verification-repro.mjs`](2026-09-12-review-fix-verification-repro.mjs) | 独立审查缺陷修复复现与证据脚本 |

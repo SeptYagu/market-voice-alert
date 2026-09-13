@@ -1,6 +1,24 @@
 # STATUS.md - 项目状态
 
-## 2026-09-13 当前状态：BUG-03 回归与 BUG-02 降级可见性闭环修复
+## 2026-09-13 当前状态：WorkBuddy 独立审查（round 1）—— BUG-02/03 确已闭环，但 storage 读取路径新引入「内存孤岛副本」回归（P0，待修）
+
+独立审查报告：[`docs/handoff/2026-09-13-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-13-workbuddy-code-review-round1-handoff.md)
+证据脚本：[`docs/handoff/2026-09-13-review-round1-repro.mjs`](docs/handoff/2026-09-13-review-round1-repro.mjs)（双模式，**broken 基线 `ad69e35^` = `a566c46`**）
+
+对 `ad69e35` 及其后续文档提交做逐行独立审查（**不采信提交方自带的门禁结果与复现脚本**，全部自行构造反例，共 17 个探针）：
+
+1. **BUG-03 确认真闭环** ✅：`patchRow` 字段覆盖为旧控制器补丁的严格超集，开盘价/量比就地补丁与 state 一致（`0.00`/`-` → `1808.50`/`1.85`）。
+2. **BUG-02 确认目标行为达成** ✅：配额恢复后降级到内存的条目仍可见（基线为不可见）。
+3. **【P0 · 新引入回归】storage 内存孤岛副本** ❌：
+   `_readKlineCacheEntry` 改为「持久化未命中则回查 `_klineMemoryCache`」后，读取路径对内存副本敞开门；但**容量淘汰只遍历持久化 `obj.entries`**（`storage.js:497`），而 `_klineMemoryCache` 仅在降级写时被写入（`:468`）——导致「只在内存、不在持久化」的条目**永不被淘汰且仍可读**。实测其 `fetchedAt` 使 `isKlineCacheStale` 返回 `false`，于是**陈旧 K 线被当作新鲜缓存命中**，经 `api.js:473` 直接进入图表。
+   同一断言在基线 `PASS`、在 HEAD `FAIL`（方向反转）⇒ 系本次提交新引入。**修复只做了一半：补了读取，未补清理。**
+4. **既有缺陷（非本次引入）**：`parser.js:73` 的 `parseFloat(fields[49]) || 0` 使「无量比」显示为 `0.00` 而非 `-`（源自 `32da3ca`）。
+5. 另有 7 项可疑点经探针实测**排除**（ST 徽标累积、XSS、行序假阳性、`pinnedSort` 死参数、字段显示回归等），详见报告 §4。
+
+**门禁复跑**：`npm run lint` 0 问题；`npm test` **808/808**；`npm run build` 成功；`npm run e2e` **74/74**。
+→ 再次印证「测试全绿 ≠ 修复/功能生效」：§3 的回归在现有单测与 E2E 中**均无覆盖**。
+
+## 2026-09-13 历史状态：BUG-03 回归与 BUG-02 降级可见性闭环修复（已由本轮审查复核）
 
 针对 [`docs/handoff/2026-09-12-review-fix-verification.md`](docs/handoff/2026-09-12-review-fix-verification.md) 核查报告指出的 BUG-03 回归与 BUG-02 Minor 缺陷完成全面闭环：
 1. **BUG-03 彻底闭环（消除重复补丁，统一视图行级更新）**：
