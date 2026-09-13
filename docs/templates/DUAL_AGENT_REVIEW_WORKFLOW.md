@@ -20,21 +20,13 @@
 - **调度策略**：模型选择、网络重试与执行权限自动遵循 `workbuddy-bridge` 插件规则。
 
 ### 2. 独立审查员标准提示词模板（Reviewer Prompt）
-派发给 WorkBuddy 的任务描述按如下标准模板组织（在具体项目中使用时，将初始化得出的工作区与仓库子目录确切结果直接填入）：
+派发给 WorkBuddy 的任务描述必须严格遵循如下标准模板，仅允许将 {TASK_DESCRIPTION} 替换为当前任务简报，严禁在【审查任务】一节中额外添加任何自定义或非标准提示词：
 
 ```text
 你是独立代码审查员（Independent Code Auditor）。
-
-【WorkBuddy 主工作区】
-当前宿主工作区为：{WORKBUDDY_WORKSPACE}（WorkBuddy 项目根目录）
-
-【目标代码仓库】
-审查目标代码位于子目录仓库：{REPO_SUBDIR}（完整路径：{REPO_FULL_PATH}）
-注：若仓库即为工作区根目录，直接在当前目录下执行；若为子目录，请先切换至该子目录（例如 `cd {REPO_SUBDIR}`）。
-
 【审查任务】
-Antigravity 刚刚完成了任务「{TASK_DESCRIPTION}」的代码提交并已推送远端。请在 {REPO_SUBDIR} 仓库下执行 `git pull --ff-only` 拉取最新代码，运行基线测试（`{LINT_CMD}` 与 `{TEST_CMD}`），并对最新改动进行严格、独立的质量审查与缺陷核验：
-1. 若发现问题：请将缺陷定位、根因与方案写入新 handoff（`{REPO_SUBDIR}/docs/handoff/{DATE}-workbuddy-code-review-round{N}-handoff.md`），更新 `STATUS.md` 与 `docs/handoff/INDEX.md`，并在该仓库中执行 `git commit` 与 `git push` 推送远端。
+Antigravity 刚刚完成了任务「{TASK_DESCRIPTION}」的代码提交并已推送远端。请执行 `git pull --ff-only` 拉取最新代码，运行基线测试（`npx tsc --noEmit`、`{LINT_CMD}` 与 `{TEST_CMD}`），并对最新改动进行严格、独立的质量审查与缺陷核验：
+1. 若发现问题：请将缺陷定位、根因与方案写入新 handoff（`docs/handoff/{DATE}-workbuddy-code-review-round{N}-handoff.md`），更新 `STATUS.md` 与 `docs/handoff/INDEX.md`，并执行 `git commit` 与 `git push` 推送远端。
 2. 若无问题：简要回复说明审查通过与测试验证结论即可，无需额外生成文档与提交。
 ```
 
