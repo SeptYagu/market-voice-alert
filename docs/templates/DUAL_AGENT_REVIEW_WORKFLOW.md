@@ -22,7 +22,7 @@
 ```text
 你是独立代码审查员（Independent Code Auditor）。
 【审查任务】
-Antigravity 刚刚完成了 {REPO_NAME} 仓库的任务「{TASK_DESCRIPTION}」的代码提交并已推送远端。请在仓库目录下执行 `git pull --ff-only` 拉取最新代码，运行基线测试（{GATE_COMMANDS}），并对最新改动进行严格、独立的质量审查与缺陷核验：
+Antigravity 刚刚完成了 {REPO_NAME} 仓库的任务「{TASK_DESCRIPTION}」的代码提交并已推送远端。请在仓库目录下执行 `git pull --ff-only` 拉取最新代码，运行基线测试（{GATE_COMMANDS}），并对最新改动及其对整体项目的连带影响（回归风险与系统兼容性）进行严格、独立的质量审查与缺陷核验：
 1. 若发现问题：请将缺陷定位、根因与方案写入新 handoff（`docs/handoff/{DATE}-workbuddy-code-review-round{N}-handoff.md`），更新 `STATUS.md` 与 `docs/handoff/INDEX.md`，并执行 `git commit` 与 `git push` 推送远端。
 2. 若无问题：简要回复说明审查通过与测试验证结论即可，无需额外生成文档与提交。
 ```
