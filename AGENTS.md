@@ -52,20 +52,25 @@
 当 Antigravity 完成功能开发或缺陷修复并推送到 Git 后，必须按照以下流程触发 WorkBuddy 独立审查，形成自动验证闭环：
 
 ### 4.1 审查派发规则（Dispatch Protocol）
-- **目标目录**：仓库根目录 `D:\AiPrograms\project1\market-voice-alert`。
-- **派发方式**：调用 `workbuddy-bridge` 技能（模型调度与执行策略遵循该技能内建规则），以非阻塞后台任务派发，Antigravity 挂起等待回传。
+- **WorkBuddy 宿主工作区（cwd）**：`D:\AiPrograms\project1`（即用户在 WorkBuddy 桌面端已打开的主项目）。
+- **目标代码仓库**：子目录 `market-voice-alert`（完整路径：`D:\AiPrograms\project1\market-voice-alert`）。
+- **派发方式**：调用 `workbuddy-bridge` 技能（指定 `--cwd "D:\AiPrograms\project1"`，模型调度与执行策略遵循技能内建规则），以非阻塞后台任务派发，Antigravity 挂起等待回传。
 
-### 4.2 WorkBuddy 标准提示词模板（Reviewer Prompt）
-派发给 WorkBuddy 的任务描述按如下标准模板组织：
+### 4.2 WorkBuddy 标准提示词（Reviewer Prompt）
+派发给 WorkBuddy 的任务描述按如下模板组织（直接固化本项目已确定的工作区与仓库子目录）：
 ```text
 你是独立代码审查员（Independent Code Auditor）。
 
-【目标工作区】
-当前工作目录为：D:\AiPrograms\project1\market-voice-alert
+【WorkBuddy 主工作区】
+当前宿主工作区为：D:\AiPrograms\project1（WorkBuddy project1 项目根目录）
+
+【目标代码仓库】
+审查目标代码位于子目录仓库：market-voice-alert（完整路径：D:\AiPrograms\project1\market-voice-alert）
+注：请在子目录仓库 market-voice-alert 下（例如执行 `cd market-voice-alert`）执行以下审查与门禁操作。
 
 【审查任务】
-Antigravity 刚刚完成了任务「{TASK_DESCRIPTION}」的代码提交并已推送远端。请执行 `git pull --ff-only` 拉取最新代码，运行基线测试（`npm run lint` 与 `npm test`），并对最新改动进行严格、独立的质量审查与缺陷核验：
-1. 若发现问题：请将缺陷定位、根因与方案写入新 handoff（`docs/handoff/{DATE}-workbuddy-code-review-round{N}-handoff.md`），更新 `STATUS.md` 与 `docs/handoff/INDEX.md`，并执行 `git commit` 与 `git push` 推送远端。
+Antigravity 刚刚完成了任务「{TASK_DESCRIPTION}」的代码提交并已推送远端。请在 market-voice-alert 仓库下执行 `git pull --ff-only` 拉取最新代码，运行基线测试（`npm run lint` 与 `npm test`），并对最新改动进行严格、独立的质量审查与缺陷核验：
+1. 若发现问题：请将缺陷定位、根因与方案写入新 handoff（`market-voice-alert/docs/handoff/{DATE}-workbuddy-code-review-round{N}-handoff.md`），更新 `STATUS.md` 与 `docs/handoff/INDEX.md`，并在 market-voice-alert 仓库中执行 `git commit` 与 `git push` 推送远端。
 2. 若无问题：简要回复说明审查通过与测试验证结论即可，无需额外生成文档与提交。
 ```
 
