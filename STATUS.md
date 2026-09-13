@@ -1,5 +1,15 @@
 # STATUS.md - 项目状态
 
+## 2026-09-12 当前状态：`b601d1b` 修复核实 —— BUG-03 未闭环且引入回归（待修）
+
+对 `b601d1b`（*fix: 闭环修复独立审查报告缺陷 (BUG-01~04/P0-3/OPT-02)*）做独立复核，证据脚本 [`2026-09-12-review-fix-verification-repro.mjs`](docs/handoff/2026-09-12-review-fix-verification-repro.mjs)（双模式，**broken 基线 `0f134e3`**），报告 [`2026-09-12-review-fix-verification.md`](docs/handoff/2026-09-12-review-fix-verification.md)。
+
+- **真闭环**：BUG-01（MIME 实测 `.mjs`/`.txt`/`.wasm` 类型正确）、BUG-04（回填不再强制 `fitContent()`，改用实时 `getVisibleRange()` 锁定视口；`subscribeVisibleTimeRangeChange` 在 lightweight-charts 4.2.3 中确实存在）、P0-3（TXT 导出入口可用）、OPT-02（`computeVwap` 与旧三处实现在 15 组输入 × 2 站点逐点一致）。
+- **主体闭环**：BUG-02（永久超限可内存读回、二次超限裁到最新 3 条），但存在 2 处 Minor：内存降级条目在配额恢复后被静默遗忘；无 storage 时不启用内存兜底。
+- **❌ 未闭环且引入回归（Major）**：BUG-03。新 `patchLimitUpQuoteCells()` 只写 price/percent/amount/reason，**漏掉 `open` 与 `volumeRatio`**；行情富集后结构未变即走该补丁分支，导致涨停看板**「开盘价」列恒为 `0.00`、「量比」列恒为 `-`**（与 state 脱钩）。同一组断言在基线 PASS、在 HEAD FAIL，方向反转即判定依据。根因：审查报告对 BUG-03 的问题定性有误（`rerenderLimitUpPage` 本就经 WeakMap 复用 + `patchRow` 只改单元格），按报告「方案 B」照做会复制出第二套不完备补丁。
+- **门禁复跑与提交声称一致且全部通过**：lint 0 问题、单测 **806/806**、E2E **74/74**、build 成功 —— 但 BUG-03 与 BUG-04 **本次没有任何新增测试**，且全仓对 `[data-field="open"]`/`[data-field="ratio"]` 零断言，故回归被门禁全绿掩盖。
+- 另：本次新暴露的 TXT 导出含期货时输出 4 位裸数字，不满足 SPEC §3.2 的 6 位契约（Minor）。
+
 ## 2026-09-12 审查缺陷修复闭环（P0–P2 缺陷全面修复与 DRY 模块化落地）
 
 对照 `docs/handoff/2026-09-12-independent-full-codebase-review-handoff.md` 独立审查报告与演进路线图，落地全部 P0 关键缺陷、规范对齐、P1 DRY 抽离及 P2 局部 Patch 闭环：
