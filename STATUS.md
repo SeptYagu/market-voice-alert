@@ -1,6 +1,23 @@
 # STATUS.md - 项目状态
 
-## 2026-09-13 当前状态：WorkBuddy 审查（round 2）缺陷全面闭环（LRU tie-break 确定性加固 / Eastmoney 量比缺失语义对齐）—— 准备提交 WorkBuddy round 3 独立审查
+## 2026-09-13 当前状态：WorkBuddy 独立审查（round 3）—— 审查通过（无 P0/P1/P2，遗留 2 项 P3）
+
+审查报告：[`docs/handoff/2026-09-13-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-13-workbuddy-code-review-round3-handoff.md)
+被审 HEAD：`2f94e08`　审查基线：`518495d`
+
+对 `2f94e08`（round 2 缺陷闭环提交）逐行独立复核，结论 **通过**：
+
+1. **round 2 的 P2 已闭环** ✅：冻结时钟探针（孤岛 + 100 同毫秒写入）孤岛 100% 被淘汰、当前键 100% 保留；真实时钟复刻 `tests/storage.test.js:539` 场景 **300 次孤岛存活 0/300**（round 2 基线为 0.497–0.547）；永久配额失败 ×250 内存条目恒 = 100（有界）。
+2. **round 2 的 P3 主路径已闭环** ✅：`f50` 缺失/null/`'-'`/非数值均 → `undefined` → 渲染 `-`；有效值 /100、真实 0 保留。
+3. **门禁独立复现全部通过** ✅：`tests/storage.test.js` ×50 → 0 失败；`npm test` ×3 → 812/812；`npm run lint` 0/0；`npm run build` 成功；`npm run e2e` → **74/74 passed (1.2m)**；证据脚本 `--expect=fixed` → 5/5。
+4. **遗留 2 项 P3（非阻塞）** ⚠️：
+   - **P3-R3F1**：`parser.js:118-120` 对 `f50=''`/纯空白用 `Number('')===0` 判定，仍解析为 `0` 并渲染 `0.00`，未与 Tencent（`undefined → -`）完全对齐（存量为既有行为，非本轮回归）；
+   - **P3-R3F2**：`storage.js:539/556` 第三级 tie-break 使用 `localeCompare`（默认 locale 排序，非字节序「字典序」），实测对真实周期键 `...|1M`（月K）与 `...|1m`（1分）次序与码元序相反；不影响任何不变式，仅影响等价旧条目的取舍。
+5. **待确认风险 / 未验证项**：`localeCompare` 真实跨引擎差异未能实测（本机默认 locale 固定 en-US）；东财真实载荷中 `f50=''` 触发频率未量化；未在真实 localStorage 配额打满下验证。
+
+**建议后续**：优先修 P3-R3F1（空串归一 → `undefined`）与 P3-R3F2（两处改显式码元比较），并补对应断言。
+
+## 2026-09-13 历史状态：WorkBuddy 审查（round 2）缺陷全面闭环（LRU tie-break 确定性加固 / Eastmoney 量比缺失语义对齐）—— 已提交 round 3 独立审查
 
 最新交接文档：[`docs/handoff/2026-09-13-storage-lru-tiebreak-and-parser-ratio-round2-closure-handoff.md`](docs/handoff/2026-09-13-storage-lru-tiebreak-and-parser-ratio-round2-closure-handoff.md)
 前序审查报告：[`docs/handoff/2026-09-13-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-13-workbuddy-code-review-round2-handoff.md)
