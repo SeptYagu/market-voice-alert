@@ -354,13 +354,20 @@ function _readKlineCacheEntry(code, period) {
     if (raw) {
       const obj = JSON.parse(raw);
       if (obj && typeof obj === 'object' && obj.entries && obj.entries[key]) {
-        return obj.entries[key];
+        const entry = obj.entries[key];
+        if (entry && entry.code === code && entry.period === period) {
+          return entry;
+        }
       }
     }
   } catch {
     /* fallback */
   }
-  return _klineMemoryCache.get(key) || null;
+  const mem = _klineMemoryCache.get(key) || null;
+  if (mem && mem.code === code && mem.period === period) {
+    return mem;
+  }
+  return null;
 }
 
 function _writeKlineCacheObject(obj) {
@@ -457,6 +464,12 @@ function _persistKlineCacheWithFallback(obj, currentKey, currentEntry) {
 
   try {
     remove(KLINE_CACHE_KEY);
+    for (const k of Object.keys(obj.entries)) {
+      if (k !== currentKey) {
+        _klineAccessTimes.delete(k);
+        _klineMemoryCache.delete(k);
+      }
+    }
     _writeKlineCacheObject({
       version: 1,
       entries: { [currentKey]: currentEntry }
@@ -465,6 +478,12 @@ function _persistKlineCacheWithFallback(obj, currentKey, currentEntry) {
   } catch {
     // 彻底超限，清理持久化旧键并降级为纯内存 Map
     try { remove(KLINE_CACHE_KEY); } catch { /* ignore */ }
+    for (const k of Object.keys(obj.entries)) {
+      if (k !== currentKey) {
+        _klineAccessTimes.delete(k);
+        _klineMemoryCache.delete(k);
+      }
+    }
     _klineMemoryCache.set(currentKey, currentEntry);
     console.warn('[storage] Kline cache quota exceeded; persistent storage cleared, falling back to in-memory store.');
   }
@@ -493,12 +512,16 @@ export function klineCacheSet(code, period, data) {
   };
   obj.entries[key] = entry;
 
-  // LRU 容量
-  const entries = Object.entries(obj.entries);
-  if (entries.length > KLINE_MAX_ENTRIES) {
-    entries.sort((a, b) => _getEntryLastAccessed(a[1], a[0]) - _getEntryLastAccessed(b[1], b[0]));
-    const toRemove = entries.slice(0, entries.length - KLINE_MAX_ENTRIES);
-    for (const [k] of toRemove) {
+  // LRU 容量：合并持久化与内存副本统一计算上限与淘汰，杜绝孤岛副本残留
+  const allKeys = new Set([...Object.keys(obj.entries), ..._klineMemoryCache.keys()]);
+  if (allKeys.size > KLINE_MAX_ENTRIES) {
+    const sortedKeys = Array.from(allKeys).sort((k1, k2) => {
+      const e1 = obj.entries[k1] || _klineMemoryCache.get(k1);
+      const e2 = obj.entries[k2] || _klineMemoryCache.get(k2);
+      return _getEntryLastAccessed(e1, k1) - _getEntryLastAccessed(e2, k2);
+    });
+    const toRemove = sortedKeys.slice(0, allKeys.size - KLINE_MAX_ENTRIES);
+    for (const k of toRemove) {
       delete obj.entries[k];
       _klineAccessTimes.delete(k);
       _klineMemoryCache.delete(k);

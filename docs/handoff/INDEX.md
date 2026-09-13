@@ -4,7 +4,8 @@
 
 > **当前最新状态速读**：
 > - 状态综述：查阅项目根目录 [`STATUS.md`](../../STATUS.md)
-> - 最新交接：[`2026-09-13-workbuddy-code-review-round1-handoff.md`](2026-09-13-workbuddy-code-review-round1-handoff.md)（独立审查 ad69e35：BUG-02/03 确已闭环，但新引入 storage 孤岛副本 P0 回归）
+> - 最新交接：[`2026-09-13-storage-orphan-and-parser-ratio-closure-handoff.md`](2026-09-13-storage-orphan-and-parser-ratio-closure-handoff.md)（WorkBuddy 审查缺陷全面闭环：storage 孤岛副本清除、量比缺失语义与 pinnedSort 消除）
+> - 审查交接：[`2026-09-13-workbuddy-code-review-round1-handoff.md`](2026-09-13-workbuddy-code-review-round1-handoff.md)（独立审查 ad69e35：BUG-02/03 确已闭环，但新引入 storage 孤岛副本 P0 回归）
 > - 独立审查：[`2026-09-13-bug03-regression-and-storage-visibility-closure-handoff.md`](2026-09-13-bug03-regression-and-storage-visibility-closure-handoff.md)（BUG-03 回归修复与存储降级可见性闭环）
 > - 独立核验：[`2026-09-12-review-fix-verification.md`](2026-09-12-review-fix-verification.md)（独立核验 b601d1b，发现 BUG-03 回归）
 > - 独立审查：[`2026-09-12-independent-full-codebase-review-handoff.md`](2026-09-12-independent-full-codebase-review-handoff.md)（全仓架构与工程审查结论）
@@ -15,6 +16,7 @@
 
 | 日期 | 文档 | 说明 |
 | :--- | :--- | :--- |
+| 2026-09-13 | [`2026-09-13-storage-orphan-and-parser-ratio-closure-handoff.md`](2026-09-13-storage-orphan-and-parser-ratio-closure-handoff.md) | WorkBuddy 审查缺陷全面闭环（P0 storage 孤岛副本消除、P1 LRU 单测、P2 缺失量比语义对齐、P3 pinnedSort 消除） |
 | 2026-09-13 | [`2026-09-13-workbuddy-code-review-round1-handoff.md`](2026-09-13-workbuddy-code-review-round1-handoff.md) | 独立审查 ad69e35（round 1）：确认 BUG-02/03 闭环，指出新引入 storage 孤岛副本 P0 回归 |
 | 2026-09-13 | [`2026-09-13-review-round1-repro.mjs`](2026-09-13-review-round1-repro.mjs) | round 1 审查复现与判别力证据脚本（双模式，broken 基线 `ad69e35^`） |
 | 2026-09-13 | [`2026-09-13-bug03-regression-and-storage-visibility-closure-handoff.md`](2026-09-13-bug03-regression-and-storage-visibility-closure-handoff.md) | BUG-03 回归修复与存储降级可见性彻底闭环 |

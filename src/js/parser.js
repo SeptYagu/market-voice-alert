@@ -62,6 +62,8 @@ export function parseTencent(text) {
     const changePercent = parseFloat(fields[32]) || 0;
     const openChangePercent = (prevClose > 0 && open > 0) ? ((open - prevClose) / prevClose) * 100 : 0;
     const updateTime = /^\d{14}$/.test(String(fields[30] || '')) ? String(fields[30]) : '';
+    const vr = parseFloat(fields[49]);
+    const volumeRatio = Number.isFinite(vr) ? vr : undefined;
     out.push({
       code,
       name: fields[1] || code,
@@ -70,7 +72,7 @@ export function parseTencent(text) {
       open,
       volume: parseInt(fields[6], 10) || 0,
       amount: Number.isFinite(amountFromCompound) ? amountFromCompound : 0,
-      volumeRatio: parseFloat(fields[49]) || 0,
+      volumeRatio,
       openChangePercent: Number(openChangePercent.toFixed(2)),
       change,
       changePercent,

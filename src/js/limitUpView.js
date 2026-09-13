@@ -662,7 +662,8 @@ export function patchLimitUpRows(root, state) {
   if (!groupsSection) return false;
 
   const lu = state || {};
-  if (!limitUpRowsMatchDom(groupsSection, lu.groups, lu.items, lu.pinnedCodes, lu.pinnedSort)) {
+  const pinnedSort = (lu.groupSort && lu.groupSort.pinned) || lu.pinnedSort || { key: lu.sortKey || 'amount', direction: 'desc' };
+  if (!limitUpRowsMatchDom(groupsSection, lu.groups, lu.items, lu.pinnedCodes, pinnedSort)) {
     return false;
   }
 

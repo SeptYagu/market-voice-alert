@@ -32,7 +32,8 @@ import {
   klineCacheClear,
   klineCacheHas,
   klineCacheGetAccessTime,
-  isKlineCacheStale
+  isKlineCacheStale,
+  KLINE_MAX_ENTRIES
 } from '../src/js/storage.js';
 
 function createMockStorage() {
@@ -518,5 +519,24 @@ QUnit.module('storage.klineCache', (hooks) => {
     const readC1 = klineCacheGet('stock_c1', '1d');
     t.ok(readC1, 'c1 retrieved successfully');
     t.equal(readC1.items.length, 10, 'c1 has correct items');
+  });
+
+  QUnit.test('in-memory fallback entry is properly evicted by LRU capacity under write pressure', (t) => {
+    mock.setItem = () => {
+      throw new Error('Quota exceeded for stock_orphan');
+    };
+    const orphanData = makeKline('stock_orphan', '1d', 10);
+    klineCacheSet('stock_orphan', '1d', orphanData);
+    t.ok(klineCacheHas('stock_orphan', '1d'), 'stock_orphan is initially in memory fallback');
+
+    // 配额恢复，持续写入超过 KLINE_MAX_ENTRIES 个条目
+    mock.setItem = (k, v) => mock.map.set(k, String(v));
+    for (let i = 0; i < KLINE_MAX_ENTRIES + 10; i++) {
+      klineCacheSet(`stock_pressure_${i}`, '1d', makeKline(`stock_pressure_${i}`, '1d', 5));
+    }
+
+    // stock_orphan 应该被 LRU 容量淘汰清理，不再作为孤岛副本残留
+    t.strictEqual(klineCacheHas('stock_orphan', '1d'), false, 'stock_orphan evicted by LRU capacity');
+    t.strictEqual(klineCacheGet('stock_orphan', '1d'), null, 'stock_orphan cannot be read as stale cache');
   });
 });

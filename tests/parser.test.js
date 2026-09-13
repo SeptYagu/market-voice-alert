@@ -88,6 +88,14 @@ QUnit.module('parser.parseTencent', () => {
     t.equal(list[0].openChangePercent, 0, 'openChangePercent is 0 when open is 0, not -100%');
   });
 
+  QUnit.test('parses volumeRatio as undefined when fields[49] is missing or non-numeric', (t) => {
+    const quoteStr =
+      'v_sh600000="1~浦发银行~600000~10.00~10.00~0.00~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~~20240315091500~0.00~0.00~0.00~0.00~0/0/0~0~0~0.00~0.00~~0.00~0.00~0.00~0~0~0~0~0~~0.00~0~~GP-A~~~~~~~~~~~~~~~~~~~~~~~~~~~~~";';
+    const list = parseTencent(quoteStr);
+    t.equal(list.length, 1);
+    t.strictEqual(list[0].volumeRatio, undefined, 'missing volumeRatio returns undefined (renders as -)');
+  });
+
   QUnit.test('parses multiple quotes separated by semicolons', (t) => {
     const multi =
       moutaiQuote +
