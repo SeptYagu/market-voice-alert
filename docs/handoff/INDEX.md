@@ -5,8 +5,9 @@
 > **当前最新状态速读**：
 > - 状态综述：查阅项目根目录 [`STATUS.md`](../../STATUS.md)
 > - 最新调查（图表）：[`2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)（涨停看板切前一天图表逻辑错误根因剖析与解决方案）
-> - 最新交接（审查）：[`2026-09-14-workbuddy-code-review-round9-handoff.md`](2026-09-14-workbuddy-code-review-round9-handoff.md)（独立审查 e2a8f0d，round 9：**未通过**，P1×1 / P2×1 / P3×4；引用准确性全通过）
-> - 前序审查：[`2026-09-13-workbuddy-code-review-round3-handoff.md`](2026-09-13-workbuddy-code-review-round3-handoff.md)（独立审查 2f94e08，round 3：**通过**，无 P0/P1/P2；遗留 2 项 P3）
+> - 最新交接（审查）：[`2026-09-14-workbuddy-code-review-round10-handoff.md`](2026-09-14-workbuddy-code-review-round10-handoff.md)（独立审查 0305357，round 10：**未通过**，P1×1 / P2×1 / P3×1；引用与算术全通过）
+> - 前序审查：[`2026-09-14-workbuddy-code-review-round9-handoff.md`](2026-09-14-workbuddy-code-review-round9-handoff.md)（独立审查 e2a8f0d，round 9：**未通过**，P1×1 / P2×1 / P3×4；引用准确性全通过）
+> - 更早审查：[`2026-09-13-workbuddy-code-review-round3-handoff.md`](2026-09-13-workbuddy-code-review-round3-handoff.md)（独立审查 2f94e08，round 3：**通过**，无 P0/P1/P2；遗留 2 项 P3）
 > - 修复交接：[`2026-09-13-storage-lru-tiebreak-and-parser-ratio-round2-closure-handoff.md`](2026-09-13-storage-lru-tiebreak-and-parser-ratio-round2-closure-handoff.md)（round 2 缺陷闭环：LRU tie-break 确定性加固、Eastmoney 量比缺失语义对齐）
 > - 审查交接：[`2026-09-13-workbuddy-code-review-round2-handoff.md`](2026-09-13-workbuddy-code-review-round2-handoff.md)（独立审查 ffe92b3，round 2：P0/P3 修复有效，但新增 LRU 淘汰单测偶发失败 P2 未通过）
 > - 修复交接：[`2026-09-13-storage-orphan-and-parser-ratio-closure-handoff.md`](2026-09-13-storage-orphan-and-parser-ratio-closure-handoff.md)（round 1 缺陷闭环：storage 孤岛副本清除、量比缺失语义与 pinnedSort 消除）
@@ -21,6 +22,7 @@
 
 | 日期 | 文档 | 说明 |
 | :--- | :--- | :--- |
+| 2026-09-14 | [`2026-09-14-workbuddy-code-review-round10-handoff.md`](2026-09-14-workbuddy-code-review-round10-handoff.md) | 独立审查 0305357（round 10）：**未通过**。P1：改造点四只改 `getRefreshCodes()`，`#/limit-up` 路由下行情轮询器被 `stopMonitorTimer()` + `applySchedule(…,false)` 整体停摆，round 9 的 P1 未闭环；P2：§4.1.4/§4.2"股票快照恒不携带日期字段/恒定原地覆盖"与腾讯主源携带 `quoteDate`（`parser.js:64/82`）矛盾；P3：§4.3 `/api/cache/intraday` mock 桩缺 `{ok,data}` 信封 |
 | 2026-09-14 | [`2026-09-14-workbuddy-code-review-round9-handoff.md`](2026-09-14-workbuddy-code-review-round9-handoff.md) | 独立审查 e2a8f0d（round 9）：**未通过**。P1：修复方案未覆盖"历史看板下标的报价脱离刷新集合"（无报价→无合并/Tick/分时刷新）；P2：改造点二遗漏 `applyLiveTickToKlineChart` 同类调用点；P3×4：窗口阈值未量化、§2.4 无影响项、§4.3 缺分时 mock、§2.3/§3.2 前提互斥 |
 | 2026-09-14 | [`2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md) | 涨停看板切前一天图表逻辑错误（锁定前一天分时、抹杀今日日K）根因剖析、320根滑动窗口穿透机制与解决方案 |
 | 2026-09-13 | [`2026-09-13-workbuddy-code-review-round3-handoff.md`](2026-09-13-workbuddy-code-review-round3-handoff.md) | 独立审查 2f94e08（round 3）：**通过**，无 P0/P1/P2；遗留 2 项 P3（Eastmoney 空串量比、LRU tie-break localeCompare 非字节序） |

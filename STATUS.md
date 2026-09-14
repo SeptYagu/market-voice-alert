@@ -1,6 +1,22 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 独立审查 round 9（涨停看板历史日期图表）**未通过** —— P1×1 / P2×1 / P3×4
+## 2026-09-14 当前状态：WorkBuddy 独立审查 round 10（涨停看板历史日期图表修复方案）**未通过** —— P1×1 / P2×1 / P3×1
+
+审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round10-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round10-handoff.md)
+被审 HEAD：`0305357`　审查基线：`f48e592`　审查范围：`git diff f48e592..0305357`（5 文件 / +542 / -22，全为文档：`AGENTS.md`、`STATUS.md`、round 9 审查报告、图表调查报告、`docs/handoff/INDEX.md`）
+审查结论：**未通过**（1 项 P1、1 项 P2、1 项 P3，均须彻底修复闭环后复审）
+
+本轮通过的核查项（简）：§2.2 滑动窗口算术（T-1 = `min(240,320-x)`、T-2 = `max(0,80-x)`，x=80 归零）、§2.4 `isLatestKlineDate` 假阳性被 `intradayService.js:261` 中和、§4.3 盘前 `resolveStockChartDate` 锚定 `2026-09-11` 经独立脚本逐一复算**全部成立**；全文代码引用/行号（含 `app.js:1607`、`limitUpController.js:564-567`、`tests/_jsdom-setup.cjs:14-21/22-27`、`32da3ca→eae67ae` 迁移链）与 HEAD **逐条一致**；`npm test` 复跑 **814/814 通过**。
+
+**阻塞缺陷（摘要，细节见审查报告第二节）**：
+
+1. **P1（高）改造点四只改 `getRefreshCodes()`，`#/limit-up` 路由下行情轮询器被整体停摆 —— round 9 的 P1 未闭环**：`app.js:1607` 路由入口 `stopMonitorTimer()` + `app.js:1513-1515` `hasLimitUpRoot=true → applySchedule(allowed, false)` → `monitorController.js:82` `stopTimer()`（86 行 `setInterval` 永不建立）；`getRefreshCodes()` 唯一消费方即该停摆的 `refresh()`（25/38 行），全仓 `quotes.set` 仅 `app.js:952` / `momentumController.js:141,152` / `monitorController.js:44,50`，均不覆盖涨停页展开标的。文档"≤3s 内自动填充 `state.quotes`／持续 Tick 注入／10s 分时刷新"及 §4.4"3 处局部点位／风险低"均不成立。
+2. **P2（中）根因前提失实**：§4.1.4"股票快照行情流（`parser.js:108-126`）恒不携带 `tradingDay/date/quoteDate`"与 §4.2 问题现状 2"恒定落入原地覆盖分支"不成立 —— 股票报价**主源为腾讯**（`api.js:161`，东财仅 `api.js:172` 兜底），`parseTencent` 写入 `quoteDate`（`parser.js:64/82`），`kline.js:409-420` 走**追加**分支；独立脚本实测 `{price:21}` → 2 根（覆盖）、`{price:21,quoteDate:'20260914'}` → 3 根（追加）。该表述亦与 §4.2 自身代码 `q.quoteDate` 自相矛盾。
+3. **P3（低）§4.3 的 `/api/cache/intraday` mock 桩缺 `{ok,data}` 信封**：文档示例 `{ items: [], prevClose: 20.00 }` 不满足 `api.js:415`，实测退化为 4 次降级请求（东财 1m×2 + 腾讯 mkline），只定制该端点的测试将命中 `tests/_jsdom-setup.cjs:22-27` 的 `Unexpected network request`；正确桩需 `{ ok: true, data: { items: [], prevClose: 20.00 } }`（实测 1 次请求短路）。同段"`loadKline` 尾部无条件调用 `loadIntraday`"亦不准确（`chartRowController.js:397` 受 `if (this.hasIntraday)` 门控）。
+
+**处置建议**：先把改造点四上移到调度层（`app.js:1515` 的 `visible` 语义改为"任一需要共享行情的页面挂载即为真"、移除 `app.js:1607` 的无条件 `stopMonitorTimer()`）→ 再按 `api.js:150-176` + `parser.js:64/82` 重写 §4.1.4/§4.2 的条件式前提 → 最后修正 §4.3 mock 信封并补一条"展开后下一次 `fetchQuotes` 批次含该 code"的集成级断言。
+
+## 2026-09-14 历史状态：WorkBuddy 独立审查 round 9（涨停看板历史日期图表）**未通过** —— P1×1 / P2×1 / P3×4
 
 审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round9-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round9-handoff.md)
 被审 HEAD：`e2a8f0d`　审查基线：`f48e592`　审查范围：`git diff f48e592..e2a8f0d`（3 文件：`AGENTS.md`、`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`、`docs/handoff/INDEX.md`）
