@@ -4,9 +4,10 @@
 
 > **当前最新状态速读**：
 > - 状态综述：查阅项目根目录 [`STATUS.md`](../../STATUS.md)
-> - 最新调查（图表）：[`2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)（涨停看板切前一天图表逻辑错误根因剖析、调度层解耦与解决方案；round 13 缺陷已全面闭环，提交 round 14 复审）
-> - 最新交接（审查）：[`2026-09-14-workbuddy-code-review-round13-handoff.md`](2026-09-14-workbuddy-code-review-round13-handoff.md)（独立审查 c3f5bc0，round 13：**未通过**，P2×2 / P3×3；已于最新方案彻底闭环）
-> - 前序审查：[`2026-09-14-workbuddy-code-review-round12-handoff.md`](2026-09-14-workbuddy-code-review-round12-handoff.md)（独立审查 7b34bc5，round 12：**未通过**，P3×4；主项已闭环，残留项见 round 13）
+> - 最新调查（图表）：[`2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)（涨停看板切前一天图表逻辑错误根因剖析、调度层解耦与解决方案；round 13 缺陷已闭环，round 14 复审**未通过**——残留 2 项 P3）
+> - 最新交接（审查）：[`2026-09-14-workbuddy-code-review-round14-handoff.md`](2026-09-14-workbuddy-code-review-round14-handoff.md)（独立审查 33b8f53，round 14：**未通过**，P3×2；`STATUS.md` round 12 历史记录被改写成 round 13 才引入的条件式 / §4.3 沙盒以数值 `ms` 选中在合法配置下非唯一）
+> - 前序审查：[`2026-09-14-workbuddy-code-review-round13-handoff.md`](2026-09-14-workbuddy-code-review-round13-handoff.md)（独立审查 c3f5bc0，round 13：**未通过**，P2×2 / P3×3；主项已闭环，残留项见 round 14）
+> - 更早审查：[`2026-09-14-workbuddy-code-review-round12-handoff.md`](2026-09-14-workbuddy-code-review-round12-handoff.md)（独立审查 7b34bc5，round 12：**未通过**，P3×4；主项已闭环，残留项见 round 13）
 > - 更早审查：[`2026-09-14-workbuddy-code-review-round11-handoff.md`](2026-09-14-workbuddy-code-review-round11-handoff.md)（独立审查 147573a，round 11：**未通过**，P2×1 / P3×4；P2 主因已闭环，残留项见 round 12）
 > - 更早审查：[`2026-09-14-workbuddy-code-review-round10-handoff.md`](2026-09-14-workbuddy-code-review-round10-handoff.md)（独立审查 0305357，round 10：**未通过**，P1×1 / P2×1 / P3×1；已闭环）
 > - 更早审查：[`2026-09-14-workbuddy-code-review-round9-handoff.md`](2026-09-14-workbuddy-code-review-round9-handoff.md)（独立审查 e2a8f0d，round 9：**未通过**，P1×1 / P2×1 / P3×4；引用准确性全通过）
@@ -25,7 +26,8 @@
 
 | 日期 | 文档 | 说明 |
 | :--- | :--- | :--- |
-| 2026-09-14 | [`2026-09-14-workbuddy-code-review-round13-handoff.md`](2026-09-14-workbuddy-code-review-round13-handoff.md) | 独立审查 c3f5bc0（round 13）：**未通过**。P2×2：定时器沙盒单槽覆盖写导致步骤 (b) 捕获错回调、STATUS.md 残留 1607 与 Fake Timers 已证伪断言；P3×3：过强结论、A1 未按路径同步、保留根数与 241/243 前提冲突。已于最新方案全部闭环并提交 round 14 复审 |
+| 2026-09-14 | [`2026-09-14-workbuddy-code-review-round14-handoff.md`](2026-09-14-workbuddy-code-review-round14-handoff.md) | 独立审查 33b8f53（round 14）：**未通过**。P3×2：①`STATUS.md` round 12 闭环记录被改写成 round 13 才引入的条件式（round 12 实为无条件 `恒 ≥80`，当前文档为「常规 x≤240 时 ≥80」），并与同文件 round 13 段就「谁补齐该条件」互斥；②§4.3 沙盒以数值 `ms` 选中回调，在 `state.limitUp.refreshInterval === state.refreshInterval`（合法取值交集含 10000/30000）时同路径注册两个同 `ms` 定时器，文档要求的「唯一」断言不成立。round 13 的 P2-1/P2-2/P3-1/P3-2/P3-3 主项经探针与实跑复核确认闭环 |
+| 2026-09-14 | [`2026-09-14-workbuddy-code-review-round13-handoff.md`](2026-09-14-workbuddy-code-review-round13-handoff.md) | 独立审查 c3f5bc0（round 13）：**未通过**。P2×2：定时器沙盒单槽覆盖写导致步骤 (b) 捕获错回调、STATUS.md 残留 1607 与 Fake Timers 已证伪断言；P3×3：过强结论、A1 未按路径同步、保留根数与 241/243 前提冲突。主项已闭环，残留 2 项 P3 见 round 14 |
 | 2026-09-14 | [`2026-09-14-workbuddy-code-review-round12-handoff.md`](2026-09-14-workbuddy-code-review-round12-handoff.md) | 独立审查 7b34bc5（round 12）：**未通过**。P3×4：保留根数公式残留 / 1607 变异不可证伪 / A1 行 targetDate 矛盾 / Fake Timers 机制缺失。主项已闭环，残留项见 round 13 |
 | 2026-09-14 | [`2026-09-14-workbuddy-code-review-round11-handoff.md`](2026-09-14-workbuddy-code-review-round11-handoff.md) | 独立审查 147573a（round 11）：**未通过**。P2：§4.3 用例 7 的集成到达性断言无法证伪 P1（定时器存活断言无可达接入点，(b)(c) 分支绕过调度层）；P3×4：绝对化表述、A4 行矛盾、保留根数公式对齐、量化数值成立条件。P2 主因已于 round 12 复审确认闭环，残留 4 项 P3 见 round 12 |
 | 2026-09-14 | [`2026-09-14-workbuddy-code-review-round10-handoff.md`](2026-09-14-workbuddy-code-review-round10-handoff.md) | 独立审查 0305357（round 10）：**未通过**。P1：改造点四只改 `getRefreshCodes()`，`#/limit-up` 路由下行情轮询器被停摆；P2：§4.1.4/§4.2 绝对化表述与腾讯主源矛盾；P3：mock 桩缺信封。三项缺陷已在最新方案中彻底闭环，提交 round 11 复审 |

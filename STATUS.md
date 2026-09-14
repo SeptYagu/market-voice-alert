@@ -1,6 +1,21 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 审查（round 13）缺陷全面闭环（多定时器沙盒精确隔离/STATUS.md历史段落与断言校正/A1实测条目按路径对齐/241-243计数闭合）—— 提交 round 14 独立审查
+## 2026-09-14 当前状态：WorkBuddy 独立审查 round 14（涨停看板历史日期图表修复方案）**未通过** —— P3×2
+
+审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round14-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round14-handoff.md)
+被审 HEAD：`33b8f53`　审查基线：`f48e592`　审查范围：`git diff f48e592..33b8f53`（9 文件 / +1296 / -22，全为文档：`AGENTS.md`、`STATUS.md`、图表调查与解决方案文档、round 9-13 审查报告、`docs/handoff/INDEX.md`；相对 round 13 HEAD `c3f5bc0` 的增量 = 3 文件 / +71 / -53）
+审查结论：**未通过**（2 项 P3，均须彻底修复闭环后复审）
+
+本轮通过的核查项（简）：round 13 的 P2-1（§4.3 沙盒改为按自增 id 建表 + 按 `ms === state.refreshInterval` 选中）经独立探针在真实 `monitorController` + 真实 `limitUpCtrl` 路径下复现「默认配置仅注册 `ms=10000/30000` 两定时器、按 `ms` 选中唯一」；P2-2 已把错配历史段重写为 round 12 审查记录并清除 `1607 ⇒ timerCount` 与 Fake Timers 断言；P3-1 的 `§4.2:276` 锚点与「100% 精准对齐」已校正、`INDEX.md` 摘要已同步；P3-2 的 A1 已按 `loadKline`/`applyLiveTick` 拆列，探针以真实 `applyLiveQuoteToKline` 复算 `len`/末柱字段一致；P3-3 三处保留根数已带 `x ≤ 240` 条件。实跑 `node scripts/run-tests.mjs` = **814/814 通过（0 失败）**；本轮改动涉及的代码锚点逐条与 HEAD 一致。
+
+**阻塞缺陷（摘要，细节见审查报告第二节）**：
+
+1. **P3（低）`STATUS.md:57` 的 round 12 闭环记录被改写成 round 13 才引入的条件式**：由「修正为 `min(240, 320-x) 根，恒 ≥80`」（round 12 真实产出，`git show c3f5bc0:STATUS.md` 第 12 行 / `c3f5bc0:<doc>` 第 23 行可复核）改为「修正为 `min(240, 320-x) 根，**在 x≤240 时恒 ≥80**」——该措辞在 round 12 版本与 round 13 修复后的当前版本（`doc:23` 实为「常规 x≤240 时 ≥80」）上**均不成立**；且与同文件 `STATUS.md:25`（round 13 段称该 `x ≤ 240` 条件由 round 13 补齐）就「谁补齐了该条件」互斥。
+2. **P3（低）§4.3 沙盒以数值 `ms` 作为选中键，在合法配置下同时命中两个定时器**：`state.limitUp.refreshInterval`（可选 `10000/30000/60000`，持久化）与 `state.refreshInterval`（`3000/10000/30000`）同值时，`applyDataRefreshSchedule()` 会注册两个同 `ms` 定时器（探针实测 `registered ms = [10000,10000]`、`ms-matches = 2`），文档 `:418` 要求的「断言该定时器唯一」不成立；此时 `find()` 取到行情轮询回调仅依赖 `app.js:1515` 早于 `:1525` 的**注册顺序**，而非可唯一辨识的键。
+
+**处置建议**：先把 §4.3 选中键由数值 `ms` 改为身份型（或写入「先停用涨停列表定时器」前置条件并补齐 `state.limitUp.refreshInterval` 取值条件）→ 再把 `STATUS.md:57` 引文还原为 round 12 真实产出并与其 round 13 段闭合 → 顺带确认 `STATUS.md` 同类历史段（round 10 段 `:119`）的处置方式。
+
+## 2026-09-14 历史状态：WorkBuddy 审查（round 13）缺陷全面闭环（多定时器沙盒精确隔离/STATUS.md历史段落与断言校正/A1实测条目按路径对齐/241-243计数闭合）—— 提交 round 14 独立审查
 
 最新交接文档：[`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)
 前序审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round13-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round13-handoff.md)
