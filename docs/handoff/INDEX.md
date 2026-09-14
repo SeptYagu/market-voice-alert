@@ -4,8 +4,8 @@
 
 > **当前最新状态速读**：
 > - 状态综述：查阅项目根目录 [`STATUS.md`](../../STATUS.md)
-> - 最新调查（图表）：[`2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)（涨停看板切前一天图表逻辑错误根因剖析、调度层解耦与解决方案；round 11 缺陷闭环，round 12 复审仍有 4 项 P3 待修）
-> - 最新交接（审查）：[`2026-09-14-workbuddy-code-review-round12-handoff.md`](2026-09-14-workbuddy-code-review-round12-handoff.md)（独立审查 7b34bc5，round 12：**未通过**，P3×4；保留根数公式残留 / 1607 变异不可证伪 / A1 行 targetDate 矛盾 / Fake Timers 机制缺失）
+> - 最新调查（图表）：[`2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)（涨停看板切前一天图表逻辑错误根因剖析、调度层解耦与解决方案；round 12 缺陷已全面闭环，提交 round 13 复审）
+> - 最新交接（审查）：[`2026-09-14-workbuddy-code-review-round12-handoff.md`](2026-09-14-workbuddy-code-review-round12-handoff.md)（独立审查 7b34bc5，round 12：**未通过**，P3×4；已于最新方案彻底闭环）
 > - 前序审查：[`2026-09-14-workbuddy-code-review-round11-handoff.md`](2026-09-14-workbuddy-code-review-round11-handoff.md)（独立审查 147573a，round 11：**未通过**，P2×1 / P3×4；P2 主因已闭环，残留项见 round 12）
 > - 更早审查：[`2026-09-14-workbuddy-code-review-round10-handoff.md`](2026-09-14-workbuddy-code-review-round10-handoff.md)（独立审查 0305357，round 10：**未通过**，P1×1 / P2×1 / P3×1；已闭环）
 > - 更早审查：[`2026-09-14-workbuddy-code-review-round9-handoff.md`](2026-09-14-workbuddy-code-review-round9-handoff.md)（独立审查 e2a8f0d，round 9：**未通过**，P1×1 / P2×1 / P3×4；引用准确性全通过）
@@ -24,7 +24,7 @@
 
 | 日期 | 文档 | 说明 |
 | :--- | :--- | :--- |
-| 2026-09-14 | [`2026-09-14-workbuddy-code-review-round12-handoff.md`](2026-09-14-workbuddy-code-review-round12-handoff.md) | 独立审查 7b34bc5（round 12）：**未通过**。P3×4：①保留根数仍有 3 处（`:23` mermaid / `:68` T-2 / `:135`）与 `min(240,320-x)`/`max(0,80-x)` 冲突；②用例 7 的 `app.js:1607` 变异证伪声称不成立（`:1613` 必定重建定时器，实测 `timerCount` 0→1）；③§2.3 A1 行 `targetDate = null` 与 `loadKline` 路径/§4.2:211 矛盾；④用例 7(b) 的 "Fake Timers" 机制仓库不存在且未指明替代方案。round 11 的 P2 主因（`_internal()` 访问器 + 删除手动 `refresh()` 后门，对 `app.js:1515` 变异实测可证伪）已实质闭环 |
+| 2026-09-14 | [`2026-09-14-workbuddy-code-review-round12-handoff.md`](2026-09-14-workbuddy-code-review-round12-handoff.md) | 独立审查 7b34bc5（round 12）：**未通过**。P3×4：保留根数公式残留 / 1607 变异不可证伪 / A1 行 targetDate 矛盾 / Fake Timers 机制缺失。已于最新方案全部闭环并提交 round 13 复审 |
 | 2026-09-14 | [`2026-09-14-workbuddy-code-review-round11-handoff.md`](2026-09-14-workbuddy-code-review-round11-handoff.md) | 独立审查 147573a（round 11）：**未通过**。P2：§4.3 用例 7 的集成到达性断言无法证伪 P1（定时器存活断言无可达接入点，(b)(c) 分支绕过调度层）；P3×4：绝对化表述、A4 行矛盾、保留根数公式对齐、量化数值成立条件。P2 主因已于 round 12 复审确认闭环，残留 4 项 P3 见 round 12 |
 | 2026-09-14 | [`2026-09-14-workbuddy-code-review-round10-handoff.md`](2026-09-14-workbuddy-code-review-round10-handoff.md) | 独立审查 0305357（round 10）：**未通过**。P1：改造点四只改 `getRefreshCodes()`，`#/limit-up` 路由下行情轮询器被停摆；P2：§4.1.4/§4.2 绝对化表述与腾讯主源矛盾；P3：mock 桩缺信封。三项缺陷已在最新方案中彻底闭环，提交 round 11 复审 |
 | 2026-09-14 | [`2026-09-14-workbuddy-code-review-round9-handoff.md`](2026-09-14-workbuddy-code-review-round9-handoff.md) | 独立审查 e2a8f0d（round 9）：**未通过**。P1：修复方案未覆盖"历史看板下标的报价脱离刷新集合"（无报价→无合并/Tick/分时刷新）；P2：改造点二遗漏 `applyLiveTickToKlineChart` 同类调用点；P3×4：窗口阈值未量化、§2.4 无影响项、§4.3 缺分时 mock、§2.3/§3.2 前提互斥 |

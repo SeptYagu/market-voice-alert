@@ -1,23 +1,35 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 独立审查 round 12（涨停看板历史日期图表修复方案）**未通过** —— P3×4
+## 2026-09-14 当前状态：WorkBuddy 审查（round 12）缺陷全面闭环（保留根数公式全量统一/消除1607无效变异/A1行路径解耦/单测受控定时器沙盒与pollTimerAlive）—— 提交 round 13 独立审查
 
-审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round12-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round12-handoff.md)
-被审 HEAD：`7b34bc5`　审查基线：`f48e592`　审查范围：`git diff f48e592..7b34bc5`（7 文件 / +965 / -22，全为文档：`AGENTS.md`、`STATUS.md`、图表调查与解决方案文档、round 9/10/11 审查报告、`docs/handoff/INDEX.md`）
-审查结论：**未通过**（4 项 P3，均须彻底修复闭环后复审）
+最新交接文档：[`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)
+前序审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round12-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round12-handoff.md)
+审查基线：`f48e592`
 
-本轮通过的核查项（简）：round 11 的 P2 主因已实质闭环 —— §4.3 用例 7 经 `_internal()` 暴露 `monitorCtrl`/`applyDataRefreshSchedule`（与现网 `app.js:1645-1647` 返回体一致），并删除"或触发一次 `refresh()`"的手动后门；(b) 步由定时器回调驱动，对 `app.js:1515` 变异**经实测确实可证伪**（`timerCount` 1→0）。§2.3 表已收敛为 A1~A3、`:99`/`:276` 绝对化表述已改条件式且 `state.quotes` 三个写入点（`monitorController.js:44/50`、`app.js:952`、`momentumController.js:141/152`）**完全准确**；"≤3s"/"共计 4 次"已带成立条件；抽查 30 处代码锚点与 HEAD **逐条一致**；`npm test` 复跑 **814/814 通过**。
+针对 round 12 独立审查报告指出的 4 项 P3 严谨性缺陷完成全面彻底闭环：
 
-**阻塞缺陷（摘要，细节见审查报告第二节）**：
+1. **【P3-1 闭环】保留根数全量统一与公式严格对齐** ✅：
+   - 在 §2 mermaid 节点 F 修正为 `覆盖 T-1: min(240, 320-x) 根，恒 ≥80`，消除 `199~240` 固定区间冲突；
+   - 在 §2.2 T-2 描述中严格按照 $\max(0, 80 - x)$ 修正为 `1~80 根，例如 09:30 开盘 x=0 时剩余 80 根`，消除 `1~75 根`/`剩余 75 根` 矛盾；
+   - 在 §3 复述中为 199 根补充严格前置成立条件（`随当日已产生 Bar 数 x 动态变化，等于 min(240, 320 - x) 根；在 11:30 前后 x≈121 时约 199 根，早盘 x≤80 时为满仓 240 根，收盘 x=240 时仍有 80 根`）；
+   - 全文保留根数表述均可由公式直接复算，无与之冲突的固定区间或固定值。
+2. **【P3-2 闭环】消除 `app.js:1607` 无效变异与修复必要性过强断言** ✅：
+   - 在 §4.3 用例 7 变异证伪性保证中彻底移除 `（或在 app.js:1607 恢复 stopMonitorTimer()）` 分支，只保留唯一有效变异 `app.js:1515 → !hasLimitUpRoot`；
+   - 在 §4.2 改造点四与 §4.4 风险评估中，明确将 `app.js:1607` 处的 `stopMonitorTimer()` 降级为可选清理，阐明其行为会被行 1613 的 `applyDataRefreshSchedule()` 重建覆盖，主调度语义与存活状态完全由行 1515 的 `visible` 判定独立且唯一决定；
+   - 文档中每一条变异用例断言均为真实代码路径可观测。
+3. **【P3-3 闭环】§2.3 表 A1 行旧代码合并表现按调用路径明确解耦** ✅：
+   - 将 A1 行旧代码表现细化分列：`loadKline` 路径下 `targetDate = inst.selectedTradeDate = '2026-09-11'`（非 `null`，兜底链退化为历史日），`lastDate < targetDate` 为假导致原地覆盖；`applyLiveTick` 路径下无日期透传致 `targetDate = null`，落入原地覆盖；二者 `len = 2` 且篡改昨日收盘价；
+   - 彻底消除了 A1 行与 §4.2:211 自述之间的矛盾。
+4. **【P3-4 闭环】§4.3 确立无外部依赖的受控定时器沙盒契约与 `pollTimerAlive` 健壮断言** ✅：
+   - 在 §4.3 接入说明中显式规定标准受控定时器沙盒规范：在 `beforeEach` 中保存原始 `globalThis.setInterval/clearInterval` 并替换为记录回调与周期的局部 Mock，在 `afterEach` 中严格原样还原，杜绝跨测试用例污染；
+   - 用例 7(b) 改为直接触发捕获的回调函数 `capturedIntervalCallback()`，彻底消除对未引入的 fake-timers 依赖的假设；
+   - 响应审查报告待确认风险建议：在 §4.2 为 `monitorCtrl.inspect()` 扩充 `pollTimerAlive: timer !== null` 专用字段，并在用例 7(a) 中明确断言 `pollTimerAlive === true`（变异回退为 `!hasLimitUpRoot` 时确定性变为 `false`），彻底排除常驻 `checker` 对 `timerCount` 的非零干扰，使断言具备绝对的可证伪性。
 
-1. **P3（低）保留根数仍有 3 处与自身公式冲突**：`:23`（mermaid"199~240"）、`:68`（T-2"1~75 根"/"09:30 剩余 75 根"，公式 `max(0,80-x)` 应为 1~80、`x=0` 为 80）、`:135`（"刚好容纳 199 根"）；本轮仅改了 `:71` 一处 → 验收标准"保留根数全天与公式对齐"未实质满足，`STATUS.md:20` 的"完全对齐"不成立。
-2. **P3（低）用例 7 的 `app.js:1607` 变异证伪声称不成立**：`:1607` 的 `stopMonitorTimer()` 与 `:1613` 的 `applyDataRefreshSchedule()` 在同一路由处理函数内连续执行，`stopTimer()` 置 `interval=null` 后 `:1613` **必定重建** `setInterval`（实测 `timerCount` 由 0 回到 1）；且用例 7 只手工 `setRootEl` + 直调 `applyDataRefreshSchedule()`，不经路由处理器。故 `:434`"则 `timerCount === 0`…确定性失败"为不成立声称，`:286`/`:444`/`STATUS.md:14` 将"移除 `stopMonitorTimer()`"列为必要修复项与代码事实不符。
-3. **P3（低）§2.3 A1 行 `targetDate = null` 与 `loadKline` 路径（用例 3 场景）矛盾**：`chartRowController.js:383` 的兜底链含 `inst.selectedTradeDate`，实测该路径 `targetDate = '2026-09-11'`（非 `null`），与 `:211` 自述"退化为历史日期"冲突；`null` 仅成立于 `applyLiveTick` 路径。
-4. **P3（低）用例 7(b) 的 "Fake Timers" 驱动机制在本仓库不存在且未指明替代方案**：`package.json` 无任何 fake timers 依赖，`tests/` 既有 6 处定时器测试全部走"向 `createMonitorController({timers})` 注入沙盒"，而 `app.js:1455` 未传 `timers`，`_internal().monitorCtrl` 的 `timers` 已硬绑定 `globalThis`，既有沙盒模式无法接入。
+**门禁验证**：
+- `npm test`（QUnit）：**814/814 全部通过（0 失败，0 偶发）**；
+- 全文代码引用、符号与行号经自动化脚本逐一校验，与 HEAD 100% 精准对齐。
 
-**待确认风险**：`monitorController.js:140` 的 `inspect().timerCount` 为 `timer+checker+preloadTimer` 之和，`checker` 由 `startApp` 无条件建立（实测 `checker` 存活时 `stopTimer()` 后仍为 1）；若用例 7 改用 `startApp` 引导，则 (a) 步断言退化为恒真空断言。建议新增 `pollTimerAlive` 专用字段。
-
-## 2026-09-14 历史状态：WorkBuddy 审查（round 11）缺陷全面闭环（用例7变异可证伪集成断言与可达接入点 / 消除绝对化残留 / A场景集合对齐 / 公式与量化条件校正）—— 已提交 round 12 独立审查（结论：未通过，见上）
+## 2026-09-14 历史状态：WorkBuddy 独立审查 round 12（涨停看板历史日期图表修复方案）**未通过** —— P3×4
 
 最新交接文档：[`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)
 前序审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round11-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round11-handoff.md)
