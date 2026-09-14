@@ -34,6 +34,32 @@ export function formatIntradayPercentTick(value) {
   return hit ? _percentFormatter(n) : '';
 }
 
+export function calcIntradayVolumeColor(
+  close,
+  prevPrice,
+  fallbackColor = CANDLE_UP_COLOR,
+  colors = { up: CANDLE_UP_COLOR, down: CANDLE_DOWN_COLOR },
+  open = NaN
+) {
+  const c = Number(close);
+  const p = Number(prevPrice);
+  const upColor = (colors && colors.up) || CANDLE_UP_COLOR;
+  const downColor = (colors && colors.down) || CANDLE_DOWN_COLOR;
+  if (!Number.isFinite(c)) return fallbackColor;
+  if (Number.isFinite(p)) {
+    if (c > p) return upColor;
+    if (c < p) return downColor;
+    return fallbackColor;
+  }
+  const o = Number(open);
+  if (Number.isFinite(o)) {
+    if (c > o) return upColor;
+    if (c < o) return downColor;
+    return fallbackColor;
+  }
+  return fallbackColor;
+}
+
 const THEME_PALETTE = Object.freeze({
   warm: {
     background: '#FFFFFF',
@@ -743,19 +769,25 @@ export function createIntradayChart(container, opts = {}) {
       const value = currentPrevClose > 0 && Number.isFinite(close) ? (close / currentPrevClose - 1) * 100 : NaN;
       return Number.isFinite(value) ? { time, value } : { time };
     });
+    let lastValidPrice = currentPrevClose > 0 ? currentPrevClose : NaN;
+    let lastColor = colors.up;
     const volumeData = displayTimes.map((time) => {
-        const it = byTime.get(time);
-        if (!it) return { time };
-        const value = Number(it.volume);
-        if (!Number.isFinite(value)) return { time };
-        const close = Number(it.close);
-        const open = Number(it.open);
-        return {
-          time,
-          value,
-          color: close >= open ? colors.up : colors.down
-        };
-      });
+      const it = byTime.get(time);
+      if (!it) return { time };
+      const close = Number(it.close);
+      const color = calcIntradayVolumeColor(close, lastValidPrice, lastColor, colors, it.open);
+      if (Number.isFinite(close)) {
+        lastValidPrice = close;
+        lastColor = color;
+      }
+      const value = Number(it.volume);
+      if (!Number.isFinite(value)) return { time };
+      return {
+        time,
+        value,
+        color
+      };
+    });
 
     const validPrices = priceData.map((d) => d.value).filter(Number.isFinite);
     if (currentPrevClose > 0 && validPrices.length) {
@@ -853,8 +885,25 @@ export function createIntradayChart(container, opts = {}) {
       percentSeries.setData(displayPercentData);
     }
     if (Number.isFinite(Number(point.volume))) {
-      const isUp = Number(point.close) >= Number(point.open || point.close);
-      const mergedVolume = _mergeDisplayPoint(displayVolumeData, time, Number(point.volume), isUp ? colors.up : colors.down);
+      let prevPrice = NaN;
+      let prevColor = colors.up;
+      const idx = displayPriceData.findIndex((d) => Number(d.time) === time);
+      if (idx > 0) {
+        for (let i = idx - 1; i >= 0; i--) {
+          const d = displayPriceData[i];
+          if (d && Number.isFinite(d.value)) {
+            prevPrice = d.value;
+            const v = displayVolumeData[i];
+            if (v && v.color) prevColor = v.color;
+            break;
+          }
+        }
+      }
+      if (!Number.isFinite(prevPrice) && currentPrevClose > 0) {
+        prevPrice = currentPrevClose;
+      }
+      const color = calcIntradayVolumeColor(close, prevPrice, prevColor, colors, point.open);
+      const mergedVolume = _mergeDisplayPoint(displayVolumeData, time, Number(point.volume), color);
       if (mergedVolume.appended) appended = true;
       displayVolumeData = mergedVolume.data;
       volumeSeries.setData(displayVolumeData);
@@ -925,5 +974,15 @@ export function createIntradayChart(container, opts = {}) {
     if (detailLegend) detailLegend.root.remove();
   }
 
-  return { setData, updatePoint, applyTheme, resize, fitContent, getVisibleRange, setVisibleRange, destroy };
+  return {
+    setData,
+    updatePoint,
+    applyTheme,
+    resize,
+    fitContent,
+    getVisibleRange,
+    setVisibleRange,
+    _getDisplayVolumeData: () => displayVolumeData,
+    destroy
+  };
 }

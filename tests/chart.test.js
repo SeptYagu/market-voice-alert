@@ -7,7 +7,8 @@ import {
   CANDLE_DOWN_COLOR,
   MA_COLORS,
   INTRADAY_PERCENT_TICKS,
-  formatIntradayPercentTick
+  formatIntradayPercentTick,
+  calcIntradayVolumeColor
 } from '../src/js/chart.js';
 
 QUnit.module('chart.getChartThemeColors', () => {
@@ -231,4 +232,57 @@ QUnit.module('chart.createIntradayChart (instance API)', (hooks) => {
     ctl.applyTheme('dark');
     ctl.destroy();
   });
+
+  QUnit.test('calcIntradayVolumeColor adheres to standard red-up / green-down rules', (t) => {
+    // 价格较上一分钟上涨 -> 红色
+    t.equal(calcIntradayVolumeColor(10.5, 10.2), CANDLE_UP_COLOR, 'close > prevPrice is red');
+    // 价格较上一分钟下跌 -> 绿色
+    t.equal(calcIntradayVolumeColor(9.8, 10.0), CANDLE_DOWN_COLOR, 'close < prevPrice is green');
+    // 价格与上一分钟持平 -> 延续 fallbackColor
+    t.equal(calcIntradayVolumeColor(10.0, 10.0, CANDLE_DOWN_COLOR), CANDLE_DOWN_COLOR, 'close === prevPrice maintains fallback green');
+    t.equal(calcIntradayVolumeColor(10.0, 10.0, CANDLE_UP_COLOR), CANDLE_UP_COLOR, 'close === prevPrice maintains fallback red');
+    // 首根无昨收时回退 open
+    t.equal(calcIntradayVolumeColor(10.5, NaN, CANDLE_UP_COLOR, undefined, 10.2), CANDLE_UP_COLOR, 'fallback to open > close');
+    t.equal(calcIntradayVolumeColor(9.8, NaN, CANDLE_UP_COLOR, undefined, 10.0), CANDLE_DOWN_COLOR, 'fallback to open < close');
+    // 无效输入回退 fallbackColor
+    t.equal(calcIntradayVolumeColor(NaN, 10.0, CANDLE_UP_COLOR), CANDLE_UP_COLOR, 'invalid close falls back');
+  });
+
+  QUnit.test('intraday chart assigns red/green volume bar colors correctly across rising and falling minutes', (t) => {
+    const host = makeHost();
+    const ctl = createIntradayChart(host, { theme: 'warm', height: 360 });
+    // 首根比对 preClose(10.0):
+    // 1780622100: close 10.5 > 10.0 -> 红
+    // 1780622160: close 10.2 < 10.5 -> 绿
+    // 1780622220: close 10.2 === 10.2 -> 绿（持平延续）
+    // 1780622280: close 10.6 > 10.2 -> 红
+    ctl.setData([
+      { time: 1780622100, close: 10.5, volume: 100, preClose: 10.0, percent: 5 },
+      { time: 1780622160, close: 10.2, volume: 150, preClose: 10.0, percent: 2 },
+      { time: 1780622220, close: 10.2, volume: 80, preClose: 10.0, percent: 2 },
+      { time: 1780622280, close: 10.6, volume: 200, preClose: 10.0, percent: 6 }
+    ]);
+
+    const volData = ctl._getDisplayVolumeData();
+    const barsWithVol = volData.filter((d) => Number.isFinite(d.value));
+    t.equal(barsWithVol.length, 4, '4 volume bars present');
+    t.equal(barsWithVol[0].color, CANDLE_UP_COLOR, 'bar 1 (10.5 > 10.0 preClose) is red');
+    t.equal(barsWithVol[1].color, CANDLE_DOWN_COLOR, 'bar 2 (10.2 < 10.5) is green');
+    t.equal(barsWithVol[2].color, CANDLE_DOWN_COLOR, 'bar 3 (10.2 === 10.2) keeps green');
+    t.equal(barsWithVol[3].color, CANDLE_UP_COLOR, 'bar 4 (10.6 > 10.2) is red');
+
+    // 测试 updatePoint 动态更新量柱颜色：
+    // 第 5 根：初始报价 10.1 < 10.6 -> 绿
+    ctl.updatePoint({ time: 1780622340, close: 10.1, volume: 90 });
+    let updatedVol = ctl._getDisplayVolumeData().filter((d) => Number.isFinite(d.value));
+    t.equal(updatedVol[4].color, CANDLE_DOWN_COLOR, 'live tick (10.1 < 10.6) is green');
+
+    // 第 5 根追加更高报价：10.9 > 10.6 -> 翻红
+    ctl.updatePoint({ time: 1780622340, close: 10.9, volume: 120 });
+    updatedVol = ctl._getDisplayVolumeData().filter((d) => Number.isFinite(d.value));
+    t.equal(updatedVol[4].color, CANDLE_UP_COLOR, 'live tick update (10.9 > 10.6) turns red');
+
+    ctl.destroy();
+  });
 });
+
