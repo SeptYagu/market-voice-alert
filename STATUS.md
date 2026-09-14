@@ -1,6 +1,21 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 审查（round 16）缺陷全面闭环（320 根滑动窗口保留根数与滑出阈值通用化与日长前提统一）—— 提交 round 17 独立审查
+## 2026-09-14 当前状态：WorkBuddy 独立审查 round 17（涨停看板历史日期图表修复方案）**未通过** —— P3×2
+
+审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round17-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round17-handoff.md)
+被审 HEAD：`90a0d60`　审查基线：`f48e592`　审查范围：`git diff f48e592..90a0d60`（12 文件 / +1598 / -22，全为文档：`AGENTS.md`、`STATUS.md`、图表调查与解决方案文档、round 9-16 审查报告、`docs/handoff/INDEX.md`；相对 round 16 审查报告 `5d6a323` 的增量 = 3 文件 / +32 / -14）
+审查结论：**未通过**（2 项 P3，须彻底修复闭环后复审）
+
+本轮通过的核查项（简）：round 16 的 1 项 P3 在 **T-2 侧确认闭环** —— `doc:68` 已升级为通用式 `max(0, 320-x-n)`，`x=0` 上限 77/79/80、滑出阈值 `x ≥ 320-n`（77~80）与 `doc:29`/`:72`/`:138-139`/`:143` 横向一致，仓库外探针按 `n ∈ {240,241,243}` 逐 `x` 回放全部相符；round 15 已闭环项未回退（真实 `REFRESH_OPTIONS`=[3000,10000,30000,60000] × `LIMIT_UP_REFRESH_OPTIONS`=[10000,30000,60000] 复算交集恰为三档，`doc:419` 碰撞示例齐备、`doc:385` 为「可配置 `3/10/30/60` 秒」；`pollTimerId` 纯身份键在真实 `monitorController` + 同 `ms` 双注册下按 id 唯一取到行情轮询条目，`visible=false` 变异确定性清空）；`STATUS.md` 历史段逐字未变（round 16 段仅标题由「当前状态」下移为「历史状态」）；实跑 `node scripts/run-tests.mjs` = **814/814 通过（0 失败）**。
+
+**阻塞缺陷（摘要，细节见审查报告第二节）**：
+
+1. **P3-1（低）mermaid 节点 F 的 T-1 保留下界「≥77~80 根」在其自述前提（`x ≤ 240`）下不可复算**：`doc:23`；`min(n, 320-x)` 在 `x ∈ [0,240]`、`n ∈ {240,241,243}` 上的下界**恒为 80**，`77` 需 `x = 243` 才可达（已越出该节点自述前提）；且与同文件 `doc:71`「全天随 x 递减并保持在 80~240 根」自相矛盾。根因：把 T-2 的 n 驱动阈值语言（77~80）横向移植到 T-1 覆盖节点，而 T-1 侧 `n` 仅抬高上界、不下放下界。
+2. **P3-2（低）T-1 收盘保留 77~79 根被错误归因于「`n` 达到 241/243 根」**：`doc:71` / `doc:135`；复算 `min(n, 320-x)`：收盘 `x=240` 时 `n = 240/241/243` 均得 **80**；`79/77` 仅由**当日** `x=241/243` 触发，与 `n` 无关（`n` 维度真正驱动的是 T-2 的 `max(0, 320-x-n)`）。本文件被审版（`90a0d60`）`:13` 的本轮闭环自述沿用同一错置（插入本段后位于 `:28`）。
+
+**处置建议**：仅需修正 `doc:23`、`doc:71`、`doc:135` 的 T-1 侧保留根数下界与 `n` 归因，并同步更正本轮新增的 `STATUS.md` 闭环自述（不涉及产品代码与测试），保持 T-2 侧已闭环表述与 `STATUS.md` 全部历史段原文不动，即可提交 round 18 复审。
+
+## 2026-09-14 历史状态：WorkBuddy 审查（round 16）缺陷全面闭环（320 根滑动窗口保留根数与滑出阈值通用化与日长前提统一）—— 提交 round 17 独立审查
 
 最新交接文档：[`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)
 前序审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round16-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round16-handoff.md)
