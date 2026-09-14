@@ -58,7 +58,7 @@ resolveTradeDate: (code, data) => {
    - 腾讯旧版 K 线构造函数 [`buildTencentKlineUrl`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/kline.js#L194)（默认参数行位于 [`kline.js:200`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/kline.js#L200)）其默认限制均为 **320 根 Bar**（`lmt=320`）。
    - 在服务端实现中，分时服务（[`server/intradayService.js:203`](file:///d:/AiPrograms/project1/market-voice-alert/server/intradayService.js#L203)）在主历史源不可用时，会调用 `getCachedKline({ period: '1m' })` 降级提取历史分钟 Bar。当东财接口遇到限流冷却（`klineService.js:86-122`）而降级回退到腾讯源时，本地缓存的分钟 K 线（如 `data/cache/kline/sh600519/1m.json`，源标为 `tencent-legacy`）严格受限于这 **320 根 Bar 的滚动滑动窗口**。
 2. **A 股时间尺度与滑动窗口实际分布**：
-   A 股每个常规交易日包含 240 根 1 分钟 Bar（9:30-11:30 为约 121 根含开盘点，13:00-15:00 为 120 根）。在盘中运行时，320 根 Bar 的分布特性如下：
+   A 股每个常规交易日标准包含 240 根 1 分钟 Bar（早盘 9:30-11:30 与午盘 13:00-15:00 各 120 根；若腾讯等数据源计入 9:25 开盘集合竞价点则为 241 根，上午盘约 121 根）。在盘中运行时，320 根 Bar 的分布特性如下：
    - **当天（T）**：盘中已产生的部分 Bar 优先占据窗口顶部（例如上午 11:30 产生约 121 根 Bar）。
    - **前一天（T-1）**：窗口剩余容量（320 - 121 = 199 根）完整容纳前一交易日的大部分/全部 Bar（盘前未开盘时则为完整 240 根）。
    - **前两天（T-2）**：由于 121 + 240 = 361 > 320，前两天的数据已被物理滑出窗口，匹配项恒为 0 根。
@@ -133,12 +133,12 @@ function isLatestKlineDate(inst, date) {
 
 1. **状态职责正交分离（核心原则）**：
    - **看板列表筛选日期（`state.limitUp.selectedDate`）**：其职责仅限于**涨停股票列表的数据集过滤与历史回溯**（即筛选出指定历史交易日上榜的标的池）。
-   - **图表实例初始日期（`inst.selectedTradeDate`）**：展开图表的核心用户诉求是**复盘过往涨停标的在“当下”的溢价、接力与最新价格走势**。因此，无论列表当前筛选哪一天，新展开的图表默认**必须且只能以最新可用交易日（`latestTradingDay` / 今日）作为初始上下文**，严禁被列表的筛选日期劫持。
+   - **图表实例初始日期（`inst.selectedTradeDate`）**：展开图表的核心用户诉求是**复盘过往涨停标的在“当下”的溢价、接力与最新价格走势**。因此，无论列表当前筛选哪一天，新展开的图表默认**以最新可用交易日（`latestTradingDay` / 盘中为今日，开盘前 09:15 前按交易日历自动锚定上一交易日）作为初始上下文**，严禁被列表的筛选日期劫持。
 2. **主动下钻 vs 默认呈现**：
    - **默认呈现**：展开即展示当下全量日 K 与今日最新分时（具备实时 Tick 注入与定时刷新）。
    - **主动下钻通道**：保留并依托成熟的原生交互能力——用户若确需回溯某历史日期的分时细节，在右侧日 K 图中主动点击对应历史蜡烛柱（[`chartRowController.handleKlineBarClick`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L491)），由显式的人机交互触发分时切换。
 3. **实时时钟防污染契约**：
-   - 实时行情（Live Quote）在语义上恒为“当前最新的市场报价”，其对应的 K 线目标日期必须锚定**交易日历的当前交易日**（[`resolveStockChartDate`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/tradeCalendar.js#L118)），绝不允许退化回退到实例可能持有的历史 `selectedTradeDate`。
+   - 实时行情（Live Quote）在语义上代表最新市场快照。在缺少显式交易日或行情日期字段（`tradingDay`/`date`/`quoteDate`）时，其对应的 K 线目标日期**回退兜底必须锚定交易日历的当前可用交易日**（[`resolveStockChartDate`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/tradeCalendar.js#L118)），严禁退化回退到图表实例可能持有的历史 `selectedTradeDate`。
 
 ---
 
@@ -202,18 +202,20 @@ function isLatestKlineDate(inst, date) {
 为确保架构优化落地且绝不发生回归，需在现有 814 个测试用例基础上扩展以下针对性测试矩阵。
 
 > [!IMPORTANT]
-> **全局时钟确定性约定（全矩阵消除时钟 Flaky 隐患）**：
-> 生产代码中的 `resolveStockChartDate` 与 `isLiveTradeDate` 均默认读取宿主 `new Date()`。为杜绝测试在非交易日运行、或在每天 09:15 集合竞价前运行测试时因锚点回退导致预期结果漂移，**以下所有涉及交易日解析、日 K 合并及实时性判定的单测，均统一在测试前置（`beforeEach`）Mock 全局 `Date` 至盘中时刻（例如 `2026-09-14 10:00:00+08:00`）并在测试结束后恢复**。该全局前置约定彻底切断了宿主环境墙上时钟对测试确定性的干扰。
+> **测试环境时钟基准与确定性约定（对齐既有 Harness）**：
+> 仓库现有的单测底座（[`tests/_jsdom-setup.cjs:14-21`](file:///d:/AiPrograms/project1/market-voice-alert/tests/_jsdom-setup.cjs#L14-L21)）在离线单测模式下默认注入了 `TestDate`，将全局时间固定锚定在基准日 `2026-09-09T02:00:00Z`（即北京时间 `2026-09-09 10:00:00`）。
+> 本测试矩阵之所以需要在测试前置（`beforeEach`）中重设全局 `Date`，是因为**测试用例业务场景设定的断言目标日期为 `2026-09-14`（周一），与底座全局默认锚点（`2026-09-09` 周三）存在基线偏差**。
+> 因此，以下所有用例统一在 `beforeEach` 中将全局 `Date` 显式重设为目标盘中时刻（`2026-09-14 10:00:00+08:00`），并注入包含 `['2026-09-10', '2026-09-11', '2026-09-14']` 的交易日历与有效行情桩，在 `afterEach` 中恢复为底座的 `TestDate` 默认锚点。此举确保测试场景完全自包含、确定性且不破坏全局测试套件。
 
 1. **涨停看板图表初始化交易日单测**（扩展 `tests/chartRowController.test.js` 或新建 `tests/limitUpChartInit.test.js`）：
-   - **用例 1**：在 Mock 盘中时刻（`2026-09-14 10:00:00`）下，模拟看板处于历史日期 `state.limitUp.selectedDate = '2026-09-11'`（T-1）。完整执行实例注册与展开调用序列（对照 `limitUpController.js:564-567 handleLimitUpOpenKline`）：
+   - **用例 1**：在 Mock 盘中时刻（`2026-09-14 10:00:00`）且交易日历包含 `['2026-09-10', '2026-09-11', '2026-09-14']` 下，模拟看板处于历史日期 `state.limitUp.selectedDate = '2026-09-11'`（T-1）。完整执行实例注册与展开调用序列（对照生产代码 `limitUpController.js:564-567` 的注册与展开链路，在单测中直接注册实例并调用底层 manager）：
      ```javascript
      lu.expandedCodes.add(code);
      lu.chartInstances.set(code, createChartState('1d'));
      await limitUpChartMgr.loadKline(code);
      ```
      断言实例初始化完成后的 `selectedTradeDate` 最终为当前最新可用交易日（`2026-09-14`），而非看板历史日期 `2026-09-11`。
-   - **用例 2**：模拟看板翻到 `state.limitUp.selectedDate = '2026-09-10'`（T-2），同样执行上述标准注册与展开调用序列，断言初始化的 `selectedTradeDate` 恒为最新可用交易日（`2026-09-14`）。
+   - **用例 2**：在 Mock 盘中时刻（`2026-09-14 10:00:00`）下，模拟看板翻到 `state.limitUp.selectedDate = '2026-09-10'`（T-2），同样执行上述标准注册与展开调用序列，断言初始化的 `selectedTradeDate` 恒为最新可用交易日（`2026-09-14`）。
 2. **实时报价日期防污染与追加日 K 蜡烛单测**（扩展 `tests/chartRowController.test.js`）：
    - **用例 3**：在 Mock 盘中时刻（`2026-09-14 10:00:00`）下，构造 `inst.selectedTradeDate = '2026-09-11'`（模拟用户正在看历史分时），日 K 历史列表最后一根为 `2026-09-11`，注入不带日期字段的纯价格报价 `{ price: 21.00 }`。执行 `loadKline` 报价合并逻辑，断言合并后的日 K 数据项成功追加了 `2026-09-14` 的新蜡烛 Bar（数组长度加 1），且上一根（`2026-09-11`）的收盘价与成交量保持原样未被覆盖。
 3. **历史分时点击下钻与回归今日的闭环测试**：
@@ -226,8 +228,8 @@ function isLatestKlineDate(inst, date) {
 - **风险等级**：**低（Low）**。
   - 改动严格受控在前端图表控制器的初始日期决策与报价合并日期兜底两个局部点位（2 处核心代码改动 + 1 项原生交互能力保留）。
   - 不涉及服务端接口改动，不影响涨停板核心筛选、语音告警、主监控表格等业务链路。
-- **向下兼容性**：**100% 兼容**。
-  - 完全保留用户通过日 K 柱子主动下钻查阅历史分时的全部既有功能。
+- **向下兼容性**：**良好兼容**。
+  - 除修正看板翻页时展开图表被历史日期劫持的异常行为外，完整保留用户通过日 K 柱子主动下钻查阅历史分时的全部既有功能。
 - **验证与回滚预案**：
   - 实施时先运行全量测试套件保证基线不坏；
   - 若在生产验证阶段发现任何未预期的行为偏差，仅需回滚两处代码即可安全恢复至改动前状态。
