@@ -1,6 +1,20 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 审查（round 14）缺陷全面闭环（沙盒纯身份键绑定/消除ms碰撞/STATUS历史引文还原与归属闭合）—— 提交 round 15 独立审查
+## 2026-09-14 当前状态：WorkBuddy 独立审查 round 15（涨停看板历史日期图表修复方案）**未通过** —— P3×1
+
+审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round15-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round15-handoff.md)
+被审 HEAD：`bd0e939`　审查基线：`f48e592`　审查范围：`git diff f48e592..bd0e939`（10 文件 / +1412 / -22，全为文档：`AGENTS.md`、`STATUS.md`、图表调查与解决方案文档、round 9-14 审查报告、`docs/handoff/INDEX.md`；相对 round 14 HEAD `1adf743` 的增量 = 3 文件 / +39 / -14）
+审查结论：**未通过**（1 项 P3，须彻底修复闭环后复审）
+
+本轮通过的核查项（简）：round 14 的 2 项 P3 主项经独立复核**均确认闭环** —— ①`STATUS.md:95` 的 round 12 引文与 `git show c3f5bc0:STATUS.md | sed -n '12p'` 逐字一致（无条件 `恒 ≥80`），与 `STATUS.md:63`（round 13 段）归属唯一、不再互斥；②§4.3 已改为 `registeredTimers.get(inspect().pollTimerId)` 纯身份键，仓库外探针（真实 `monitorController` + 文档 §4.3 原样沙盒）确证 `pollTimerId` 即沙盒 `setInterval` 返回的注册 id，在 `limitUp.ms === monitor.ms`（`10000`/`30000`/`60000` 三档同 ms 撞车）下仍唯一取到行情轮询回调。实跑 `node scripts/run-tests.mjs` = **814/814 通过（0 失败）**；本轮改动涉及的全部代码锚点（`app.js:151-156/499/803/1569/1515/1525/1602-1614/1645-1647`、`monitorController.js:83-86/140`、`limitUpController.js:424/438`、`format.js:3-7`、`storage.js:226-235`）逐条与 HEAD 一致。
+
+**阻塞缺陷（摘要，细节见审查报告第二节）**：
+
+1. **P3（低）§4.3 对 `state.refreshInterval` 合法取值域的枚举与代码不符（遗漏 `60000`）**：本轮新增文本 `doc:419` 写「`ms = state.refreshInterval`，默认 `10000`，可选 `3000/10000/30000`」「（例如同为 `10000` 或同为 `30000`）」，同类实例 `doc:385`「默认 10s，可选 3s」；而代码 `src/js/app.js:151-156` 的 `REFRESH_OPTIONS` 为 `[3000, 10000, 30000, 60000]`，且 `:803` 以该白名单校验、`:1569` 直接载入持久化值 → `60000` 为真实可达值，并使 `state.limitUp.refreshInterval === state.refreshInterval === 60000` 成为**第三个同 ms 碰撞档位**，文档的"全组合"行情侧取值域被少列一档。探针实测 `monitorMs=limitUpMs=60000` → `ms-matches=2`。根因：为回应 round 14「不得出现未带取值条件的定值断言」扩写括注时，沿用了 round 14 报告 `:38` 中 `REFRESH_OPTIONS = [3000,10000,30000]`（同为漏 `60000`）而未回代码求证。修复：`doc:419` 补 `60000` 与第三碰撞档、`doc:385` 改为「可配置 `3/10/30/60` 秒」；`STATUS.md:37` 等 round 14 历史段按原文保留、不得回填改写。
+
+**处置建议**：仅需修正 `doc:419` / `doc:385` 的取值域枚举（不涉及产品代码与测试），并确保 round 14 已闭环项（`STATUS.md:95` 引文、§4.3 纯身份键绑定）不被回退，即可提交 round 16 复审。
+
+## 2026-09-14 历史状态：WorkBuddy 审查（round 14）缺陷全面闭环（沙盒纯身份键绑定/消除ms碰撞/STATUS历史引文还原与归属闭合）—— 提交 round 15 独立审查
 
 最新交接文档：[`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)
 前序审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round14-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round14-handoff.md)
