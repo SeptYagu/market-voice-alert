@@ -1,6 +1,29 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 独立审查 round 17（涨停看板历史日期图表修复方案）**未通过** —— P3×2
+## 2026-09-14 当前状态：涨停看板切历史日期图表修复与调度解耦全量落地（代码 + 测试 + 门禁全绿）
+
+最新交付文档：[`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)
+交付基线：`4de74e4`
+
+按照彻底打磨的技术方案（§4.1~§4.3），正式完成全量工程代码落地与测试矩阵构建：
+
+1. **统一图表交易日解析契约（`src/js/app.js`）** ✅：
+   - 移除 `limitUpChartMgr.resolveTradeDate` 中的 `isHistorical` 日期劫持，统一委托给 `resolveInitialTradeDate(code, data)`；
+   - 展开图表时默认以最新可用交易日（今日/盘前上一交易日）初始化上下文，彻底杜绝 320 根滑动窗口伪分时伪装锁死。
+2. **实时报价目标日期防污染（`src/js/controllers/chartRowController.js`）** ✅：
+   - 抽离并导出纯函数 `resolveLiveFallbackDate(code, inst, tradingDates)`，隔离期货交易日并锚定股票可用交易日；
+   - 在 `loadKline`（初次合并）与 `applyLiveTick`（增量推送）中统一注入 `fallbackDate`，彻底杜绝缺少日期快照导致的昨日收盘柱原地覆盖。
+3. **行情调度层保活与活跃图表订阅合流（`src/js/app.js` + `src/js/controllers/monitorController.js`）** ✅：
+   - 在 `app.js:1510` 设置 `needsSharedQuotes = true` 保持后台行情轮询，并在 `#/limit-up` 路由中移除冗余 `stopMonitorTimer()`；
+   - 在 `monitorController.js:14-22` 将各页面展开图表集合（`expandedCodes`）无条件合流注入 `getRefreshCodes()`；
+   - 为 `monitorCtrl.inspect()` 扩充暴露 `pollTimerAlive` 与 `pollTimerId`。
+4. **测试矩阵与工程门禁（`tests/limitUpChartFixes.test.js`）** ✅：
+   - 新增针对性测试矩阵（覆盖 T-1/T-2 展开解析、loadKline/applyLiveTick 防污染、期货隔离/盘前时钟、expandedCodes 订阅合流、调度层保活接入点等）；
+   - 本地全量测试套件（QUnit）：**820/820 全部通过（0 失败，0 偶发）**；
+   - `npm run lint`：**0 错误 0 警告**；
+   - `npm run build`：生产构建打包成功。
+
+## 2026-09-14 历史状态：WorkBuddy 独立审查 round 17（涨停看板历史日期图表修复方案）**未通过** —— P3×2
 
 审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round17-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round17-handoff.md)
 被审 HEAD：`90a0d60`　审查基线：`f48e592`　审查范围：`git diff f48e592..90a0d60`（12 文件 / +1598 / -22，全为文档：`AGENTS.md`、`STATUS.md`、图表调查与解决方案文档、round 9-16 审查报告、`docs/handoff/INDEX.md`；相对 round 16 审查报告 `5d6a323` 的增量 = 3 文件 / +32 / -14）

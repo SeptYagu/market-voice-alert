@@ -35,7 +35,7 @@ import {
   applyLiveQuoteToIntradayForCode as _applyLiveQuoteToIntradayForCode,
   updateChartLastTickMulti as _updateChartLastTickMulti
 } from '../src/js/app.js';
-import { parseBeijingDateTimeToChartSeconds } from '../src/js/time.js';
+import { parseBeijingDateTimeToChartSeconds, getBeijingDate } from '../src/js/time.js';
 
 QUnit.module('app.parseBatchInput', () => {
   QUnit.test('parses comma-separated codes with auto-prefix', (t) => {
@@ -760,10 +760,11 @@ QUnit.module('app.applyLiveTickToChartForCode', (hooks) => {
     const { state } = _internal();
     _openChart('sh600519');
     const inst = state.chartInstances.get('sh600519');
+    const today = getBeijingDate();
     inst.klineData = {
       code: 'sh600519',
       name: 'X',
-      items: [{ time: '2026-09-02', open: 10, high: 11, low: 9, close: 10.5, volume: 1000, amount: 10000 }]
+      items: [{ time: today, open: 10, high: 11, low: 9, close: 10.5, volume: 1000, amount: 10000 }]
     };
     _setChartInstance('sh600519', {
       updateKline() {}, updateVolume() {}, updateMA() {}, destroy() {}

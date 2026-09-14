@@ -21,8 +21,16 @@ import { chartTimeToDate, getBeijingDate } from '../time.js';
 import { isFutureCode } from '../futures/instrument.js';
 import { isLiveTradeDate } from '../marketSession.js';
 import { formatCacheAge, intradaySourceLabel } from '../format.js';
+import { resolveStockChartDate } from '../tradeCalendar.js';
 
 export const MA_PERIODS = [5, 10, 20, 60];
+
+export function resolveLiveFallbackDate(code, inst, tradingDates = []) {
+  if (isFutureCode(code)) {
+    return inst?.selectedTradeDate || getBeijingDate();
+  }
+  return resolveStockChartDate(tradingDates) || getBeijingDate();
+}
 
 export function getPrevCloseForDate(items, date) {
   if (!Array.isArray(items) || !date) return null;
@@ -380,7 +388,8 @@ export class ChartRowManager {
       if (typeof this.getQuote === 'function') {
         const q = this.getQuote(code);
         if (q && Number(q.price) > 0) {
-          const targetDate = q.tradingDay || q.date || q.quoteDate || inst.selectedTradeDate || getBeijingDate();
+          const fallbackDate = resolveLiveFallbackDate(code, inst, this.getTradingDates());
+          const targetDate = q.tradingDay || q.date || q.quoteDate || fallbackDate;
           const quoteForKline = (q.tradingDay || q.quoteDate || q.date) ? q : { ...q, date: targetDate };
           const merged = applyLiveQuoteToKline(inst.klineData.items, quoteForKline, inst.period);
           if (merged !== inst.klineData.items) {
@@ -534,7 +543,11 @@ export class ChartRowManager {
     const ctl = this.klineCtlMap.get(code);
     const inst = this.getInst(code);
     if (!ctl || !inst) return;
-    applyLiveTickToKlineChart(ctl, inst, quoteOrPrice);
+    const fallbackDate = resolveLiveFallbackDate(code, inst, this.getTradingDates());
+    const quoteWithDate = (quoteOrPrice && typeof quoteOrPrice === 'object' && !quoteOrPrice.tradingDay && !quoteOrPrice.date && !quoteOrPrice.quoteDate)
+      ? { ...quoteOrPrice, date: fallbackDate }
+      : quoteOrPrice;
+    applyLiveTickToKlineChart(ctl, inst, quoteWithDate);
     this.updateKlineStatus(code);
   }
 

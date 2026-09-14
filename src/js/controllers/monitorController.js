@@ -14,6 +14,9 @@ export function createMonitorController({ getState, fetchQuotes, fetchKline, sto
   function getRefreshCodes() {
     const state = getState();
     const codes = new Set([...(state.watchList || []), ...(state.subscribed || [])]);
+    for (const c of state.limitUp?.expandedCodes || []) codes.add(c);
+    for (const c of state.expandedCodes || []) codes.add(c);
+    for (const c of state.momentum?.expandedCodes || []) codes.add(c);
     if (state.limitUp?.selectedDate === getBeijingDate(clock())) {
       for (const item of state.limitUp.items || []) if (item?.code) codes.add(item.code);
     }
@@ -137,5 +140,10 @@ export function createMonitorController({ getState, fetchQuotes, fetchKline, sto
     state.watchList = storage.get();
   }
   return { refresh, preload, getRefreshCodes, startChecker, stop, stopTimer, applySchedule, addCodes, removeCodes,
-    inspect: () => ({ inFlight: !!inFlight, timerCount: Number(timer !== null) + Number(checker !== null) + Number(preloadTimer !== null) }) };
+    inspect: () => ({
+      inFlight: !!inFlight,
+      pollTimerAlive: timer !== null,
+      pollTimerId: timer,
+      timerCount: Number(timer !== null) + Number(checker !== null) + Number(preloadTimer !== null)
+    }) };
 }

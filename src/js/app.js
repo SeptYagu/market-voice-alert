@@ -71,8 +71,7 @@ import {
 } from './services/momentumMath.js';
 import {
   fetchTradeCalendar,
-  resolveStockChartDate,
-  resolveLatestTradingDate
+  resolveStockChartDate
 } from './tradeCalendar.js';
 import { getBeijingDate, formatDateTime } from './time.js';
 import {
@@ -411,12 +410,7 @@ export const limitUpChartMgr = new ChartRowManager({
   getChartInstances: () => state.limitUp.chartInstances,
   getQuote: (code) => state.quotes.get(code),
   isExpanded: (code) => state.limitUp.expandedCodes.has(code),
-  resolveTradeDate: (code, data) => {
-    const dates = state.tradingDates || state.limitUp.tradingDates || [];
-    const latestTradeDate = resolveLatestTradingDate(getBeijingDate(), dates);
-    const isHistorical = state.limitUp.selectedDate && latestTradeDate && state.limitUp.selectedDate < latestTradeDate;
-    return isHistorical ? state.limitUp.selectedDate : resolveInitialTradeDate(code, data);
-  },
+  resolveTradeDate: (code, data) => resolveInitialTradeDate(code, data),
   isLatestKlineDate: (inst, date) => isLatestKlineDate(inst, date),
   onStateChange: () => rerenderLimitUpPage()
 });
@@ -1512,7 +1506,9 @@ function applyDataRefreshSchedule() {
 
   const hasLimitUpRoot = Boolean(limitUpCtrl.getRootEl());
 
-  monitorCtrl.applySchedule(allowed, !hasLimitUpRoot);
+  // 主监控页与涨停看板均依赖全局 state.quotes 共享行情流与活跃图表订阅，保持后台轮询
+  const needsSharedQuotes = true;
+  monitorCtrl.applySchedule(allowed, needsSharedQuotes);
 
   if (state.limitUp.autoRefreshEnabled && hasLimitUpRoot) {
     if (!allowed) {
@@ -1604,7 +1600,6 @@ export function startApp(root) {
           searchSuggestCtrl.destroy();
           searchSuggestCtrl = null;
         }
-        stopMonitorTimer();
         closeAllCharts();
         closeAllMomentumCharts();
         limitUpCtrl.setRootEl(r);
@@ -1643,5 +1638,11 @@ export function stopApp() {
 }
 
 export function _internal() {
-  return { state, chartInstanceMap, get limitUpRootEl() { return limitUpCtrl.getRootEl(); } };
+  return {
+    state,
+    chartInstanceMap,
+    get limitUpRootEl() { return limitUpCtrl.getRootEl(); },
+    monitorCtrl,
+    applyDataRefreshSchedule
+  };
 }
