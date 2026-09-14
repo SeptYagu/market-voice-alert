@@ -61,12 +61,12 @@ resolveTradeDate: (code, data) => {
    A 股每个常规交易日标准包含 240 根 1 分钟 Bar（早盘 9:30-11:30 与午盘 13:00-15:00 各 120 根；若腾讯等数据源计入 9:25 开盘集合竞价点则为 241 根，上午盘约 121 根）。在盘中运行时，320 根 Bar 的分布特性如下：
    - **当天（T）**：盘中已产生的部分 Bar 保留在窗口尾部/最近端（例如上午 11:30 产生约 121 根 Bar）。
    - **前一天（T-1）**：窗口剩余容量（320 - 121 = 199 根）完整容纳前一交易日的大部分/全部 Bar（盘前未开盘时则为完整 240 根）。
-   - **前两天（T-2）**：由于 121 + 240 = 361 > 320，前两天的数据已被物理滑出窗口，匹配项恒为 0 根。
+   - **前两天（T-2）**：由于 121 + 240 = 361 > 320，当盘中已产生 Bar 数量（例如上午 11:30 约 121 根）占满窗口后，前两天的数据已被物理滑出 320 根窗口，匹配项为 0 根。
 3. **分时合成的致命差异**：
-   - **当请求前一天（T-1）时**：[`server/intradayService.js:216`](file:///d:/AiPrograms/project1/market-voice-alert/server/intradayService.js#L216)（在 215 行守卫通过后）执行 `filterKlineItemsByDate(klineData.items, common.date)`（此处请求历史日即 'T-1'），在 320 根窗口内**精准命中前一天的约 199~240 根 Bar**，成功拼装出前一天的静态分时走势并返回前端渲染。
+   - **当请求前一天（T-1）时**：[`server/intradayService.js:215`](file:///d:/AiPrograms/project1/market-voice-alert/server/intradayService.js#L215)（在 214 行守卫通过后）执行 `filterKlineItemsByDate(klineData.items, common.date)`（此处请求历史日即 'T-1'），在 320 根窗口内**精准命中前一天的约 199~240 根 Bar**，成功拼装出前一天的静态分时走势并返回前端渲染。
    - **当请求前两天（T-2）时**：320 根窗口内匹配项为 0。在 AKTools 历史分钟源未就绪时，无法拼装出走势，返回空数据或报错。
 4. **实时推送切断**：
-   当 `inst.selectedTradeDate` 被锁定为历史日期（无论是 T-1 还是 T-2）后，[`src/js/marketSession.js:138`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/marketSession.js#L138) 的 `isLiveTradeDate(selectedDate)` 判定非当日返回 `false`，导致 [`chartRowController.js:135`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L135) 和 [`app.js:1324`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/app.js#L1324) 彻底拒收并跳过今日的一切实时分时注入。
+   当 `inst.selectedTradeDate` 被锁定为历史日期（无论是 T-1 还是 T-2）后，[`src/js/marketSession.js:132`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/marketSession.js#L132) 的 `isLiveTradeDate(selectedDate)` 判定非当日返回 `false`，导致 [`chartRowController.js:135`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L135) 和 [`app.js:1324`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/app.js#L1324) 彻底拒收并跳过今日的一切实时分时注入。
 
 ### 2.3 机制三：日 K 的 `applyLiveQuoteToKline` 覆盖逻辑（历史看板通用缺陷）
 
@@ -132,7 +132,7 @@ function isLatestKlineDate(inst, date) {
 要彻底根治历史日期翻页带来的图表锁死与时序混乱，必须确立清晰的系统职责边界与设计原则：
 
 1. **历史需求溯源与 P0-3 验收口径演进（架构重构决策）**：
-   - 查阅既有技术交接记录（[`docs/handoff/2026-09-03-code-review-bugs-architecture-handoff.md:94-113`](file:///d:/AiPrograms/project1/market-voice-alert/docs/handoff/2026-09-03-code-review-bugs-architecture-handoff.md#L94-L113)），`app.js:414-419` 的 `isHistorical` 分支最初由提交 `32da3ca` 作为 `P0-3` 需求引入（目标为“允许看历史涨停板的用户查看历史当天的拉板轨迹”）。
+   - 查阅既有技术交接记录（[`docs/handoff/2026-09-03-code-review-bugs-architecture-handoff.md:94-113`](file:///d:/AiPrograms/project1/market-voice-alert/docs/handoff/2026-09-03-code-review-bugs-architecture-handoff.md#L94-L113)），该历史日期绑定逻辑最初由提交 `32da3ca` 作为 `P0-3` 需求在 `loadLimitUpKline` 中引入（目标为“允许看历史涨停板的用户查看历史当天的拉板轨迹”），随后在提交 `eae67ae` 进行 `ChartRowManager` 统一架构重构时迁移至 `limitUpChartMgr.resolveTradeDate`（即现有的 `app.js:414-419` `isHistorical` 逻辑分支）。
    - 然而，旧版 P0-3 采取在图表初始化时“强制将实例日期绑定为历史看板筛选日”的粗粒度策略，引发了严重的架构负效应：导致 T-1 看板展开时被 320 根滑动窗口伪分时锁死，且完全阻断了用户查阅当下最新行情与接力溢价的核心诉求。
    - 根据用户最新明确指令（“翻到前一天时，图表也应显示最新 K 线图，少了今天的 K 线和分时”），**本方案正式废止并演进旧版 P0-3 的粗暴绑定口径**：
      - **默认初始态**：统一重构为展示最新行情（当下全量日 K 与今日最新分时），优先服务用户复盘过往涨停在当下的市场表现这一高频核心诉求；
@@ -172,15 +172,15 @@ function isLatestKlineDate(inst, date) {
   resolveTradeDate: (code, data) => resolveInitialTradeDate(code, data),
   ```
 - **技术效果**：
-  - 无论看板翻到 T-1、T-2 还是更早，在行情报价不携带历史交易日的前提下，点击展开图表时 `selectedTradeDate` 始终被解析为当前最新**可用**交易日（盘中为当天，开盘前 09:15 前按交易日历自动锚定上一交易日），看板历史日期不再拥有图表初始化日期的劫持权。
-  - 分时图直接请求今日分时数据，绝不向服务端请求历史分时，从根源上杜绝了 320 根滑动窗口合成历史伪分时、并将图表锁死在昨日静态数据的行为。
+   - 无论看板翻到 T-1、T-2 还是更早，在行情报价不携带历史交易日的前提下，点击展开图表时 `selectedTradeDate` 始终被解析为当前最新**可用**交易日（盘中为当天，开盘前 09:15 前按交易日历自动锚定上一交易日），看板历史日期不再拥有图表初始化日期的劫持权。
+   - 默认初始化展开时，分时图直接请求当前最新可用交易日（盘中即今日）的分时数据，不再默认自动向服务端请求历史看板日期的分时，从根源上杜绝了 320 根滑动窗口合成历史伪分时、并将图表锁死在昨日静态数据的行为。
 
 #### 改造点二：实时报价目标日期防污染（消除日 K 原地覆盖陷阱）
 - **涉及文件**：[`src/js/controllers/chartRowController.js:380-389`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L380-L389)（同时需引入 [`resolveStockChartDate`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/tradeCalendar.js#L118)）
 - **问题现状**：
   在日 K 加载完成合并实时报价时，`targetDate` 兜底链中包含了 `inst.selectedTradeDate`。一旦实例被设为历史日期且报价缺少显式日期字段，`targetDate` 退化为历史日期，触发 [`kline.js:420`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/kline.js#L420) 的 `lastDate < targetDate = false`，导致昨日柱被原地覆盖、今日蜡烛丢失。
 - **改动方案**：
-  对于股票标的，实时报价的日期兜底必须优先取当前交易日（从 `../tradeCalendar.js` 导入 [`resolveStockChartDate`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/tradeCalendar.js#L118)），彻底移除对股票 `inst.selectedTradeDate` 的回退依赖；对于期货标的（[`isFutureCode`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/futures/instrument.js#L20)），继续保留其实例持有的期货交易日。
+  对于股票标的，实时报价的日期兜底必须优先取当前交易日（从 `../tradeCalendar.js` 导入 [`resolveStockChartDate`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/tradeCalendar.js#L118)），彻底移除对股票 `inst.selectedTradeDate` 的回退依赖；对于期货标的（[`isFutureCode`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/futures/instrument.js#L5)），继续保留其实例持有的期货交易日。
 - **代码对比**：
   ```javascript
   // 修改前 (src/js/controllers/chartRowController.js:383)
@@ -200,7 +200,7 @@ function isLatestKlineDate(inst, date) {
 #### 改造点三：历史下钻与实时监控的双向平滑切换机制
 - **涉及文件**：[`src/js/controllers/chartRowController.js:491-503`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L491-L503)
 - **交互流程保障**：
-  1. **主动查看历史**：用户在日 K 上点击历史 Bar，`handleKlineBarClick` 捕获点击日期并更新 `inst.selectedTradeDate`，发起 `loadIntraday(code, date)` 加载该历史日期的分时。此时 [`isLiveTradeDate(selectedDate)`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/marketSession.js#L138) 为 `false`，实时 Tick 自动阻断，分时状态文本明确标识该历史日期点数。
+  1. **主动查看历史**：用户在日 K 上点击历史 Bar，`handleKlineBarClick` 捕获点击日期并更新 `inst.selectedTradeDate`，发起 `loadIntraday(code, date)` 加载该历史日期的分时。此时 [`isLiveTradeDate(selectedDate)`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/marketSession.js#L132) 为 `false`，实时 Tick 自动阻断，分时状态文本明确标识该历史日期点数。
   2. **快速回到最新**：用户点击最右侧当天的日 K 柱子，`selectedTradeDate` 瞬间切换回今日，`loadIntraday` 重新加载今日全天分时。此时 `isLiveTradeDate` 恢复为 `true`，后续所有实时 Tick 增量推送立即无缝恢复注入。
   3. **重新展开重置**：用户折叠行再重新展开，始终触发初始化逻辑，稳定重置并呈现最新行情，不残留上次的历史下钻状态。
 
@@ -216,7 +216,7 @@ function isLatestKlineDate(inst, date) {
 > 本测试矩阵之所以需要在测试前置（`beforeEach`）中重设全局 `Date`，是由于：
 > 1. **业务基线偏差**：测试用例业务场景设定的断言目标日期为 `2026-09-14`（周一），与底座全局默认锚点（`2026-09-09` 周三）存在基线日期差异；
 > 2. **消除测试累积时间偏移**：切断因测试套件耗时运行产生的时钟累加偏移，确保断言绝对确定性。
-> 因此，以下所有用例统一在 `beforeEach` 中将全局 `Date` 显式重设为目标盘中固定时刻（`2026-09-14 10:00:00+08:00`），在 `afterEach` 中恢复为底座的 `TestDate` 默认锚点。
+> 因此，除「用例 5」的盘前子场景需局部特化时钟外，以下常规盘中用例统一在 `beforeEach` 中将全局 `Date` 显式重设为目标盘中固定时刻（`2026-09-14 10:00:00+08:00`），在 `afterEach` 中恢复为底座的 `TestDate` 默认锚点。
 > 同时，测试通过 [`app.js:1645 _internal()`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/app.js#L1645) 访问内部状态，注入包含 `['2026-09-10', '2026-09-11', '2026-09-14']` 的交易日历，并 Mock 基础 `fetchKline` 桩数据及不含历史 `tradingDay` 的纯价格实时报价桩，保证调用链路畅通执行。
 
 1. **涨停看板图表初始化交易日单测**（扩展 `tests/chartRowController.test.js` 或新建 `tests/limitUpChartInit.test.js`）：
@@ -233,7 +233,9 @@ function isLatestKlineDate(inst, date) {
 3. **历史分时点击下钻与回归今日的闭环测试**：
    - **用例 4**：在 Mock 盘中时刻（`2026-09-14 10:00:00`）下，模拟点击历史 Bar，验证 `inst.selectedTradeDate` 切换为历史日期且 `loadIntraday` 被调用，此时 `isLiveTradeDate` 返回 `false`；再模拟点击最新（`2026-09-14`）柱子，验证 `selectedTradeDate` 回归且 `isLiveTradeDate` 准确恢复为 `true`。
 4. **共享控制器多资产及多场景回归单测**：
-   - **用例 5**：构造期货标的（如 `AU0`，`isFutureCode(code) === true`），验证其在行情缺少日期字段时，目标日期优先采用其实例持有的期货交易日，不受股票日历污染；验证 `momentumChartMgr`（无分时模式）在开盘前（09:15 前）合并报价时由 `resolveStockChartDate` 确定性锚定至上一交易日，不再向日 K 注入未开盘当天的幽灵 Bar。
+   - **用例 5**：
+     - **期货子场景**：在 Mock 盘中时刻（`10:00:00`）下，构造期货标的（如 `AU0`，`isFutureCode(code) === true`），验证其在行情缺少日期字段时，目标日期优先采用其实例持有的期货交易日，不受股票日历污染；
+     - **盘前子场景（特化时钟）**：独立将全局 `Date` 局部 Mock 至盘前时刻（如 `2026-09-14 09:00:00+08:00`，满足 `hour*60+minute < 9*60+15`），验证 `momentumChartMgr`（无分时模式）合并报价时由 `resolveStockChartDate` 确定性锚定至上一交易日（`2026-09-11`），不再向日 K 注入未开盘当天的幽灵 Bar。
 
 ---
 
@@ -249,7 +251,7 @@ function isLatestKlineDate(inst, date) {
   - 对期货标的：通过 `isFutureCode` 分支完整隔离保护了期货交易日历语义。
 - **向下兼容性与需求演进说明**：**演进重构（Evolved Refactor）**。
   - 明确承认本方案正式废止了 `2026-09-03 P0-3` 历史交接中“展开即强行锁定历史分时”的粗粒度策略，改由更符合用户看盘习惯的“默认展开最新图 + 历史柱子主动下钻分时”双向通道替代；
-  - 用户查看历史拉板分时的核心能力未丢失，而是通过更合理、不劫持默认呈现的主动下钻交互得到 100% 完整保障。
+  - 用户查看历史拉板分时的核心需求通道未被剥夺，而是迁移至更合理的日 K 历史柱子主动下钻交互（在历史分钟源可得的前提下支持查看，不再以劫持全站默认初始呈现为代价）。
 - **验证与回滚预案**：
   - 实施时先运行全量测试套件保证基线不坏；
   - 若在生产验证阶段发现任何未预期的行为偏差，仅需回滚两处代码即可安全恢复至改动前状态。
