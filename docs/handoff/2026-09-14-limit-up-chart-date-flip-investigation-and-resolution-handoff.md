@@ -164,7 +164,7 @@ function isLatestKlineDate(inst, date) {
   resolveTradeDate: (code, data) => resolveInitialTradeDate(code, data),
   ```
 - **技术效果**：
-  - 无论看板翻到 T-1、T-2 还是更早，点击展开图表时，`selectedTradeDate` 始终被解析为最新交易日。
+  - 无论看板翻到 T-1、T-2 还是更早，点击展开图表时，`selectedTradeDate` 始终被解析为当前最新**可用**交易日（盘中为当天，开盘前 09:15 前按交易日历自动锚定上一交易日），看板历史日期不再拥有图表初始化日期的劫持权。
   - 分时图直接请求今日分时数据，绝不向服务端请求历史分时，从根源上杜绝了 320 根滑动窗口合成历史伪分时、并将图表锁死在昨日静态数据的行为。
 
 #### 改造点二：实时报价目标日期防污染（消除日 K 原地覆盖陷阱）
@@ -180,6 +180,7 @@ function isLatestKlineDate(inst, date) {
 
   // 修改后 (src/js/controllers/chartRowController.js)
   // 顶部导入新增: import { resolveStockChartDate } from '../tradeCalendar.js';
+  // 注：resolveStockChartDate 恒返回非空交易日，|| getBeijingDate() 作为防御性降级兜底；生产调用未透传 now，测试中统一切换全局 Date Mock
   const liveChartDate = resolveStockChartDate(this.getTradingDates()) || getBeijingDate();
   const targetDate = q.tradingDay || q.date || q.quoteDate || liveChartDate;
   ```
@@ -198,15 +199,25 @@ function isLatestKlineDate(inst, date) {
 
 ### 4.3 自动化测试与质量保障方案
 
-为确保架构优化落地且绝不发生回归，需在现有 814 个测试用例基础上扩展以下针对性测试矩阵：
+为确保架构优化落地且绝不发生回归，需在现有 814 个测试用例基础上扩展以下针对性测试矩阵。
+
+> [!IMPORTANT]
+> **全局时钟确定性约定（全矩阵消除时钟 Flaky 隐患）**：
+> 生产代码中的 `resolveStockChartDate` 与 `isLiveTradeDate` 均默认读取宿主 `new Date()`。为杜绝测试在非交易日运行、或在每天 09:15 集合竞价前运行测试时因锚点回退导致预期结果漂移，**以下所有涉及交易日解析、日 K 合并及实时性判定的单测，均统一在测试前置（`beforeEach`）Mock 全局 `Date` 至盘中时刻（例如 `2026-09-14 10:00:00+08:00`）并在测试结束后恢复**。该全局前置约定彻底切断了宿主环境墙上时钟对测试确定性的干扰。
 
 1. **涨停看板图表初始化交易日单测**（扩展 `tests/chartRowController.test.js` 或新建 `tests/limitUpChartInit.test.js`）：
-   - **用例 1**：模拟 `state.limitUp.selectedDate = '2026-09-11'`（T-1），执行 `createChartState('1d')` 并调用 `limitUpChartMgr.loadKline(code)`（对应 `limitUpController.js:557 handleLimitUpOpenKline`），断言实例初始化后的 `selectedTradeDate` 最终为当前最新交易日（`2026-09-14`），而非 `2026-09-11`。
-   - **用例 2**：模拟 `state.limitUp.selectedDate = '2026-09-10'`（T-2），同样执行上述展开流程，断言初始化的 `selectedTradeDate` 为最新交易日。
+   - **用例 1**：在 Mock 盘中时刻（`2026-09-14 10:00:00`）下，模拟看板处于历史日期 `state.limitUp.selectedDate = '2026-09-11'`（T-1）。完整执行实例注册与展开调用序列（对照 `limitUpController.js:564-567 handleLimitUpOpenKline`）：
+     ```javascript
+     lu.expandedCodes.add(code);
+     lu.chartInstances.set(code, createChartState('1d'));
+     await limitUpChartMgr.loadKline(code);
+     ```
+     断言实例初始化完成后的 `selectedTradeDate` 最终为当前最新可用交易日（`2026-09-14`），而非看板历史日期 `2026-09-11`。
+   - **用例 2**：模拟看板翻到 `state.limitUp.selectedDate = '2026-09-10'`（T-2），同样执行上述标准注册与展开调用序列，断言初始化的 `selectedTradeDate` 恒为最新可用交易日（`2026-09-14`）。
 2. **实时报价日期防污染与追加日 K 蜡烛单测**（扩展 `tests/chartRowController.test.js`）：
-   - **用例 3**：构造 `inst.selectedTradeDate = '2026-09-11'`（模拟用户正在看历史分时），注入不带日期字段的纯价格报价 `{ price: 21.00 }`。测试中固定注入或 Mock 盘中时间（例如 `now = new Date('2026-09-14T10:00:00+08:00')`，消除 9:15 盘前锚点漂移导致的 Flaky）。断言合并后的日 K 数据项追加了 `2026-09-14` 的新 Bar（数量增加 1 根），且上一根（`2026-09-11`）的收盘价保持原样未被覆盖。
+   - **用例 3**：在 Mock 盘中时刻（`2026-09-14 10:00:00`）下，构造 `inst.selectedTradeDate = '2026-09-11'`（模拟用户正在看历史分时），日 K 历史列表最后一根为 `2026-09-11`，注入不带日期字段的纯价格报价 `{ price: 21.00 }`。执行 `loadKline` 报价合并逻辑，断言合并后的日 K 数据项成功追加了 `2026-09-14` 的新蜡烛 Bar（数组长度加 1），且上一根（`2026-09-11`）的收盘价与成交量保持原样未被覆盖。
 3. **历史分时点击下钻与回归今日的闭环测试**：
-   - **用例 4**：模拟点击历史柱子，验证 `selectedTradeDate` 改变且 `loadIntraday` 被调用；再模拟点击最新柱子，验证 `selectedTradeDate` 回归且 `isLiveTradeDate` 恢复为 `true`。
+   - **用例 4**：在 Mock 盘中时刻（`2026-09-14 10:00:00`）下，模拟点击历史 Bar，验证 `inst.selectedTradeDate` 切换为历史日期且 `loadIntraday` 被调用，此时 `isLiveTradeDate` 返回 `false`；再模拟点击最新（`2026-09-14`）柱子，验证 `selectedTradeDate` 回归且 `isLiveTradeDate` 准确恢复为 `true`。
 
 ---
 
