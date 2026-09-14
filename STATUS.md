@@ -1,6 +1,17 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：涨停看板切历史日期图表修复与调度解耦全量落地（代码 + 测试 + 门禁全绿）
+## 2026-09-14 当前状态：WorkBuddy 独立代码审查 round 1（涨停看板图表修复与调度解耦 · 代码落地）**未通过** —— P2×1 / P3×1
+
+审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round1-handoff.md)
+被审 HEAD：`892f1b8`　审查基线：`f48e592`　审查范围：`git diff f48e592..892f1b8`（18 文件 / +2040 / -38：产品代码 `app.js`、`chartRowController.js`、`monitorController.js`，测试 `app.test.js`、`limitUpChartFixes.test.js`，其余为文档）
+审查结论：**未通过**（1 项 P2 + 1 项 P3，须彻底修复闭环后复审）
+
+- **产品代码侧结论（本轮实测确认全部生效，无 P0~P3）**：需求 1（`app.js:413` 统一 `resolveTradeDate`）、需求 2（`chartRowController.js:391/546` 双链路注入 `resolveLiveFallbackDate`）、需求 3 的运行路径（挂载 root 后 `pollTimerAlive=true` → `pollTimerId` 回调 → `/api/tencent/q=<展开标的>` → `state.quotes` 写入）均经独立端到端探针/变异实跑确认；门禁实跑 `npm test` **820/820**、`npm run lint` **0 错误 0 警告**、`npm run build` 成功。
+- **P2-1（阻塞）**：`tests/limitUpChartFixes.test.js:250-266` 用例 7 未建立 `#/limit-up` 前置（未 `limitUpCtrl.setRootEl(...)`、不经路由），恒有 `hasLimitUpRoot === false`，而修复前 `applySchedule(allowed, !hasLimitUpRoot)` 在该前置下恒等于修复后的 `applySchedule(allowed, true)` → 将 `app.js:1511` 回退变异后该文件仍 **6/6 全绿**，无法证伪验收标准 3；且方案 §4.3:465-469 要求的 (b)(c) 端到端断言（`pollTimerId` → 执行回调 → `fetchQuotes` 批次含展开标的 → `state.quotes` 写入/`updateChartLastTickMulti`）完全未落地。
+- **P3-1**：`tests/limitUpChartFixes.test.js:179-205` 用例 5 盘前子场景仅断言纯函数返回值，未走任何合并链路；将 `chartRowController.js:391`（或 `:546`）的注入源变异为 `getBeijingDate()`（丢弃盘前锚定）后 6/6 仍绿 → 盘前「不注入未开盘当天幽灵 Bar」无回归防护（对照 §4.3:460-462 要求）。
+- 待确认风险（未定级）：追加分支（`kline.js:420`）无停牌/陈旧守卫，降级无日期快照在停牌标的上可能生成假当日蜡烛，待真实源形态验证。
+
+## 2026-09-14 历史状态：涨停看板切历史日期图表修复与调度解耦全量落地（代码 + 测试 + 门禁全绿）
 
 最新交付文档：[`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)
 交付基线：`4de74e4`
@@ -22,6 +33,8 @@
    - 本地全量测试套件（QUnit）：**820/820 全部通过（0 失败，0 偶发）**；
    - `npm run lint`：**0 错误 0 警告**；
    - `npm run build`：生产构建打包成功。
+
+> **round 1 复审更正（2026-09-14）**：上述第 1~3 项产品代码改动与第 4 项门禁数据经独立复审实测**全部成立**；但第 4 项测试矩阵相对方案 §4.3 存在未落地项 —— §4.3:465-469 用例 7 的 `#/limit-up` 前置与 (b)(c) 端到端断言缺失（该用例将 `app.js:1511` 回退变异后仍全绿，无法证伪验收标准 3，P2），§4.3:460-462 盘前子场景仅断言纯函数（P3）。详见 [`2026-09-14-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round1-handoff.md)。
 
 ## 2026-09-14 历史状态：WorkBuddy 独立审查 round 17（涨停看板历史日期图表修复方案）**未通过** —— P3×2
 
