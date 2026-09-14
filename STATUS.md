@@ -1,6 +1,33 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 独立审查 round 11（涨停看板历史日期图表修复方案）**未通过** —— P2×1 / P3×4
+## 2026-09-14 当前状态：WorkBuddy 审查（round 11）缺陷全面闭环（用例7变异可证伪集成断言与可达接入点 / 消除绝对化残留 / A场景集合对齐 / 公式与量化条件校正）—— 提交 round 12 独立审查
+
+最新交接文档：[`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)
+前序审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round11-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round11-handoff.md)
+审查基线：`f48e592`
+
+针对 round 11 独立审查报告指出的 1 项 P2 阻塞缺陷与 4 项 P3 严谨性缺陷完成全面彻底闭环：
+
+1. **【P2 闭环】§4.3 用例 7 确立可达接入点与变异可证伪的集成到达性断言** ✅：
+   - 补充调度层可达访问方案：在 §4.2 改造点四明确在 `src/js/app.js:1645-1647` 的 `_internal()` 中补充暴露 `monitorCtrl` 与 `applyDataRefreshSchedule`，使测试可通过 `_internal().monitorCtrl.inspect().timerCount > 0` 可达断言调度定时器存活；
+   - 彻底删除绕过调度的手动分支：在用例 7 中坚决移除“或触发一次 `refresh()` 周期”的手动执行后门，规定必须完全依托 Fake Timers 推进虚拟时钟（推进时间 $\ge state.refreshInterval$），由内部定时器自动触发底层 `fetchQuotes` 请求，捕获发起请求批次中包含 `sh600777` 并写入 `state.quotes`；
+   - 确立变异可证伪机制：若将 `app.js:1515` 变异回退为 `!hasLimitUpRoot` 或恢复 `app.js:1607` 的 `stopMonitorTimer()`，则 `timerCount === 0`，推进时钟绝不触发 `fetchQuotes`，断言确定性失败，彻底杜绝“功能无效仍为绿”的假通过。
+2. **【P3-1 闭环】清除全站唯一写入与无实体等绝对化表述残留** ✅：
+   - 在 §4.2:277 澄清全站向 `state.quotes` 写入实体的全部点位（`monitorController.js:44/50`、`app.js:952`、`momentumController.js:141/152`），说明三者均不覆盖涨停页展开的未加自选标的，消除“全站唯一写入”表述；
+   - 在 §2.3:99 明确补充自选与订阅条件限定，说明第一主因针对的是未加自选与未订阅标的，消除无条件绝对化表述。
+3. **【P3-2 闭环】§2.3 表与 §4.2 生产输入场景完全对齐为 A1~A3** ✅：
+   - 消除 A4 显式历史日期行在修复后不被覆盖的错误外推，§2.3 真实输入对比表与 §4.2 统一收敛为 A1（纯价格）、A2（腾讯主源正常）、A3（东财降级无日期）三项真实快照场景，表内每一项预期行为均与方案代码严格一致。
+4. **【P3-3 闭环】§2.2 T-1 保留根数全天区间与公式 `min(240, 320 - x)` 完全对齐** ✅：
+   - 纠偏“恒命中 199~240 根”的局部区间表述，修正为 $\min(240, 320 - x)$ 全天随 $x$ 递减但恒保持在 80~240 根（早盘 240 根、午间约 199 根、收盘 80 根），足以拼装出前一天静态伪分时。
+5. **【P3-4 闭环】报价周期与降级请求次数明确前置成立条件** ✅：
+   - 将“≤3s”修正为“在 1 个报价周期内（默认 10s，用户可选 3s）”；
+   - 将“共计 4 次”修正为“至少 4 次降级网络请求（当 `allowLatestTickSource` 为真时额外发起 1 次 `trends2`，共计 5 次）”。
+
+**门禁验证**：
+- `npm test`（QUnit）：**814/814 全部通过（0 失败，0 偶发）**；
+- 全文代码引用、符号与行号经自动化脚本逐一校验，与 HEAD 100% 精准对齐。
+
+## 2026-09-14 历史状态：WorkBuddy 独立审查 round 11（涨停看板历史日期图表修复方案）**未通过** —— P2×1 / P3×4
 
 审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round11-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round11-handoff.md)
 被审 HEAD：`147573a`　审查基线：`f48e592`　审查范围：`git diff f48e592..147573a`（6 文件 / +792 / -22，全为文档：`AGENTS.md`、`STATUS.md`、图表调查报告、round 9/10 审查报告、`docs/handoff/INDEX.md`）

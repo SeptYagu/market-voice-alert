@@ -4,8 +4,8 @@
 
 > **当前最新状态速读**：
 > - 状态综述：查阅项目根目录 [`STATUS.md`](../../STATUS.md)
-> - 最新调查（图表）：[`2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)（涨停看板切前一天图表逻辑错误根因剖析、调度层解耦与解决方案；round 10 缺陷闭环）
-> - 最新交接（审查）：[`2026-09-14-workbuddy-code-review-round11-handoff.md`](2026-09-14-workbuddy-code-review-round11-handoff.md)（独立审查 147573a，round 11：**未通过**，P2×1 / P3×4；用例 7 无法证伪 P1 + 4 项表述缺陷）
+> - 最新调查（图表）：[`2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)（涨停看板切前一天图表逻辑错误根因剖析、调度层解耦与解决方案；round 11 缺陷闭环）
+> - 最新交接（审查）：[`2026-09-14-workbuddy-code-review-round11-handoff.md`](2026-09-14-workbuddy-code-review-round11-handoff.md)（独立审查 147573a，round 11：**未通过**，P2×1 / P3×4；已于最新版方案彻底闭环）
 > - 前序审查：[`2026-09-14-workbuddy-code-review-round10-handoff.md`](2026-09-14-workbuddy-code-review-round10-handoff.md)（独立审查 0305357，round 10：**未通过**，P1×1 / P2×1 / P3×1；已于最新版方案彻底闭环）
 > - 更早审查：[`2026-09-14-workbuddy-code-review-round9-handoff.md`](2026-09-14-workbuddy-code-review-round9-handoff.md)（独立审查 e2a8f0d，round 9：**未通过**，P1×1 / P2×1 / P3×4；引用准确性全通过）
 > - 更早审查：[`2026-09-13-workbuddy-code-review-round3-handoff.md`](2026-09-13-workbuddy-code-review-round3-handoff.md)（独立审查 2f94e08，round 3：**通过**，无 P0/P1/P2；遗留 2 项 P3）
@@ -23,7 +23,7 @@
 
 | 日期 | 文档 | 说明 |
 | :--- | :--- | :--- |
-| 2026-09-14 | [`2026-09-14-workbuddy-code-review-round11-handoff.md`](2026-09-14-workbuddy-code-review-round11-handoff.md) | 独立审查 147573a（round 11）：**未通过**。P2：§4.3 用例 7 的集成到达性断言无法证伪 P1（定时器存活断言无可达接入点，(b)(c) 分支绕过调度层，实测 P1 未修时仍为绿）；P3×4："全站唯一写入 `state.quotes`" 绝对化表述、§2.3 A4 行修复后预期与方案代码矛盾、§2.2 "恒命中 199~240 根" 与自身公式矛盾、"≤3s"/"4 次" 量化表述未带条件 |
+| 2026-09-14 | [`2026-09-14-workbuddy-code-review-round11-handoff.md`](2026-09-14-workbuddy-code-review-round11-handoff.md) | 独立审查 147573a（round 11）：**未通过**。P2：§4.3 用例 7 的集成到达性断言无法证伪 P1（定时器存活断言无可达接入点，(b)(c) 分支绕过调度层）；P3×4：绝对化表述、A4 行矛盾、保留根数公式对齐、量化数值成立条件。全部已闭环并提交 round 12 复审 |
 | 2026-09-14 | [`2026-09-14-workbuddy-code-review-round10-handoff.md`](2026-09-14-workbuddy-code-review-round10-handoff.md) | 独立审查 0305357（round 10）：**未通过**。P1：改造点四只改 `getRefreshCodes()`，`#/limit-up` 路由下行情轮询器被停摆；P2：§4.1.4/§4.2 绝对化表述与腾讯主源矛盾；P3：mock 桩缺信封。三项缺陷已在最新方案中彻底闭环，提交 round 11 复审 |
 | 2026-09-14 | [`2026-09-14-workbuddy-code-review-round9-handoff.md`](2026-09-14-workbuddy-code-review-round9-handoff.md) | 独立审查 e2a8f0d（round 9）：**未通过**。P1：修复方案未覆盖"历史看板下标的报价脱离刷新集合"（无报价→无合并/Tick/分时刷新）；P2：改造点二遗漏 `applyLiveTickToKlineChart` 同类调用点；P3×4：窗口阈值未量化、§2.4 无影响项、§4.3 缺分时 mock、§2.3/§3.2 前提互斥 |
 | 2026-09-14 | [`2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md) | 涨停看板切前一天图表逻辑错误根因剖析、分钟线 320 根滑动窗口穿透机制、调度保活与活跃图表订阅双解耦解决方案（已闭环 round 10 缺陷） |
