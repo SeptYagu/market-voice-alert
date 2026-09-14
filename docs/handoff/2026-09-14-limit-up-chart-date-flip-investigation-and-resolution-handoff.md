@@ -376,6 +376,7 @@ function isLatestKlineDate(inst, date) {
   inspect: () => ({
     inFlight: !!inFlight,
     pollTimerAlive: timer !== null,
+    pollTimerId: timer,
     timerCount: Number(timer !== null) + Number(checker !== null) + Number(preloadTimer !== null)
   })
   ```
@@ -383,7 +384,7 @@ function isLatestKlineDate(inst, date) {
   - 用户停留在 `#/limit-up` 时，后台共享行情轮询定时器保持健康运转，不再被整体掐断；
   - 在历史看板展开任意标的图表后，该标的作为活跃图表订阅立即合流进入下一次 `fetchQuotes` 请求批次，在 1 个报价周期内（默认 10s，可选 3s）自动填充进 `state.quotes`；
   - 驱动 `loadKline` 成功追加今日蜡烛（当命中盘前 1d 缓存时），驱动 `updateChartLastTickMulti` 持续注入 Tick 并维持 10s 分时定时刷新；
-  - 暴露调度层访问器至 `_internal()` 并为 `monitorCtrl.inspect()` 扩充 `pollTimerAlive` 字段，彻底排除常驻 `checker` 对 `timerCount` 的非零干扰，为单测提供确定性、可变异证伪的定时器生命周期断言接入点；
+  - 暴露调度层访问器至 `_internal()` 并为 `monitorCtrl.inspect()` 扩充 `pollTimerAlive` 与 `pollTimerId` 字段，彻底排除常驻 `checker` 对 `timerCount` 的非零干扰，并为受控沙盒提供以唯一句柄精准提取被测定时器的纯身份键接入点；
   - 表格侧数据隔离完好：`limitUpController.js:259` 与 `:411` 的 `isLimitUpDateToday()` 门禁不受改动影响，历史看板表格行保持历史收盘数据，图表与表格职责明确解耦。
 
 ---
@@ -414,8 +415,9 @@ function isLatestKlineDate(inst, date) {
 >    { ok: true, data: { items: [], prevClose: 20.00 } }
 >    ```
 >    或参考 [`tests/chartRequestOwnership.test.js:6-8`](file:///d:/AiPrograms/project1/market-voice-alert/tests/chartRequestOwnership.test.js#L6-L8) 统一接管全局 `fetch` 响应全部端点，保证 1 次请求即正常短路返回，调用链路畅通无报错。
-> 3. **定时器 Mock 与受控驱动约定（按 id 隔离的多定时器自闭环沙盒）**：
->    仓库 `devDependencies` 无 `sinon` / `@sinonjs/fake-timers` 外部依赖，现有定时器测试均采用受控沙盒。在 `applyDataRefreshSchedule()` 执行路径中，若 `hasLimitUpRoot = true` 且处于盘中，系统会先后注册 `monitorCtrl` 的行情轮询定时器（`ms = state.refreshInterval = 10000`）以及 `limitUpCtrl` 的涨停列表定时器（`ms = 30000`）。为避免单槽覆盖导致捕获到涨停列表回调并精准驱动行情轮询，沙盒必须采用按 id 注册的映射表管理，并在 `afterEach` 中严格原样还原全局函数，杜绝跨测试用例状态泄漏：
+> 3. **定时器 Mock 与受控驱动约定（按 id 隔离的多定时器自闭环沙盒与纯身份键绑定）**：
+>    仓库 `devDependencies` 无 `sinon` / `@sinonjs/fake-timers` 外部依赖，现有定时器测试均采用受控沙盒。在 `applyDataRefreshSchedule()` 执行路径中，若 `hasLimitUpRoot = true` 且处于盘中，系统会先后注册 `monitorCtrl` 的行情轮询定时器（`ms = state.refreshInterval`，默认 `10000`，可选 `3000/10000/30000`）以及 `limitUpCtrl` 的涨停列表定时器（`ms = lu.refreshInterval`，默认 `30000`，可选 `10000/30000/60000`）。若用户持久化配置使 `state.limitUp.refreshInterval === state.refreshInterval`（例如同为 `10000` 或同为 `30000`），二者将具有相同数值的 `ms`。为彻底避免单槽覆盖与同周期混淆、确保在 `state.limitUp.refreshInterval × state.refreshInterval` 全组合下均能 100% 身份型唯一选中，方案采取纯身份键绑定机制（亦可在单测驱动前显式置 `state.limitUp.autoRefreshEnabled = false` 进行前置隔离防御）：
+>    沙盒采用自增 id 映射表（`registeredTimers = new Map()`）管理，`monitorCtrl.inspect()` 显式暴露内部持有的唯一句柄 `pollTimerId: timer`，单测直接通过 `registeredTimers.get(pollTimerId)` 提取被测行情轮询条目，彻底杜绝依赖数值 `ms` 互异或注册先后顺序的隐式假设。并在 `afterEach` 中严格原样还原全局函数，杜绝跨测试用例状态泄漏：
 >    ```javascript
 >    const registeredTimers = new Map();
 >    let timerSeq = 1000;
@@ -436,7 +438,7 @@ function isLatestKlineDate(inst, date) {
 >    globalThis.clearInterval = originalClearInterval;
 >    registeredTimers.clear();
 >    ```
->    驱动行情轮询周期时，精准获取匹配 `state.refreshInterval` 的定时器回调并直接执行（断言该定时器唯一且有效），严禁手动调用 `refresh()` / `_forceRefresh()` 绕过调度层。
+>    驱动行情轮询周期时，通过 `_internal().monitorCtrl.inspect().pollTimerId` 获取绑定的句柄条目并直接执行其回调（断言 `pollTimer !== undefined && pollTimer.ms === state.refreshInterval`），严禁手动调用 `refresh()` / `_forceRefresh()` 绕过调度层。
 > 
 > 因此，除「用例 5」的盘前子场景需局部特化时钟外，以下常规盘中用例统一在 `beforeEach` 中按上述规范将全局 `Date`（含 `now()`）显式重设为目标盘中固定时刻（`2026-09-14 10:00:00+08:00`），在 `afterEach` 中恢复为底座的 `TestDate` 默认锚点。
 > 同时，测试通过 [`app.js:1645 _internal()`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/app.js#L1645) 访问内部状态与调度层句柄（包含 `state`、`chartInstanceMap`、`limitUpRootEl`、`monitorCtrl`、`applyDataRefreshSchedule`），注入包含 `['2026-09-10', '2026-09-11', '2026-09-14']` 的交易日历，并 Mock 基础 `fetchKline` 桩数据及实时报价桩，保证调用链路畅通执行。
@@ -461,10 +463,10 @@ function isLatestKlineDate(inst, date) {
 5. **活跃图表订阅与调度层保活端到端单测（P1 闭环覆盖）**（扩展 `tests/monitorController.test.js` 与 `tests/phaseAFixes.test.js`）：
    - **用例 6（订阅集合合流）**：在 Mock 盘中时刻下，模拟看板处于历史日期 `state.limitUp.selectedDate = '2026-09-11'`，将未加入自选且非强势股的标的（如 `sh600777`）加入 `state.limitUp.expandedCodes`。执行 `getRefreshCodes()`，断言返回的刷新数组中包含 `sh600777`；当用户折叠图表（从 `expandedCodes` 移除）后，再次调用 `getRefreshCodes()`，断言该 code 已从刷新列表中同步移出。
    - **用例 7（调度层保活与行情端到端到达性集成断言，变异可证伪）**：在 Mock 盘中交易时段且 `state.autoRefreshEnabled === true` 下，按上述定时器沙盒约定替换 `globalThis.setInterval/clearInterval`，模拟路由切换至 `'#/limit-up'`（`limitUpCtrl.setRootEl(container)`）且 `state.limitUp.selectedDate = '2026-09-11'`：
-     (a) **调度层存活断言（专用字段排除 checker 干扰）**：执行 `_internal().applyDataRefreshSchedule()`，断言 `_internal().monitorCtrl.inspect().pollTimerAlive === true`（验证 `app.js:1513-1515` 传入的 `visible` 为真，`setInterval` 轮询定时器保持运行未被掐灭；使用 `pollTimerAlive: timer !== null` 彻底排除 `startApp` 中常驻 `checker` 对 `timerCount` 的非零干扰）；
-     (b) **定时器自动轮询断言（精准驱动行情轮询，严禁手动触发 refresh 绕过调度）**：将历史未加自选标的加入 `state.limitUp.expandedCodes.add('sh600777')`。从 `registeredTimers` 中筛选 `ms === state.refreshInterval` 的唯一条目（`const pollTimer = [...registeredTimers.values()].find(t => t.ms === state.refreshInterval);`），断言其存在并直接执行 `pollTimer.fn()`，模拟行情轮询定时器到期触发（测试过程中严禁手动调用 `refresh()` / `_forceRefresh()`）；断言由内部定时器回调**自动**触发了底层 `fetchQuotes` 请求，且捕获的发起请求 codes 批次中包含 `sh600777`；
-     (c) **数据到达与图表驱动断言**：模拟 `fetchQuotes` 返回包含 `sh600777` 的最新报价后，断言 `state.quotes.get('sh600777')` 成功写入报价实体，且 `onQuotes` 自动触发的 `updateChartLastTickMulti` 成功执行；
-     - **变异证伪性保证**：若在单测中将 `app.js:1515` 故意回退变异为旧版 `!hasLimitUpRoot`（此时 `hasLimitUpRoot === true` 导致传入 `visible = false`），则 `monitorCtrl.applySchedule` 确定性调用 `stopTimer()` 清除轮询定时器，`pollTimerAlive === false` 且在 `registeredTimers` 中已无 `ms === state.refreshInterval` 的定时器条目，用例在第 (a) 步与第 (b) 步均确定性报错失败！只有当调度层保活与订阅合流协同生效时用例方可为绿（注：路由处理函数 `app.js:1607` 的 `stopMonitorTimer()` 属可选清理，由于紧随其后的行 1613 `applyDataRefreshSchedule()` 必定按当前 `visible` 重新决策并重建轮询定时器，故调度层最终存活状态完全由 `app.js:1515` 的 `visible` 判定独立且唯一决定）。
+      (a) **调度层存活断言（专用字段排除 checker 干扰）**：执行 `_internal().applyDataRefreshSchedule()`，断言 `_internal().monitorCtrl.inspect().pollTimerAlive === true` 且 `_internal().monitorCtrl.inspect().pollTimerId !== null`（验证 `app.js:1513-1515` 传入的 `visible` 为真，`setInterval` 轮询定时器保持运行未被掐灭；使用 `pollTimerAlive: timer !== null` 彻底排除 `startApp` 中常驻 `checker` 对 `timerCount` 的非零干扰）；
+      (b) **定时器自动轮询断言（纯身份键精准驱动行情轮询，严禁手动触发 refresh 绕过调度）**：将历史未加自选标的加入 `state.limitUp.expandedCodes.add('sh600777')`。通过 `_internal().monitorCtrl.inspect()` 获取其持有的句柄 `pollTimerId`，从 `registeredTimers.get(pollTimerId)` 中获取唯一绑定的定时器条目（断言 `pollTimer !== undefined && pollTimer.ms === state.refreshInterval`；在 `state.limitUp.refreshInterval × state.refreshInterval` 全组合下均具备确定性身份唯一绑定，不依赖两定时器周期互异或注册先后顺序），直接执行 `pollTimer.fn()`，模拟行情轮询定时器到期触发（测试过程中严禁手动调用 `refresh()` / `_forceRefresh()`）；断言由内部定时器回调**自动**触发了底层 `fetchQuotes` 请求，且捕获的发起请求 codes 批次中包含 `sh600777`；
+      (c) **数据到达与图表驱动断言**：模拟 `fetchQuotes` 返回包含 `sh600777` 的最新报价后，断言 `state.quotes.get('sh600777')` 成功写入报价实体，且 `onQuotes` 自动触发的 `updateChartLastTickMulti` 成功执行；
+      - **变异证伪性保证**：若在单测中将 `app.js:1515` 故意回退变异为旧版 `!hasLimitUpRoot`（此时 `hasLimitUpRoot === true` 导致传入 `visible = false`），则 `monitorCtrl.applySchedule` 确定性调用 `stopTimer()` 清除轮询定时器，`pollTimerAlive === false` 且 `pollTimerId === null`，在 `registeredTimers` 中通过 `registeredTimers.get(pollTimerId)` 确定性返回 `undefined`，用例在第 (a) 步与第 (b) 步均确定性报错失败！只有当调度层保活与订阅合流协同生效时用例方可为绿（注：路由处理函数 `app.js:1607` 的 `stopMonitorTimer()` 属可选清理，由于紧随其后的行 1613 `applyDataRefreshSchedule()` 必定按当前 `visible` 重新决策并重建轮询定时器，故调度层最终存活状态完全由 `app.js:1515` 的 `visible` 判定独立且唯一决定）。
 6. **实时 Tick 路径日期规范化与追加日 K 蜡烛单测（P2 闭环覆盖）**（扩展 `tests/chartRowController.test.js`）：
    - **用例 8（增量 Tick 路径日期防污染与追加日 K 蜡烛）**：构造日 K 最后一根为 `2026-09-11`（`lastDate = '2026-09-11'`），`inst.selectedTradeDate = '2026-09-14'`。通过 `mgr.applyLiveTick(code, { price: 21.00 })` 注入缺少任何日期字段的纯价格快照对象。断言合并后的日 K 数据项成功追加了 `2026-09-14` 的新蜡烛 Bar（数组长度增加且最后一条日期为 `2026-09-14`），并且上一根（`2026-09-11`）的 OHLCV 逐字段保持原样未被改写。
 

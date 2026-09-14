@@ -1,6 +1,29 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 独立审查 round 14（涨停看板历史日期图表修复方案）**未通过** —— P3×2
+## 2026-09-14 当前状态：WorkBuddy 审查（round 14）缺陷全面闭环（沙盒纯身份键绑定/消除ms碰撞/STATUS历史引文还原与归属闭合）—— 提交 round 15 独立审查
+
+最新交接文档：[`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)
+前序审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round14-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round14-handoff.md)
+审查基线：`f48e592`
+
+针对 round 14 独立审查报告指出的 2 项 P3 严谨性缺陷完成全面彻底闭环：
+
+1. **【P3-1 闭环】`STATUS.md` round 12 闭环历史引文严格还原与跨段归属消歧** ✅：
+   - 将 `STATUS.md` round 12 闭环段中的引文严格按 round 12 实际产出（`c3f5bc0`）还原为「修正为 `覆盖 T-1: min(240, 320-x) 根，恒 ≥80`，消除 `199~240` 固定区间冲突」，坚决杜绝把后续轮次的措辞回填到历史记录中；
+   - 显式加注说明「注：该『恒 ≥80』在 241/243 根 Bar 前提下的成立条件已由 round 13 补齐闭环，见本文件 round 13 闭环段」，使同一改动动作在各轮次记录中的归属清晰、唯一、彻底消歧；
+   - 顺带对 round 10 闭环段的 `app.js:1607` 历史叙述补充澄清注记，与后续各轮实测结论完全自洽。
+2. **【P3-2 闭环】§4.3 定时器沙盒由数值 `ms` 筛选升级为纯身份键绑定机制** ✅：
+   - 针对 `state.limitUp.refreshInterval === state.refreshInterval`（例如同为 10000 或同为 30000）导致数值 `ms` 碰撞、无法唯一匹配行情轮询回调的问题，在 §4.2 与 §4.3 中确立纯身份键绑定契约：
+   - 在 `monitorCtrl.inspect()` 扩充暴露内部持有的唯一句柄 `pollTimerId: timer`；
+   - 单测通过 `registeredTimers.get(pollTimerId)` 直接提取绑定的定时器条目，并在断言中确认 `pollTimer.ms === state.refreshInterval`；
+   - 在 `state.limitUp.refreshInterval × state.refreshInterval` 全组合下均能 100% 确定性唯一获取行情轮询定时器，彻底消除对 `ms` 互异或注册先后顺序的隐式依赖；
+   - 在变异测试中，若 `app.js:1515` 回退，`pollTimerId === null` 导致 `registeredTimers.get(pollTimerId)` 返回 `undefined`，用例在 (a)(b) 步均确定性报错失败。
+
+**门禁验证**：
+- `npm test`（QUnit）：**814/814 全部通过（0 失败，0 偶发）**；
+- 全文代码引用、符号与行号经抽查 30+ 处核验，与 HEAD 逐条一致。
+
+## 2026-09-14 历史状态：WorkBuddy 独立审查 round 14（涨停看板历史日期图表修复方案）**未通过** —— P3×2
 
 审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round14-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round14-handoff.md)
 被审 HEAD：`33b8f53`　审查基线：`f48e592`　审查范围：`git diff f48e592..33b8f53`（9 文件 / +1296 / -22，全为文档：`AGENTS.md`、`STATUS.md`、图表调查与解决方案文档、round 9-13 审查报告、`docs/handoff/INDEX.md`；相对 round 13 HEAD `c3f5bc0` 的增量 = 3 文件 / +71 / -53）
@@ -69,7 +92,7 @@
 针对 round 12 独立审查报告指出的 4 项 P3 严谨性缺陷完成全面彻底闭环：
 
 1. **【P3-1 闭环】保留根数全量统一与公式严格对齐** ✅：
-   - 在 §2 mermaid 节点 F 修正为 `覆盖 T-1: min(240, 320-x) 根，在 x≤240 时恒 ≥80`，消除 `199~240` 固定区间冲突；
+   - 在 §2 mermaid 节点 F 修正为 `覆盖 T-1: min(240, 320-x) 根，恒 ≥80`，消除 `199~240` 固定区间冲突（注：该「恒 ≥80」在 241/243 根 Bar 前提下的成立条件已由 round 13 补齐闭环，见本文件 round 13 闭环段）；
    - 在 §2.2 T-2 描述中严格按照 $\max(0, 80 - x)$ 修正为 `1~80 根，例如 09:30 开盘 x=0 时剩余 80 根`，消除 `1~75 根`/`剩余 75 根` 矛盾；
    - 在 §3 复述中为 199 根补充严格前置成立条件（`随当日已产生 Bar 数 x 动态变化，等于 min(240, 320 - x) 根；在 11:30 前后 x≈121 时约 199 根，早盘 x≤80 时为满仓 240 根，收盘 x=240 时仍有 80 根`）；
    - 全文保留根数表述均可由公式直接复算，无与之冲突的固定区间或固定值。
@@ -131,7 +154,7 @@
 
 1. **【P1 闭环】改造点四上移至调度层保活与活跃图表订阅双解耦** ✅：
    - 彻底梳理调用链路：定位 `app.js:1607` 路由入口无条件 `stopMonitorTimer()` 以及 `app.js:1515` 传入 `visible = !hasLimitUpRoot = false` 导致 `monitorController.js:82` 掐断全局轮询定时器的调度层断链根因；
-   - 确立调度保活方案：在 `app.js:1513-1515` 将可见性语义明确为全站保活（`monitorCtrl.applySchedule(allowed, true)` 或 `needsSharedQuotes = true`），并在 `app.js:1607` 路由切换处移除 `stopMonitorTimer()`（仅保留 `closeAllCharts()` 清除图表实例，保留后台全局共享行情轮询），消除虚构变量风险；
+   - 确立调度保活方案：在 `app.js:1513-1515` 将可见性语义明确为全站保活（`monitorCtrl.applySchedule(allowed, true)` 或 `needsSharedQuotes = true`），并在 `app.js:1607` 路由切换处移除 `stopMonitorTimer()`（仅保留 `closeAllCharts()` 清除图表实例，保留后台全局共享行情轮询），消除虚构变量风险（注：后续 round 12/13 实测进一步澄清，`app.js:1607` 处移除 `stopMonitorTimer()` 属可选清理，因行 1613 的 `applyDataRefreshSchedule()` 会按可见性重建定时器，主调度保活完全由行 1515 的 `visible` 判定独立决定）；
    - 在 `monitorController.js:14-22` 保持将各页面 `expandedCodes` 并入 `getRefreshCodes()`，确保无论看板是否在历史日期，已展开图表的标的在 ≤3s 内获得报价供给并存入 `state.quotes`，驱动日 K 追加与 10s 分时定时刷新；
    - 同步全面更新 §4.1.5、§4.2 改造点四以及 §4.4 影响面与风险评估。
 2. **【P2 闭环】纠偏股票快照主源数据流前提与原地覆盖成立条件** ✅：
