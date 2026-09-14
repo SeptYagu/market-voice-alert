@@ -1,6 +1,33 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 独立审查 round 10（涨停看板历史日期图表修复方案）**未通过** —— P1×1 / P2×1 / P3×1
+## 2026-09-14 当前状态：WorkBuddy 审查（round 10）缺陷全面闭环（行情调度层解耦保活 / 腾讯主源前提纠偏 / Mock信封与集成测试契约加固）—— 提交 round 11 独立审查
+
+最新交接文档：[`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)
+前序审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round10-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round10-handoff.md)
+审查基线：`f48e592`
+
+针对 round 10 独立审查报告指出的 1 项 P1 阻塞缺陷、1 项 P2 前提失实与 1 项 P3 测试信封缺陷完成全面彻底闭环：
+
+1. **【P1 闭环】改造点四上移至调度层保活与活跃图表订阅双解耦** ✅：
+   - 彻底梳理调用链路：定位 `app.js:1607` 路由入口无条件 `stopMonitorTimer()` 以及 `app.js:1515` 传入 `visible = !hasLimitUpRoot = false` 导致 `monitorController.js:82` 掐断全局轮询定时器的调度层断链根因；
+   - 确立调度保活方案：在 `app.js:1513-1515` 将可见性语义明确为全站保活（`monitorCtrl.applySchedule(allowed, true)` 或 `needsSharedQuotes = true`），并在 `app.js:1607` 路由切换处移除 `stopMonitorTimer()`（仅保留 `closeAllCharts()` 清除图表实例，保留后台全局共享行情轮询），消除虚构变量风险；
+   - 在 `monitorController.js:14-22` 保持将各页面 `expandedCodes` 并入 `getRefreshCodes()`，确保无论看板是否在历史日期，已展开图表的标的在 ≤3s 内获得报价供给并存入 `state.quotes`，驱动日 K 追加与 10s 分时定时刷新；
+   - 同步全面更新 §4.1.5、§4.2 改造点四以及 §4.4 影响面与风险评估。
+2. **【P2 闭环】纠偏股票快照主源数据流前提与原地覆盖成立条件** ✅：
+   - 严格对照 `src/js/api.js:150-176` 与 `src/js/parser.js:64/82`，明确纠正前提：股票快照报价主源为腾讯（写入 8 位 `quoteDate`），在有行情供给时 `kline.js:420` 正常命中追加分支；
+   - 澄清历史看板下缺失今日柱的第一因是**调度停摆导致无行情供给（`q === undefined` 跳过合并）**，而非 Tick 原地覆盖；
+   - 明确将原地覆盖的成立范围界定为：腾讯降级东财快照（`parser.js:93-127`，无日期字段）、腾讯字段缺失、或外部/单测直接注入 `{ price: 21 }` 等无日期对象场景，并在 §2.3 与 §4.2 补充清晰的 A1~A4 场景行为对比与验证矩阵；
+   - 全文彻底清除"股票快照行情流恒不携带 / 恒定落入覆盖分支"等绝对化措辞。
+3. **【P3 闭环】§4.3 Mock 信封规范化与调度层保活集成级断言补齐** ✅：
+   - 将 `/api/cache/intraday` 的 Mock 桩规范为完整信封 `{ ok: true, data: { items: [], prevClose: 20.00 } }`，彻底避免触发 4 次降级请求与底座 `Unexpected network request` 断言；将"无条件调用"修正为"`this.hasIntraday` 为真时调用"；
+   - 时钟 Mock 规范明确要求同时覆写构造函数与 `static now()`（`RealDate` 派生类），杜绝 `Date.now()` 与 `new Date()` 产生时钟漂移与 Flaky；
+   - 规范用例编号为 1~8 连续递增，并在用例 7 中补齐了能切实证伪 P1 的集成级端到端断言：包含路由保活定时器持续运行（`timer !== null`）、`fetchQuotes` 请求批次包含历史展开标的、`state.quotes` 成功写入实体并驱动 `updateChartLastTickMulti`。
+
+**门禁验证**：
+- `npm test`（QUnit）：**814/814 全部通过（0 失败，0 偶发）**；
+- 全文代码引用、符号与行号经自动化脚本逐一校验，与 HEAD 100% 精准对齐。
+
+## 2026-09-14 历史状态：WorkBuddy 独立审查 round 10（涨停看板历史日期图表修复方案）**未通过** —— P1×1 / P2×1 / P3×1
 
 审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round10-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round10-handoff.md)
 被审 HEAD：`0305357`　审查基线：`f48e592`　审查范围：`git diff f48e592..0305357`（5 文件 / +542 / -22，全为文档：`AGENTS.md`、`STATUS.md`、round 9 审查报告、图表调查报告、`docs/handoff/INDEX.md`）
