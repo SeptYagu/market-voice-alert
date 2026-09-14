@@ -1,6 +1,18 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 独立代码审查 round 1 缺陷闭环（用例 7 端到端变异证伪与用例 5 盘前 loadKline 防幽灵 Bar 真实合并）—— 提交 round 2 复审
+## 2026-09-14 当前状态：WorkBuddy 独立代码审查 round 2（round 1 缺陷闭环 · 代码落地）**未通过** —— P3×2
+
+审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round2-handoff.md)
+被审 HEAD：`76e9cd9`　审查基线：`f48e592`　本轮增量范围：`git diff 892f1b8..76e9cd9`（4 文件：`tests/limitUpChartFixes.test.js` +99/-6 与文档）
+复审结论：**未通过**（round 1 两项缺陷**主项已真实闭环**，残留 2 项 P3，须彻底修复闭环后复审）
+
+- **主项闭环实测确认**：① M1 变异（回退 `app.js:1511` 为 `!hasLimitUpRoot`）实跑使用例 7 **确定性变红**（`tests/limitUpChartFixes.test.js:334` `pollTimerAlive` actual `false`），`#/limit-up` 前置与 (b)(c) 端到端链路已补齐；② M6 变异（`chartRowController.js:391` → `getBeijingDate()`）实跑使用例 5 **确定性变红**（`:241` 长度 actual `3` expected `2`），盘前真实 `loadKline` 防幽灵 Bar 已落地；③ 门禁实跑 `npm test` **820/820**、`npm run lint` **0 错误 0 警告**、`npm run build` 成功。
+- **P3-1（残留）**：round 1 P3-1 验收范围**仅部分闭环**——用例 5 盘前段只覆盖 `chartRowController.js:391`（`loadKline`），`:546-549`（`applyLiveTick`）注入点零覆盖；唯一覆盖 `applyLiveTick` 的用例 4 固定时钟 `10:00`，此刻 `resolveStockChartDate(dates) === getBeijingDate()`（均 `2026-09-14`），对 `:546` **结构性不敏感**。变异 M7（仅改 `:546` 为 `getBeijingDate()`）→ 6/6 全绿；独立生产装配探针（真实 `limitUpChartMgr`，`09:00` 盘前，无日期 Tick）在 M7 下确定性捕获 `2026-09-14` 幽灵 Bar → 证明该变异可观测、可测，属真实覆盖缺口。对照 round 1 报告 `:42-43`（修复建议要求 `loadKline` **与** `applyLiveTick` 并测；修复后验收标准要求 `:391` **及** `:546` 变异均须使用例失败）。可达性受 `marketSession.isAutoRefreshAllowedInSession`（`pre-open` 返回 `false`）限制，故定级 P3。
+- **P3-2（残留，本轮首次引入）**：用例 7 `finally`（`:348-357`）仅 `monitorCtrl.stopTimer()`，未停涨停看板定时器 → `state.limitUp.timer` 残留桩句柄 `1002`（串行不变量探针实测 `actual 1002 / expected null`）；`app.js:1520` 是 `state.limitUp.timer` 全仓唯一消费点且判据为「假值即启动」，后续同进程用例若建立 `#/limit-up` 前置将**静默跳过启动**，形成顺序依赖。当前 820 例全绿（无下游用例依赖该判据），属潜在风险。round 1 修复建议第 5 条已要求「停表」，本轮仅停了监控轮询。`892f1b8` 版本因未挂载 root（走 `app.js:1524-1525` `stopLimitUpTimer` 分支）无此泄漏。
+- **待确认风险（承接 round 1，未定级、本轮未变化）**：`applyLiveQuoteToKline` 追加分支（`kline.js:420`）无停牌/陈旧守卫，降级无日期快照在停牌标的上可能生成假当日蜡烛，待真实源形态验证。
+- **未验证项**：真实数据源端到端（腾讯主源降级东财、AKTools 分钟源）与真实浏览器/盘中实机运行 `#/limit-up` 仍未覆盖，本轮证据全部来自 jsdom + 固定时钟 + 变异实跑。
+
+## 2026-09-14 历史状态：WorkBuddy 独立代码审查 round 1 缺陷闭环（用例 7 端到端变异证伪与用例 5 盘前 loadKline 防幽灵 Bar 真实合并）—— 已提交 round 2 复审（评审结论见上方 round 2：主项闭环，残留 P3×2）
 
 审查基线：`f48e592`
 对应前序报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round1-handoff.md)
