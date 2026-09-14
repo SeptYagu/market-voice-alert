@@ -55,31 +55,31 @@
 
 当 Antigravity 完成功能开发或缺陷修复并推送到 Git 后，必须按照以下流程触发 WorkBuddy 独立审查，形成自动验证闭环：
 
-### 4.1 审查派发规则（Dispatch Protocol）
-- **WorkBuddy 宿主工作区（cwd）**：`D:\AiPrograms\project1`（即用户在 WorkBuddy 桌面端已打开的主项目）。
-- **目标代码仓库**：子目录 `market-voice-alert`（完整路径：`D:\AiPrograms\project1\market-voice-alert`）。
-- **派发方式**：调用 `workbuddy-bridge` 技能（指定 `--cwd "D:\AiPrograms\project1"`，模型调度与执行策略遵循技能内建规则），以非阻塞后台任务派发，Antigravity 挂起等待回传。
+### 4.1 审查派发强卡点（Mandatory Review CLI Hard Gate）
+为彻底杜绝大模型在多轮审查中“自由发挥自定义提示词、诱导提问、放松审查边界”的退化行为，**严禁使用 `run --prompt` 手工拼装提示词**。必须统一通过底层机械化 CLI 审查命令发起：
 
-### 4.2 独立审查员提示词规范（Reviewer Prompt Reference）
-代码审查提示词已外置并收敛于 WorkBuddy 技能基座的标准规范文件中，项目内仅做路径引用：
+```powershell
+python "C:\Users\12915\.gemini\config\plugins\workbuddy-plugin\scripts\workbuddy_cli.py" review `
+  --repo-dir "D:\AiPrograms\project1\market-voice-alert" `
+  --goal "<本次任务核心目标>" `
+  --criteria "<验收标准>" `
+  --base-sha "<修改前的初始基准 Commit SHA>" `
+  --head-sha "<待审的最新 Commit SHA>" `
+  --round <当前审查轮次编号，如 1, 2, ...>
+```
+- **宿主工作区与路径映射**：CLI 会自动关联宿主工作区 `D:\AiPrograms\project1`，并向审查员精准注入目标子仓库绝对路径，无需人工干预。
+- **变更范围（`--scope`）**：若省略，CLI 会在目标仓库自动执行 `git diff --stat {BASE_SHA}..{HEAD_SHA}` 提取精确变更文件。
+- **异步调度**：派发时通过 `run_command`（`WaitMsBeforeAsync: 2000`）在后台运行，Antigravity 挂起等待回传唤醒。
 
-- **规范模板文件**：`C:\Users\12915\.gemini\config\plugins\workbuddy-plugin\skills\workbuddy-bridge\code-review-prompt.md`
-
-- **派发调用约定**：
-  派发给 WorkBuddy 的任务提示词必须读取上述模板文件，仅允许将模板中的占位符严格替换为当前任务真实上下文：
-  - `{GOAL}`：本次任务的核心目标简报
-  - `{ACCEPTANCE_CRITERIA}`：本次任务的验收标准
-  - `{BASE_SHA}`：本次修改前的基准 Commit SHA
-  - `{HEAD_SHA}`：Antigravity 提交并推送的待审 Commit SHA
-  - `{SCOPE}`：本次修改涉及的模块与文件范围
-  - `{KNOWN_LIMITATIONS}`：本次任务已知限制或技术边界（若无则填“无”）
-
-  严禁在模板之外额外添加任何自定义或非标准提示词，审查员必须严格依据规范执行代码阅读、证伪验证、缺陷分级与交付流转。
+### 4.2 双盲对抗审计与多轮基准连续性（Anti-Drift & Double-Blind Protocol）
+- **规范模板硬绑定**：审查命令在底层强制加载并渲染规范模板 `code-review-prompt.md`，彻底剥夺了大模型自由添加指令的权力。
+- **严禁诱导提问（No Leading Questions）**：在多轮复查（Round 2+）中，Antigravity **严禁**向审查员附带传递“*我已经修复了第 40 行的 Bug*”、“*请核验问题是否已解决*”、“*本次只是微小修改*”等任何主观辩解或诱导性信息。审查员必须作为冷启动的对抗性审计员，基于代码 diff 和构造反例独立裁决。
+- **基准 SHA 锚定原则**：在整个需求生命周期的所有审查轮次（Round 1、Round 2……）中，`--base-sha` 必须始终保持为**最初开工前的原始基准提交**（而不是上一轮被拒的中间提交），确保审查员对累计改动的全局回归与连带影响拥有全量视野。
 
 ### 4.3 反馈决策与自愈循环（Resolution Loop）
 1. **唤醒与判断**：
    - **分支 A（无问题）**：WorkBuddy 回复确认审查通过，且无新增缺陷 handoff ➔ 审查闭环通过，向用户汇报最终成果，流程结束。
-   - **分支 B（有缺陷）**：WorkBuddy 发现了问题并推送了新 handoff ➔ Antigravity 执行 `git pull --ff-only` 同步交接文档 ➔ 根据 handoff 修改代码并补充测试 ➔ 本地门禁验证 ➔ `git commit` & `git push` ➔ 再次派发 WorkBuddy 审查（进入 round N+1）。
+   - **分支 B（有缺陷）**：WorkBuddy 发现了问题并推送了新 handoff ➔ Antigravity 执行 `git pull --ff-only` 同步交接文档 ➔ 根据 handoff 修改代码并补充测试 ➔ 本地门禁验证 ➔ `git commit` & `git push` ➔ 再次调用 `workbuddy_cli.py review`（指定 `--round 2` 等）派发 WorkBuddy 复审。
 2. **安全熔断（Safeguard）**：
    - 最大自动循环次数为 **10 轮**。若达到 10 轮仍存在分歧或未通过，自动中断循环，整理双方论据向用户汇报，由用户裁决。
 
