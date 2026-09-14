@@ -241,6 +241,23 @@ QUnit.module('limitUpChartFixes - 图表历史日期修复与调度解耦测试�
         t.equal(items.length, 2, '盘前 loadKline 不追加未开盘当天的幽灵 Bar (数组长度保持为 2)');
         t.equal(items[1].time, '2026-09-11', '最后一根 Bar 仍为上一交易日 2026-09-11');
         t.notOk(items.some((item) => item.time === '2026-09-14'), '严禁包含 2026-09-14 幽灵蜡烛');
+
+        // 5. 集成真实 applyLiveTick 链路验证防幽灵 Bar（对 chartRowController.js:546 的 getBeijingDate 变异敏感）
+        const fakeCtl = {
+          updateKline() {},
+          updateVolume() {},
+          updateMA() {},
+          destroy() {}
+        };
+        mgr.klineCtlMap.set(code, fakeCtl);
+
+        // 传入无日期快照报价
+        mgr.applyLiveTick(code, { price: 22.00 });
+        const itemsAfterTick = inst.klineData.items;
+        t.equal(itemsAfterTick.length, 2, '盘前 applyLiveTick 不追加未开盘当天的幽灵 Bar (数组长度保持为 2)');
+        t.equal(itemsAfterTick[1].time, '2026-09-11', '最后一根 Bar 保持为上一交易日 2026-09-11');
+        t.equal(itemsAfterTick[1].close, 22.00, '最后一根 Bar 收盘价就地更新');
+        t.notOk(itemsAfterTick.some((item) => item.time === '2026-09-14'), '严禁包含 2026-09-14 幽灵蜡烛');
       } finally {
         mgr.destroyAll();
       }
@@ -346,7 +363,9 @@ QUnit.module('limitUpChartFixes - 图表历史日期修复与调度解耦测试�
       t.ok(state.quotes.has('sh600777'), 'state.quotes 成功写入展开标的');
       t.equal(state.quotes.get('sh600777').price, 21, 'state.quotes 价格准确写入');
     } finally {
+      limitUpCtrl.stopTimer({ abort: false });
       limitUpCtrl.setRootEl(null);
+      state.limitUp.timer = null;
       state.limitUp.expandedCodes.delete('sh600777');
       state.quotes.delete('sh600777');
       state.tradingDates = originalTradingDates;
@@ -355,5 +374,13 @@ QUnit.module('limitUpChartFixes - 图表历史日期修复与调度解耦测试�
       state.limitUp.autoRefreshEnabled = originalLuAutoRefresh;
       monitorCtrl.stopTimer();
     }
+  });
+
+  // 用例 8: 验证跨用例单例状态无残留（不变量探针保护，彻底闭环 P3-2）
+  QUnit.test('用例 8: 用例 7 结束后 app 全局单例恢复初始不变量 (state.limitUp.timer === null)', (t) => {
+    const { state, limitUpRootEl } = _internal();
+    t.equal(state.limitUp.timer, null, 'state.limitUp.timer 已彻底清零，无跨用例残留泄漏');
+    t.equal(limitUpRootEl, null, 'limitUpRootEl 已复位为 null');
+    t.equal(state.limitUp.expandedCodes.size, 0, 'limitUp.expandedCodes 无残留');
   });
 });

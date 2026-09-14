@@ -1,6 +1,25 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 独立代码审查 round 2（round 1 缺陷闭环 · 代码落地）**未通过** —— P3×2
+## 2026-09-14 当前状态：WorkBuddy 独立代码审查 round 2 缺陷闭环（用例 5 覆盖 applyLiveTick 注入点 :546 与用例 7 彻底清零 state.limitUp.timer）—— 提交 round 3 复审
+
+审查基线：`f48e592`
+对应前序报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round2-handoff.md)
+
+针对 round 2 独立审查指出的 2 项 P3 覆盖与状态泄漏缺陷完成全面闭环：
+
+1. **闭环 P3-1（用例 5 盘前段覆盖 `chartRowController.js:546` `applyLiveTick` 注入点）** ✅：
+   - 在 `tests/limitUpChartFixes.test.js` 用例 5 盘前（`09:00:00`）时钟与已装载 `2026-09-11` 末柱的实例上，补齐真实 `applyLiveTick(code, { price: 22.00 })` 链路断言；
+   - 断言 K 线数组长度严格保持为 2，末柱时间严格为 `2026-09-11`，收盘价就地更新为 22.00，严禁包含 `2026-09-14` 幽灵蜡烛；
+   - **双变异证伪实测确认**：对 `chartRowController.js:391`（M6，`loadKline` 路径）与 `:546`（M7，`applyLiveTick` 路径）分别变异为 `getBeijingDate()`，用例 5 均**确定性失败红灯变异被击杀**；恢复后用例确定性全绿。
+2. **闭环 P3-2（用例 7 彻底清零 `state.limitUp.timer` 杜绝单例状态泄漏）** ✅：
+   - 在用例 7 的 `finally` 中显式调用 `limitUpCtrl.stopTimer({ abort: false })` 并清零 `state.limitUp.timer = null`；
+   - 新增用例 8（不变量探针测试），在用例 7 结束后无条件校验 app 全局单例初始不变量（`state.limitUp.timer === null`、`limitUpRootEl === null`、`limitUp.expandedCodes.size === 0`），彻底杜绝跨用例/同进程单例状态残留；
+3. **门禁与全量测试** ✅：
+   - 全量单测 `npm test`：**821/821 全部通过（0 失败）**；
+   - 代码检查 `npm run lint`：**0 错误 0 警告**；
+   - 构建打包 `npm run build`：**成功**。
+
+## 2026-09-14 历史状态：WorkBuddy 独立代码审查 round 2（round 1 缺陷闭环 · 代码落地）**未通过** —— P3×2
 
 审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round2-handoff.md)
 被审 HEAD：`76e9cd9`　审查基线：`f48e592`　本轮增量范围：`git diff 892f1b8..76e9cd9`（4 文件：`tests/limitUpChartFixes.test.js` +99/-6 与文档）
