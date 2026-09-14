@@ -127,10 +127,95 @@ function isLatestKlineDate(inst, date) {
 
 ## 4. 架构优化与修复方案
 
-### 方案概述
-1. **统一图表交易日解析契约**：
-   修改 [`src/js/app.js:414-419`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/app.js#L414-L419)，将 `limitUpChartMgr` 的 `resolveTradeDate` 调整为与 `monitorChartMgr` 一致，统一使用 `resolveInitialTradeDate(code, data)`。无论看板翻到哪一天，展开图表默认始终展示当下最新交易日。
-2. **实时报价目标日期防污染**：
-   在 [`src/js/controllers/chartRowController.js:383`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L383)，实时报价的 `targetDate` 兜底应当优先使用北京当前交易日（`resolveStockChartDate` 或 `getBeijingDate`），不再受任何历史 `selectedTradeDate` 污染，确保日 K 线始终追加今日蜡烛。
-3. **保留历史分时查阅通道**：
-   若用户确需查看某历史日期的分时走势，保留并依托成熟的原生能力：点击日 K 对应柱子（[`chartRowController.handleKlineBarClick`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L491)），即可精准切换至指定历史日期的分时。
+### 4.1 总体架构设计与职责边界划分
+
+要彻底根治历史日期翻页带来的图表锁死与时序混乱，必须确立清晰的系统职责边界与设计原则：
+
+1. **状态职责正交分离（核心原则）**：
+   - **看板列表筛选日期（`state.limitUp.selectedDate`）**：其职责仅限于**涨停股票列表的数据集过滤与历史回溯**（即筛选出指定历史交易日上榜的标的池）。
+   - **图表实例初始日期（`inst.selectedTradeDate`）**：展开图表的核心用户诉求是**复盘过往涨停标的在“当下”的溢价、接力与最新价格走势**。因此，无论列表当前筛选哪一天，新展开的图表默认**必须且只能以最新可用交易日（`latestTradingDay` / 今日）作为初始上下文**，严禁被列表的筛选日期劫持。
+2. **主动下钻 vs 默认呈现**：
+   - **默认呈现**：展开即展示当下全量日 K 与今日最新分时（具备实时 Tick 注入与定时刷新）。
+   - **主动下钻通道**：保留并依托成熟的原生交互能力——用户若确需回溯某历史日期的分时细节，在右侧日 K 图中主动点击对应历史蜡烛柱（[`chartRowController.handleKlineBarClick`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L491)），由显式的人机交互触发分时切换。
+3. **实时时钟防污染契约**：
+   - 实时行情（Live Quote）在语义上恒为“当前最新的市场报价”，其对应的 K 线目标日期必须锚定**交易日历的当前交易日**（[`resolveStockChartDate`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/tradeCalendar.js#L118)），绝不允许退化回退到实例可能持有的历史 `selectedTradeDate`。
+
+---
+
+### 4.2 具体改动点与实施细则（含代码变更对比）
+
+#### 改造点一：统一图表交易日解析契约（移除看板历史日期劫持）
+- **涉及文件**：[`src/js/app.js:414-419`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/app.js#L414-L419)
+- **问题现状**：
+  目前 `limitUpChartMgr` 的 `resolveTradeDate` 检查 `isHistorical`，若看板处于历史日期则强行返回 `state.limitUp.selectedDate`，导致实例初始化时 `selectedTradeDate` 被硬编码为历史日期。
+- **改动方案**：
+  将 `limitUpChartMgr` 的 `resolveTradeDate` 调整为与自选监控页 [`monitorChartMgr`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/app.js#L387-L400) 保持完全一致，统一直接委托给 `resolveInitialTradeDate(code, data)`。
+- **代码对比**：
+  ```javascript
+  // 修改前 (src/js/app.js:414-419)
+  resolveTradeDate: (code, data) => {
+    const dates = state.tradingDates || state.limitUp.tradingDates || [];
+    const latestTradeDate = resolveLatestTradingDate(getBeijingDate(), dates);
+    const isHistorical = state.limitUp.selectedDate && latestTradeDate && state.limitUp.selectedDate < latestTradeDate;
+    return isHistorical ? state.limitUp.selectedDate : resolveInitialTradeDate(code, data);
+  },
+
+  // 修改后 (src/js/app.js)
+  resolveTradeDate: (code, data) => resolveInitialTradeDate(code, data),
+  ```
+- **技术效果**：
+  - 无论看板翻到 T-1、T-2 还是更早，点击展开图表时，`selectedTradeDate` 始终被解析为最新交易日。
+  - 分时图直接请求今日分时数据，绝不向服务端请求历史分时，从根源上杜绝了 320 根滑动窗口合成历史伪分时、并将图表锁死在昨日静态数据的行为。
+
+#### 改造点二：实时报价目标日期防污染（消除日 K 原地覆盖陷阱）
+- **涉及文件**：[`src/js/controllers/chartRowController.js:380-389`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L380-L389)
+- **问题现状**：
+  在日 K 加载完成合并实时报价时，`targetDate` 兜底链中包含了 `inst.selectedTradeDate`。一旦实例被设为历史日期且报价缺少显式日期字段，`targetDate` 退化为历史日期，触发 [`kline.js:420`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/kline.js#L420) 的 `lastDate < targetDate = false`，导致昨日柱被原地覆盖、今日蜡烛丢失。
+- **改动方案**：
+  实时报价的日期兜底必须优先取当前交易日（引入 [`resolveStockChartDate`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/tradeCalendar.js#L118) 或 `getBeijingDate`），彻底移除对 `inst.selectedTradeDate` 的回退依赖。
+- **代码对比**：
+  ```javascript
+  // 修改前 (src/js/controllers/chartRowController.js:383)
+  const targetDate = q.tradingDay || q.date || q.quoteDate || inst.selectedTradeDate || getBeijingDate();
+
+  // 修改后 (src/js/controllers/chartRowController.js)
+  const liveChartDate = resolveStockChartDate(this.getTradingDates()) || getBeijingDate();
+  const targetDate = q.tradingDay || q.date || q.quoteDate || liveChartDate;
+  ```
+- **技术效果**：
+  - 即使图表当前正处于用户主动切换的历史分时查看状态（`inst.selectedTradeDate` 为历史日期），接收到的实时报价仍然以今日市场日期作为 `targetDate`。
+  - 在 [`src/js/kline.js:402`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/kline.js#L402) 中，`lastDate < targetDate` 判定始终为 `true`，系统正常为今天追加（或更新）最新的日 K 蜡烛柱，绝不会意外污染覆盖历史收盘柱。
+
+#### 改造点三：历史下钻与实时监控的双向平滑切换机制
+- **涉及文件**：[`src/js/controllers/chartRowController.js:491-505`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L491-L505)
+- **交互流程保障**：
+  1. **主动查看历史**：用户在日 K 上点击历史 Bar，`handleKlineBarClick` 捕获点击日期并更新 `inst.selectedTradeDate`，发起 `loadIntraday(code, date)` 加载该历史日期的分时。此时 [`isLiveTradeDate(selectedDate)`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/marketSession.js#L138) 为 `false`，实时 Tick 自动阻断，分时状态文本明确标识该历史日期点数。
+  2. **快速回到最新**：用户点击最右侧当天的日 K 柱子，`selectedTradeDate` 瞬间切换回今日，`loadIntraday` 重新加载今日全天分时。此时 `isLiveTradeDate` 恢复为 `true`，后续所有实时 Tick 增量推送立即无缝恢复注入。
+  3. **重新展开重置**：用户折叠行再重新展开，始终触发初始化逻辑，稳定重置并呈现最新行情，不残留上次的历史下钻状态。
+
+---
+
+### 4.3 自动化测试与质量保障方案
+
+为确保架构优化落地且绝不发生回归，需在现有 814 个测试用例基础上扩展以下针对性测试矩阵：
+
+1. **涨停看板图表初始化交易日单测**（扩展 `tests/chartRowController.test.js` 或新建 `tests/limitUpChartInit.test.js`）：
+   - **用例 1**：模拟 `state.limitUp.selectedDate = '2026-09-11'`（T-1），实例化 `limitUpChartMgr` 并调用 `ensureChart(code)`，断言实例的 `selectedTradeDate` 为当前最新交易日（`2026-09-14`），而非 `2026-09-11`。
+   - **用例 2**：模拟 `state.limitUp.selectedDate = '2026-09-10'`（T-2），同样断言初始化的 `selectedTradeDate` 为最新交易日。
+2. **实时报价日期防污染与追加日 K 蜡烛单测**（扩展 `tests/chartRowController.test.js`）：
+   - **用例 3**：构造 `inst.selectedTradeDate = '2026-09-11'`（模拟用户正在看历史分时），注入不带日期字段的纯价格报价 `{ price: 21.00 }`。断言合并后的日 K 数据项数量增加 1 根（追加了 `2026-09-14` 的新 Bar），且上一根（`2026-09-11`）的收盘价保持原样未被覆盖。
+3. **历史分时点击下钻与回归今日的闭环测试**：
+   - **用例 4**：模拟点击历史柱子，验证 `selectedTradeDate` 改变且 `loadIntraday` 被调用；再模拟点击最新柱子，验证 `selectedTradeDate` 回归且 `isLiveTradeDate` 恢复为 `true`。
+
+---
+
+### 4.4 风险评估与发布保障
+
+- **风险等级**：**低（Low）**。
+  - 改动严格受控在前端图表控制器的初始日期决策与报价合并日期兜底两个局部点位。
+  - 不涉及服务端接口改动，不影响涨停板核心筛选、语音告警、主监控表格等业务链路。
+- **向下兼容性**：**100% 兼容**。
+  - 完全保留用户通过日 K 柱子主动下钻查阅历史分时的全部既有功能。
+- **验证与回滚预案**：
+  - 实施时先运行全量测试套件保证基线不坏；
+  - 若在生产验证阶段发现任何未预期的行为偏差，仅需回滚两处代码即可安全恢复至改动前状态。
