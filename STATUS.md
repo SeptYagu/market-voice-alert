@@ -1,6 +1,22 @@
 # STATUS.md - 项目状态
 
-## 2026-09-13 当前状态：WorkBuddy 独立审查 round 3 通过（双智能体闭环达成）& 审查上限调整为 10 轮 & 遗留 P3 收尾
+## 2026-09-14 当前状态：WorkBuddy 独立审查 round 9（涨停看板历史日期图表）**未通过** —— P1×1 / P2×1 / P3×4
+
+审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round9-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round9-handoff.md)
+被审 HEAD：`e2a8f0d`　审查基线：`f48e592`　审查范围：`git diff f48e592..e2a8f0d`（3 文件：`AGENTS.md`、`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`、`docs/handoff/INDEX.md`）
+审查结论：**未通过**（1 项 P1、1 项 P2、4 项 P3，均须彻底修复闭环后复审）
+
+本轮通过的核查项（简）：需求实现无遗漏（上轮点名的行号漂移 `intradayService.js:216→215`、`marketSession.js:138→132`、`instrument.js:20→5` 与 `32da3ca→eae67ae` 迁移链、"100% 完整保障/绝不请求历史分时"两处绝对化措辞、用例 5 盘前时钟均已落实）；文档全部 17 处代码引用（文件+行号+标识符）、2 处提交溯源、10 处 `file:///` 链接经逐条核对**与 HEAD 完全一致**；`AGENTS.md` 新增 CLI 契约与 `workbuddy_cli.py:42-143` 实现一致；`npm test` 复跑 **814/814 通过**（文档"814 例"基线属实）。
+
+**阻塞缺陷（摘要，细节见审查报告第二节）**：
+
+1. **P1（高）修复方案未覆盖"历史看板 ⇒ 标的报价脱离刷新集合"**：`monitorController.js:14-22`（第 17 行门禁）使看板非今日时涨停列表 code 不再拉取报价，`state.quotes` 无实体 → `chartRowController.js:380-382` 报价合并整段跳过（今日蜡烛仍缺失）、`app.js:1355-1356` Tick 跳过、`refreshLiveIntradayForCode` 不再被调用（分时无 10s 刷新）。该依赖从未在 §4.1/§4.2 出现，导致"展开即展示今日全量日 K 与今日最新分时（具备实时 Tick 注入与定时刷新）"的承诺在用户主场景（回顾历史涨停名单里、未加入自选的个股）不成立。已用未修改的 `ChartRowManager.loadKline` 复现：有报价 → 3 根（含今日）；无报价 → 2 根（末根仍为 2026-09-11）。
+2. **P2（中）改造点二只修 `loadKline` 合并点**：`chartRowController.js:114-116`（`applyLiveTickToKlineChart`）同样以原始报价直传 `applyLiveQuoteToKline`，而股票报价恒无日期字段（`parser.js:108-126`），故该路径 `targetDate` 恒为 `null`、`kline.js:420` 追加分支不可达，每次 Tick 都原地覆盖最后一根 → §4.2"绝不会因历史日期污染而错误覆盖昨天的收盘柱"不成立（实测 tick 路径下 2026-09-11 柱 close 被改写为 21）。
+3. **P3×4**：§2.2/§3 把"T-2 命中 0 根"当作机制性事实（真实阈值为**当日第 80 根 Bar ≈ 10:48**，早盘 T-2 仍有 1~75 根可被合成伪分时，且 T-1/T-2 的源可用性条件标注不对等）；§2.4 的 `isLatestKlineDate` 假阳性被 `intradayService.js:261` 的 `!isHistoricalDate` 中和、对历史日期无行为影响却被列为掩盖点；§4.3 测试矩阵未声明 mock `/api/cache/intraday`（`loadKline` 会立即触发 `loadIntraday`），按文档写法在既有 harness 下必然失败（已实测 0 pass / 1 fail）；§2.3 与 §3.2 对同一 T-2 场景使用互斥的日 K 缓存前提。
+
+**处置建议**：先补 §4.2"改造点四：图表订阅与看板日期解耦"（`getRefreshCodes` 纳入已展开图表 code 集，并同步 `limitUpController.js:411`/`:259` 门禁口径）→ 再把改造点二抽为可复用的日期解析并同时注入 `loadKline` 与 `applyLiveTickToKlineChart` → 最后按审查报告第四节顺序闭合 4 项 P3。
+
+## 2026-09-13 历史状态：WorkBuddy 独立审查 round 3 通过（双智能体闭环达成）& 审查上限调整为 10 轮 & 遗留 P3 收尾
 
 审查报告：[`docs/handoff/2026-09-13-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-13-workbuddy-code-review-round3-handoff.md)
 审查结论：**审查通过（P0=0, P1=0, P2=0, P3=2，满足全部审查通过条件）**
