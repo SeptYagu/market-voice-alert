@@ -31,11 +31,15 @@ flowchart TD
     L --> M["✅ 未形成虚假静态分时占位，暴露真实缺省状态"]
 
     subgraph 共性缺陷["历史看板共性缺陷 (T-1 与 T-2 均存在)"]
-        N["报价缺少日期字段时 targetDate 兜底为 inst.selectedTradeDate"]
-        N --> O["若本地日K缓存未含当天 (lastDate=T-1): 原地覆盖昨日柱，未追加今日蜡烛"]
+        N1["主场景第一主因: 调度停摆/未加自选导致无行情供给 (q=undefined)"]
+        N1 --> O1["若本地日K缓存未含当天 (lastDate=T-1): 跳过报价合并，缺失今日蜡烛"]
+        N2["次生缺陷: 降级东财/无日期Tick时 targetDate 兜底为 selectedTradeDate"]
+        N2 --> O2["lastDate >= targetDate: 原地覆盖昨日收盘柱"]
     end
-    C -.-> N
-    D -.-> N
+    C -.-> N1
+    D -.-> N1
+    C -.-> N2
+    D -.-> N2
 ```
 
 ### 2.1 机制一：`limitUpChartMgr.resolveTradeDate` 的历史日期强绑定
@@ -69,15 +73,18 @@ resolveTradeDate: (code, data) => {
 4. **实时推送切断**：
    当 `inst.selectedTradeDate` 被锁定为历史日期（无论是 T-1 还是 T-2）后，[`src/js/marketSession.js:132`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/marketSession.js#L132) 的 `isLiveTradeDate(selectedDate)` 判定非当日返回 `false`，导致 [`chartRowController.js:135`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L135) 和 [`app.js:1324`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/app.js#L1324) 彻底拒收并跳过今日的一切实时分时注入。
 
-### 2.3 机制三：日 K 的 `applyLiveQuoteToKline` 覆盖逻辑（历史看板通用缺陷）
+### 2.3 机制三：日 K 行情供给断链与 `applyLiveQuoteToKline` 覆盖逻辑（历史看板通用缺陷）
 
 在 [`src/js/controllers/chartRowController.js:380-389`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L380-L389)：
 ```javascript
-const targetDate = q.tradingDay || q.date || q.quoteDate || inst.selectedTradeDate || getBeijingDate();
-const quoteForKline = (q.tradingDay || q.quoteDate || q.date) ? q : { ...q, date: targetDate };
-const merged = applyLiveQuoteToKline(inst.klineData.items, quoteForKline, inst.period);
+const q = this.getQuote(code);
+if (q) {
+  const targetDate = q.tradingDay || q.date || q.quoteDate || inst.selectedTradeDate || getBeijingDate();
+  const quoteForKline = (q.tradingDay || q.quoteDate || q.date) ? q : { ...q, date: targetDate };
+  const merged = applyLiveQuoteToKline(inst.klineData.items, quoteForKline, inst.period);
+  ...
+}
 ```
-当股票报价缺少显式日期字段时（例如东财快照行情流缺少 `tradingDay/date/quoteDate`），`targetDate` 兜底取了 `inst.selectedTradeDate`。
 传入 [`src/js/kline.js:402`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/kline.js#L402) 的 `applyLiveQuoteToKline`（分支判断位于 [`kline.js:420`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/kline.js#L420)）：
 ```javascript
 if (period === '1d' && lastDate && targetDate && lastDate < targetDate) {
@@ -87,12 +94,13 @@ if (period === '1d' && lastDate && targetDate && lastDate < targetDate) {
 const updated = { ...last, close: price };
 return [...items.slice(0, -1), updated];
 ```
-- **触发前置条件**：
-  1. 日 K 缓存处于未含当天状态（如依据 1 小时 TTL 命中盘前生成的静态日 K 缓存文件，`lastDate = 'T-1'`）；
-  2. 行情源未提供独立日期字段，`targetDate` 退化取历史日期 `selectedTradeDate`。
+在历史看板下，日 K 缺失今日蜡烛存在两个清晰的层次：
+1. **主场景第一主因：无报价供给（`q === undefined` 跳过合并）**：
+   在真实生产管线中，股票快照行情主源为腾讯（[`api.js:150-176`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/api.js#L150-L176)），`parseTencent` 在 `fields[30]` 为 14 位时会解析出 8 位 `quoteDate`（[`parser.js:64/82`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/parser.js#L64-L82)）。当获取到腾讯主源报价时，`kline.js:409-420` 本可正常命中追加今日蜡烛分支。但在历史看板下，由于调度层停摆与刷新集合排除（详见 §4.1.5），`state.quotes` 中根本没有该标的的报价实体，`this.getQuote(code)` 返回 `undefined`，导致报价合并逻辑被完全跳过！若日 K 命中盘前生成的 1 小时静态缓存（`lastDate = 'T-1'`），今日蜡烛线完全无法生成。
+2. **次生缺陷：东财降级或无日期 Tick 下的原地覆盖**：
+   当腾讯主源发生异常降级回退至东财快照（[`parser.js:93-127`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/parser.js#L93-L127)，无日期字段）、腾讯字段缺失、或外部/增量 Tick 注入无日期对象时，`targetDate` 退化兜底取了 `inst.selectedTradeDate`。此时 `lastDate < targetDate` 判定恒为 `false`（对于 T-1 看板，`T-1 < T-1` 为假；对于 T-2 看板，`T-1 < T-2` 亦为假），系统不但没有追加新蜡烛，反而把前一天的收盘柱原地覆盖修改成了现价！
 - **共性缺陷定性（核心澄清）**：
-  在满足上述条件时，`lastDate < targetDate` 判定恒为 `false`（对于 T-1 看板，`T-1 < T-1` 为假；对于 T-2 看板，`T-1 < T-2` 亦为假）。**系统没有为今天追加新蜡烛 Bar，反而把最后一根柱子原地覆盖成了今天的现价**。
-  **因此，日 K 报价覆盖缺陷是所有历史看板（T-1 与 T-2）共有的底层问题，并非 T-1 独有。**
+  无论是无报价供给导致的合并跳过，还是东财回退下的原地覆盖，对于所有历史看板（T-1 与 T-2）都是完全对称且普遍存在的底层缺陷，绝非 T-1 独有。
 
 ### 2.4 语义说明：`isLatestKlineDate` 的返回值假阳性及其行为中和
 
@@ -146,14 +154,19 @@ function isLatestKlineDate(inst, date) {
    - **默认呈现**：展开即展示当下全量日 K 与今日最新分时（具备实时 Tick 注入与定时刷新）。
    - **主动下钻通道**：保留并依托成熟的原生交互能力——用户若确需回溯某历史日期的分时细节，在右侧日 K 图中主动点击对应历史蜡烛柱（[`chartRowController.handleKlineBarClick`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L491)），由显式的人机交互触发分时切换。
 4. **实时时钟防污染与多链路统一日期规范化**：
-   - 实时行情（Live Quote）在语义上代表最新市场快照。在股票快照行情流（[`src/js/parser.js:108-126`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/parser.js#L108-L126)）恒不携带 `tradingDay/date/quoteDate` 字段的现实管线下，必须由控制器统一提供日期兜底规范化函数（`resolveLiveFallbackDate`）：
+   - 实时行情（Live Quote）在语义上代表最新市场快照。在真实管线中，股票快照主源为腾讯（[`api.js:150-176`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/api.js#L150-L176)），其解析器在时间戳完整时能产出 8 位 `quoteDate`（[`parser.js:64/82`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/parser.js#L64-L82)）；但当腾讯故障回退至东财快照（[`parser.js:93-127`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/parser.js#L93-L127)，无日期字段）、腾讯字段异常或外部增量 Tick 注入无日期对象时，报价缺少显式日期字段。为消除此类场景下的原地覆盖风险，必须由控制器统一提供日期兜底规范化函数（`resolveLiveFallbackDate`）：
      - **对于股票标的**：其对应的目标日期**回退兜底必须锚定交易日历的当前可用交易日**（[`resolveStockChartDate`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/tradeCalendar.js#L118)），严禁退化回退到图表实例可能持有的股票历史 `selectedTradeDate`，也严禁因无日期而导致 `targetDate = null`；
      - **对于期货标的（`isFutureCode(code)`）**：期货标的实例持有的 `selectedTradeDate` 是由期货 session 计算得出的有效交易日（夜盘自然日可能跨日），继续保留其实例交易日的合法有效性。
    - 该日期规范化必须**无死角覆盖图表控制器的全部实时合并链路**：既包括初次加载的 `loadKline` 路径，也必须覆盖高频增量推送的 `applyLiveTick` 路径（通过在 `applyLiveTick` 调度点为缺少日期字段的纯价格报价注入 `fallbackDate`），避免任何未携带日期的报价对象进入 `applyLiveQuoteToKline` 导致 `targetDate = null` 进而原地覆盖昨日收盘柱。
-5. **行情供给与活跃图表订阅解耦原则（Active Chart Subscription）**：
+5. **行情调度层与活跃图表订阅双解耦原则（Active Chart Subscription & Schedule Decoupling）**：
    - 图表的“日 K 追加今日蜡烛”与“分时实时 Tick 注入/10s 定时刷新”，根本上依赖底层 `state.quotes` 中存在该标的的实时报价。
-   - 旧架构中，[`src/js/controllers/monitorController.js:17`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/monitorController.js#L17) 将涨停标的的刷新纳入条件与“看板日期为今天”强绑定（`state.limitUp.selectedDate === getBeijingDate()`），导致翻到历史日期时，历史涨停标的（若未被加入自选且非强势股）被彻底移出行情刷新集合。此时图表即使纠正了日期，也会因无行情供给而静默跳过报价合并与定时刷新。
-   - **解耦设计**：图表的行情订阅必须与所属页面的业务筛选解耦。将全站所有已展开图表的标的集合（`state.limitUp.expandedCodes`、`state.expandedCodes`、`state.momentum.expandedCodes`）作为独立的活跃图表订阅源，无条件合流进入 `getRefreshCodes()`。只要图表处于展开状态，后台便自动为其轮询最新报价，驱动日 K 蜡烛追加、Tick 更新与分时定时刷新。
+   - **调度层与订阅集合双重断裂根因**：
+     1. **调度层停摆**：在 `#/limit-up` 路由入口（[`app.js:1607`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/app.js#L1607)）显式调用了 `stopMonitorTimer()`；且在 `app.js:1513-1515` 的 `applyDataRefreshSchedule()` 中，由于处于涨停页（`hasLimitUpRoot = true`），传入 `monitorCtrl.applySchedule(allowed, !hasLimitUpRoot)` 的 `visible` 参数被硬编码为 `false`，导致 [`monitorController.js:82`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/monitorController.js#L82) 判定 `!visible` 直接执行 `stopTimer()` 清空定时器！全站负责高频拉取并写入 `state.quotes` 的后台 `setInterval` 永不建立！`limitUpController` 自身的定时器仅拉取涨停列表、改写 `lu.items`，**绝不写入 `state.quotes`**。
+     2. **订阅集合排除**：[`src/js/controllers/monitorController.js:17`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/monitorController.js#L17) 将涨停标的刷新纳入条件与“看板日期为今天”绑定（`state.limitUp.selectedDate === getBeijingDate()`），导致翻到历史日期时，历史涨停标的彻底被移出 `getRefreshCodes()`。
+     3. 若只修改订阅集合合流而不修复调度层，`getRefreshCodes()` 的唯一消费方（已死亡的 `refresh()`）永远不会被执行，`state.quotes` 依然为空，图表依然陷入冻结。
+   - **双重解耦设计**：
+     - **调度层保活**：在 `app.js:1513-1515` 建立显式的共享行情需求判定 `const needsSharedQuotes = Boolean(monitorRootEl) || hasLimitUpRoot;`，传入 `monitorCtrl.applySchedule(allowed, needsSharedQuotes)`；并在 `app.js:1607` 路由切换处移除无条件的 `stopMonitorTimer()`（改为仅通过 `closeAllCharts()` 清理图表实例，保留全局行情轮询）。
+     - **订阅集合合流**：将全站已展开图表的标的集合（`state.limitUp.expandedCodes`、`state.expandedCodes`、`state.momentum.expandedCodes`）作为独立的活跃图表订阅源，无条件合流进入 `getRefreshCodes()`。只要图表处于展开状态，后台便自动为其轮询最新报价，驱动日 K 蜡烛追加、Tick 更新与分时定时刷新。
 
 ---
 
@@ -186,7 +199,7 @@ function isLatestKlineDate(inst, date) {
 - **涉及文件**：[`src/js/controllers/chartRowController.js:108-116`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L108-L116)、[`:380-390`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L380-L390)、[`:533-539`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L533-L539)（同时需引入 [`resolveStockChartDate`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/tradeCalendar.js#L118)）
 - **问题现状**：
   1. 在 `loadKline` 阶段合并实时报价时，`targetDate` 兜底链包含了 `inst.selectedTradeDate`。一旦实例被设为历史日期且报价缺少显式日期字段，`targetDate` 退化为历史日期，触发 [`kline.js:420`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/kline.js#L420) 的 `lastDate < targetDate = false`，导致昨日柱被原地覆盖、今日蜡烛丢失。
-  2. 在后续实时 Tick 推送阶段（`applyLiveTick` → `applyLiveTickToKlineChart`），由于股票快照解析（[`parser.js:108-126`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/parser.js#L108-L126)）恒不携带日期字段，`quoteOrPrice` 作为无日期对象直接透传给 `applyLiveQuoteToKline`，导致其内部 `rawTargetDate` 为空、`targetDate = null`，恒定落入 `kline.js:439-453` 的原地覆盖分支。若日 K 尚未加载出今日柱，每次 Tick 都会将昨日收盘柱篡改为今日现价！
+  2. 在后续实时 Tick 推送阶段（`applyLiveTick` → `applyLiveTickToKlineChart`），股票报价主源（腾讯）正常带有 `quoteDate`（[`parser.js:82`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/parser.js#L82)）；但在腾讯故障降级回退至东财快照（[`parser.js:93-127`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/parser.js#L93-L127)，无日期字段）、腾讯字段缺失、或外部/单测直接注入 `{ price: 21 }` 等无日期对象时，`quoteOrPrice` 作为无日期对象直接透传给 `applyLiveQuoteToKline`，导致其内部 `rawTargetDate` 为空、`targetDate = null`，从而落入 `kline.js:439-453` 的原地覆盖分支。若日 K 尚未加载出今日柱，每次 Tick 都会将昨日收盘柱篡改为今日现价！
 - **改动方案**：
   在 `chartRowController.js` 内部抽离模块级纯函数 `resolveLiveFallbackDate(code, inst, tradingDates)`，并将日期兜底规范化同时注入到 **`loadKline`（初次合并）** 与 **`applyLiveTick`（增量推送）** 两处关键路径中。
 - **代码对比**：
@@ -242,18 +255,66 @@ function isLatestKlineDate(inst, date) {
   2. **快速回到最新**：用户点击最右侧当天的日 K 柱子，`selectedTradeDate` 瞬间切换回今日，`loadIntraday` 重新加载今日全天分时。此时 `isLiveTradeDate` 恢复为 `true`，后续所有实时 Tick 增量推送立即无缝恢复注入。
   3. **重新展开重置**：用户折叠行再重新展开，始终触发初始化逻辑，稳定重置并呈现最新行情，不残留上次的历史下钻状态。
 
-#### 改造点四：图表活跃订阅与看板日期解耦（保障历史看板标的行情供给）
-- **涉及文件**：[`src/js/controllers/monitorController.js:14-22`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/monitorController.js#L14-L22)
+#### 改造点四：行情调度层与活跃图表订阅双解耦（保障历史看板标的行情供给）
+- **涉及文件**：[`src/js/app.js:1508-1515`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/app.js#L1508-L1515)、[`src/js/app.js:1602-1614`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/app.js#L1602-L1614)、[`src/js/controllers/monitorController.js:14-22`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/monitorController.js#L14-L22)
 - **问题现状**：
-  `monitorController.js:17` 的 `getRefreshCodes()` 门禁规定：仅当 `state.limitUp?.selectedDate === getBeijingDate(clock())` 时，才将涨停列表标的纳入全局 3s 轮询集合。当看板翻到历史日期（T-1、T-2）时，任何仅上榜历史涨停（未被用户加入自选且非强势股）的标的均被移出刷新集合：
-  1. `state.quotes` 中不存在该标的的报价实体；
-  2. `chartRowController.js:380-382` 因 `q` 为 `undefined` 导致报价合并完全跳过，命中盘前日 K 缓存时今日蜡烛无法追加；
-  3. `app.js:1354-1358` 循环因 `!q` 判定而 `continue`，实时 Tick 注入与 `refreshLiveIntradayForCode`（10s 分时刷新）被全部阻断，图表陷入冻结。
+  1. **调度层整体停摆**：
+     在 `#/limit-up` 路由处理器（[`app.js:1607`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/app.js#L1607)）中，显式调用了 `stopMonitorTimer()`；而在第 1613 行调用的 `applyDataRefreshSchedule()`（[`app.js:1508-1515`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/app.js#L1508-L1515)）中，由于 `hasLimitUpRoot === true`，传入的 `visible = !hasLimitUpRoot = false`。[`monitorController.js:82`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/monitorController.js#L82) 判定 `!visible` 直接执行 `stopTimer()`，导致后台定时器被彻底清空！且 `app.js:1542` 的 30s 调度检查器（`startChecker`）每 30 秒重复该判定，维持 `visible = false` 状态。
+     全站唯一写入 `state.quotes` 的正是 `monitorController` 的 `refresh()`（[`monitorController.js:44/50`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/monitorController.js#L44-L50)）。而 `limitUpController.js` 自身的定时器仅拉取涨停列表、改写 `lu.items`，**绝不写入 `state.quotes`**！
+  2. **订阅集合门禁排除**：
+     `monitorController.js:17` 的 `getRefreshCodes()` 规定：仅当 `state.limitUp?.selectedDate === getBeijingDate(clock())` 时，才将涨停列表标的纳入轮询集合。当看板翻到历史日期时，历史涨停标的（若未被加入自选且非强势股）被彻底移出订阅集合。
+  3. **综合后果**：
+     由于调度停摆 + 订阅排除，标的无法进入 `state.quotes`：
+     - `chartRowController.js:380-382` 因 `q` 为 `undefined` 导致报价合并完全跳过，若命中盘前日 K 缓存则今日蜡烛完全无法生成；
+     - `app.js:1354-1358` 循环因 `!q` 判定而 `continue`，实时 Tick 注入与 `refreshLiveIntradayForCode`（10s 分时刷新）被全部阻断，图表陷入冻结。
+     - 若只改 `getRefreshCodes()` 而不恢复调度层，其唯一消费方 `refresh()` 永不执行，仍无法产生任何行情供给！
 - **改动方案**：
-  将“当前所有页面已展开图表的 code 集合”（`expandedCodes`）作为独立的活跃订阅源，统一合流注入 `getRefreshCodes()`。
+  从“调度层”与“订阅集合层”两级同时完成解耦：
+  1. **调度层保活**：在 `app.js:1513-1515` 将共享行情轮询判定改为 `needsSharedQuotes = Boolean(monitorRootEl) || hasLimitUpRoot`，向 `monitorCtrl.applySchedule` 传入正确的 `visible` 语义；并在 `app.js:1607` 路由入口移除 `stopMonitorTimer()` 调用（仅通过 `closeAllCharts()` 清除监控表格图表，保留共享行情定时器）。
+  2. **订阅集合合流**：在 `monitorController.js:14-22` 将全站各页面已展开图表的 code 集合（`expandedCodes`）作为独立的活跃订阅源，统一合流注入 `getRefreshCodes()`。
 - **代码对比**：
   ```javascript
-  // 修改前 (src/js/controllers/monitorController.js:14-22)
+  // 1. 调度层保活与可见性语义纠正 (src/js/app.js:1508-1515)
+  // 修改前:
+  const hasLimitUpRoot = Boolean(limitUpCtrl.getRootEl());
+  monitorCtrl.applySchedule(allowed, !hasLimitUpRoot);
+  // 修改后:
+  const hasLimitUpRoot = Boolean(limitUpCtrl.getRootEl());
+  const needsSharedQuotes = Boolean(monitorRootEl) || hasLimitUpRoot;
+  monitorCtrl.applySchedule(allowed, needsSharedQuotes);
+
+  // 2. 路由切换处保留后台共享行情轮询 (src/js/app.js:1602-1614)
+  // 修改前:
+  '#/limit-up': (r) => {
+    if (searchSuggestCtrl) {
+      searchSuggestCtrl.destroy();
+      searchSuggestCtrl = null;
+    }
+    stopMonitorTimer();
+    closeAllCharts();
+    closeAllMomentumCharts();
+    limitUpCtrl.setRootEl(r);
+    limitUpCtrl.render();
+    limitUpFetch();
+    applyDataRefreshSchedule();
+  }
+  // 修改后:
+  '#/limit-up': (r) => {
+    if (searchSuggestCtrl) {
+      searchSuggestCtrl.destroy();
+      searchSuggestCtrl = null;
+    }
+    // 移除 stopMonitorTimer()，保持后台共享行情轮询支持全局 quotes 及已展开图表；仅清理监控页图表实例
+    closeAllCharts();
+    closeAllMomentumCharts();
+    limitUpCtrl.setRootEl(r);
+    limitUpCtrl.render();
+    limitUpFetch();
+    applyDataRefreshSchedule();
+  }
+
+  // 3. 活跃图表订阅集合合流 (src/js/controllers/monitorController.js:14-22)
+  // 修改前:
   function getRefreshCodes() {
     const state = getState();
     const codes = new Set([...(state.watchList || []), ...(state.subscribed || [])]);
@@ -263,8 +324,7 @@ function isLatestKlineDate(inst, date) {
     for (const item of state.momentum?.items || []) if (item?.code) codes.add(item.code);
     return [...codes];
   }
-
-  // 修改后 (src/js/controllers/monitorController.js)
+  // 修改后:
   function getRefreshCodes() {
     const state = getState();
     const codes = new Set([...(state.watchList || []), ...(state.subscribed || [])]);
@@ -279,8 +339,9 @@ function isLatestKlineDate(inst, date) {
   }
   ```
 - **技术效果**：
-  - 用户在历史看板展开任意标的图表后，该标的立即作为活跃图表订阅进入后台轮询，在 1 个报价周期（≤3s）内自动填充 `state.quotes`；
-  - 驱动 `loadKline` 成功追加今日蜡烛，驱动 `updateChartLastTickMulti` 持续注入 Tick 并维持 10s 分时定时刷新；
+  - 用户停留在 `#/limit-up` 时，后台共享行情轮询定时器保持健康运转，不再被整体掐断；
+  - 在历史看板展开任意标的图表后，该标的作为活跃图表订阅立即合流进入下一次 `fetchQuotes` 请求批次，在 1 个报价周期（≤3s）内自动填充进 `state.quotes`；
+  - 驱动 `loadKline` 成功追加今日蜡烛（当命中盘前 1d 缓存时），驱动 `updateChartLastTickMulti` 持续注入 Tick 并维持 10s 分时定时刷新；
   - 表格侧数据隔离完好：`limitUpController.js:259` 与 `:411` 的 `isLimitUpDateToday()` 门禁不受改动影响，历史看板表格行保持历史收盘数据，图表与表格职责明确解耦。
 
 ---
@@ -292,13 +353,28 @@ function isLatestKlineDate(inst, date) {
 > [!IMPORTANT]
 > **测试环境时钟基准与确定性约定（对齐既有 Harness）**：
 > 仓库现有的单测底座（[`tests/_jsdom-setup.cjs:14-21`](file:///d:/AiPrograms/project1/market-voice-alert/tests/_jsdom-setup.cjs#L14-L21)）在离线单测模式下默认注入了 `TestDate`（锚点设为基准日 `2026-09-09T02:00:00Z` 即北京时间 `2026-09-09 10:00:00`，并累加实时时钟偏移）。
-> 本测试矩阵之所以需要在测试前置（`beforeEach`）中重设全局 `Date`，是由于：
-> 1. **业务基线偏差**：测试用例业务场景设定的断言目标日期为 `2026-09-14`（周一），与底座全局默认锚点（`2026-09-09` 周三）存在基线日期差异；
-> 2. **消除测试累积时间偏移**：切断因测试套件耗时运行产生的时钟累加偏移，确保断言绝对确定性；
-> 3. **网络与分时 Mock 约定（防 unhandled request 异常）**：生产代码中 `loadKline` 尾部无条件调用 `this.loadIntraday(code, inst.selectedTradeDate)`（[`chartRowController.js:397-399`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L397-L399)），进而发起 `/api/cache/intraday` 网络请求。在既有单测底座（[`tests/_jsdom-setup.cjs:22-27`](file:///d:/AiPrograms/project1/market-voice-alert/tests/_jsdom-setup.cjs#L22-L27)）中，未 mock 的网络请求会触发 `Unexpected network request` 报错。因此，所有调用 `loadKline` 的单测用例必须同步提供 `/api/cache/intraday` 的 Mock 桩（例如响应 `{ items: [], prevClose: 20.00 }`），或参考 [`tests/chartRequestOwnership.test.js:6-8`](file:///d:/AiPrograms/project1/market-voice-alert/tests/chartRequestOwnership.test.js#L6-L8) 统一接管全局 `fetch` 响应全部端点，保证调用链路畅通无报错。
+> 本测试矩阵在测试前置（`beforeEach`）中重设全局时钟与网络桩时，必须严格遵守以下约定：
+> 1. **时钟 Mock 必须同时覆写 `constructor` 与 `static now()`**：
+>    底座的 `TestDate.now()` 与无参构造共享内部计时锚点（`anchor + RealDate.now() - started`）。若测试中只覆写构造函数而不覆写 `static now()`，会导致 `new Date()` 与 `Date.now()` 返回不同的时刻，造成 `resolveStockChartDate` 与基于 `Date.now()` 的节流逻辑（如 `app.js:1325` 的 `Date.now() - inst.intradayLastFetchAt < 10000`）时钟分裂，产生偶发 Flaky。因此，任何时钟 Mock 必须统一规范为：
+>    ```javascript
+>    const RealDate = Date;
+>    const fixedMs = Date.parse('2026-09-14T02:00:00Z'); // 北京时间 2026-09-14 10:00:00
+>    globalThis.Date = class FixedDate extends RealDate {
+>      constructor(...args) { super(...(args.length ? args : [fixedMs])); }
+>      static now() { return fixedMs; }
+>    };
+>    ```
+> 2. **网络与分时 Mock 约定（完整信封防 4 次降级报错）**：
+>    生产代码中 `loadKline` 尾部在 `this.hasIntraday` 为真时（如 `limitUpChartMgr` 和 `monitorChartMgr`，`momentumChartMgr` 不会）调用 `this.loadIntraday(code, inst.selectedTradeDate)`（[`chartRowController.js:397-399`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/chartRowController.js#L397-L399)），进而发起 `/api/cache/intraday` 网络请求。
+>    根据 [`src/js/api.js:415`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/api.js#L415)，客户端严格校验响应信封 `json.ok === true && json.data`。若 Mock 桩仅返回内层 data（例如 `{ items: [], prevClose: 20.00 }`），将触发校验失败抛错，进而使 `fetchIntraday` 连续发起 2 次东财 1m K、1 次腾讯 mkline 等共计 4 次降级网络请求，最终撞上底座（[`tests/_jsdom-setup.cjs:22-27`](file:///d:/AiPrograms/project1/market-voice-alert/tests/_jsdom-setup.cjs#L22-L27)）的 `Unexpected network request` 致命断言。
+>    因此，所有调用 `loadKline` 的单测用例提供的 Mock 桩必须包裹完整信封：
+>    ```javascript
+>    { ok: true, data: { items: [], prevClose: 20.00 } }
+>    ```
+>    或参考 [`tests/chartRequestOwnership.test.js:6-8`](file:///d:/AiPrograms/project1/market-voice-alert/tests/chartRequestOwnership.test.js#L6-L8) 统一接管全局 `fetch` 响应全部端点，保证 1 次请求即正常短路返回，调用链路畅通无报错。
 > 
-> 因此，除「用例 5」的盘前子场景需局部特化时钟外，以下常规盘中用例统一在 `beforeEach` 中将全局 `Date` 显式重设为目标盘中固定时刻（`2026-09-14 10:00:00+08:00`），在 `afterEach` 中恢复为底座的 `TestDate` 默认锚点。
-> 同时，测试通过 [`app.js:1645 _internal()`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/app.js#L1645) 访问内部状态，注入包含 `['2026-09-10', '2026-09-11', '2026-09-14']` 的交易日历，并 Mock 基础 `fetchKline` 桩数据及不含历史 `tradingDay` 的纯价格实时报价桩，保证调用链路畅通执行。
+> 因此，除「用例 5」的盘前子场景需局部特化时钟外，以下常规盘中用例统一在 `beforeEach` 中按上述规范将全局 `Date`（含 `now()`）显式重设为目标盘中固定时刻（`2026-09-14 10:00:00+08:00`），在 `afterEach` 中恢复为底座的 `TestDate` 默认锚点。
+> 同时，测试通过 [`app.js:1645 _internal()`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/app.js#L1645) 访问内部状态，注入包含 `['2026-09-10', '2026-09-11', '2026-09-14']` 的交易日历，并 Mock 基础 `fetchKline` 桩数据及实时报价桩，保证调用链路畅通执行。
 
 1. **涨停看板图表初始化交易日单测**（扩展 `tests/chartRowController.test.js` 或新建 `tests/limitUpChartInit.test.js`）：
    - **用例 1**：在 Mock 盘中时刻（`2026-09-14 10:00:00`）且交易日历包含 `['2026-09-10', '2026-09-11', '2026-09-14']` 下，模拟看板处于历史日期 `state.limitUp.selectedDate = '2026-09-11'`（T-1）。完整执行实例注册与展开调用序列（对照生产代码 `limitUpController.js:564-567` 的注册与展开链路，在单测中直接注册实例并调用底层 manager）：
@@ -317,9 +393,13 @@ function isLatestKlineDate(inst, date) {
    - **用例 5**：
      - **期货子场景**：在 Mock 盘中时刻（`10:00:00`）下，构造期货标的（如 `AU0`，`isFutureCode(code) === true`），验证其在行情缺少日期字段时，目标日期优先采用其实例持有的期货交易日，不受股票日历污染；
      - **盘前子场景（特化时钟）**：独立将全局 `Date` 局部 Mock 至盘前时刻（如 `2026-09-14 09:00:00+08:00`，满足 `hour*60+minute < 9*60+15`），验证 `momentumChartMgr`（无分时模式）合并报价时由 `resolveStockChartDate` 确定性锚定至上一交易日（`2026-09-11`），不再向日 K 注入未开盘当天的幽灵 Bar。
-5. **活跃图表订阅与行情供给解耦单测（P1-1 闭环覆盖）**（扩展 `tests/monitorController.test.js`）：
-   - **用例 6**：在 Mock 盘中时刻下，模拟看板处于历史日期 `state.limitUp.selectedDate = '2026-09-11'`，将未加入自选且非强势股的标的（如 `sh600777`）加入 `state.limitUp.expandedCodes`。执行 `getRefreshCodes()`，断言返回的刷新数组中包含 `sh600777`；当用户折叠图表（从 `expandedCodes` 移除）后，再次调用 `getRefreshCodes()`，断言该 code 已从刷新列表中同步移出。
-6. **实时 Tick 路径日期规范化与追加日 K 蜡烛单测（P2-1 闭环覆盖）**（扩展 `tests/chartRowController.test.js`）：
+5. **活跃图表订阅与调度层保活端到端单测（P1 闭环覆盖）**（扩展 `tests/monitorController.test.js` 与 `tests/phaseAFixes.test.js`）：
+   - **用例 6（订阅集合合流）**：在 Mock 盘中时刻下，模拟看板处于历史日期 `state.limitUp.selectedDate = '2026-09-11'`，将未加入自选且非强势股的标的（如 `sh600777`）加入 `state.limitUp.expandedCodes`。执行 `getRefreshCodes()`，断言返回的刷新数组中包含 `sh600777`；当用户折叠图表（从 `expandedCodes` 移除）后，再次调用 `getRefreshCodes()`，断言该 code 已从刷新列表中同步移出。
+   - **用例 8（调度层保活与行情端到端到达性集成断言）**：模拟路由切换至 `'#/limit-up'` 且 `state.limitUp.selectedDate = '2026-09-11'`，交易时段内：
+     (a) 触发 `applyDataRefreshSchedule()`，断言后台 `monitorCtrl` 的定时器保持运行（`timer !== null`，未被 `stopTimer()` 掐断，`visible` 判定为真）；
+     (b) 将历史标的加入 `state.limitUp.expandedCodes`，推进定时器时钟（或触发一次 `refresh()` 周期），断言底层 `fetchQuotes` 发起请求的 codes 批次中包含 `sh600777`；
+     (c) 模拟 `fetchQuotes` 返回成功行情数据后，断言 `state.quotes.get('sh600777')` 成功写入对应报价实体，且后续 `updateChartLastTickMulti` 被调用。
+6. **实时 Tick 路径日期规范化与追加日 K 蜡烛单测（P2 闭环覆盖）**（扩展 `tests/chartRowController.test.js`）：
    - **用例 7**：构造日 K 最后一根为 `2026-09-11`（`lastDate = '2026-09-11'`），`inst.selectedTradeDate = '2026-09-14'`。通过 `mgr.applyLiveTick(code, { price: 21.00 })` 注入缺少任何日期字段的纯价格快照对象。断言合并后的日 K 数据项成功追加了 `2026-09-14` 的新蜡烛 Bar（数组长度增加且最后一条日期为 `2026-09-14`），并且上一根（`2026-09-11`）的 OHLCV 逐字段保持原样未被改写。
 
 ---
@@ -327,19 +407,25 @@ function isLatestKlineDate(inst, date) {
 ### 4.4 风险评估与发布保障
 
 - **风险等级**：**低（Low）**。
-  - 改动严格受控在前端控制器的 3 处局部点位（统一 `resolveTradeDate`、抽取并双注入 `resolveLiveFallbackDate`、在 `getRefreshCodes` 中并入活跃图表 `expandedCodes`）+ 1 项原生交互能力保留。
-  - 不涉及服务端接口改动，不影响涨停板核心筛选、语音告警、主监控表格等业务链路。
-- **共享控制器与上游影响面分析**：
-  - `chartRowController.js` 属 `monitorChartMgr`、`limitUpChartMgr` 和 `momentumChartMgr` 三方共享控制器：
-    - 对 `monitorChartMgr`：股票报价合并逻辑完全一致，消除了历史分时查看时的日 K 原地覆盖陷阱；
-    - 对 `momentumChartMgr`（`hasIntraday: false`，`selectedTradeDate` 恒为空）：开盘前（09:15 前）在股票报价缺日期字段时，兜底由 `getBeijingDate()` 切换为 `resolveStockChartDate()`，避免了盘前提前追加当日未开盘幽灵 Bar，行为更为严谨；
-    - 对期货标的：通过 `isFutureCode` 分支完整隔离保护了期货交易日历语义；
-  - `monitorController.js`（行情供给侧）：
-    - 仅在图表展开时将对应 code 纳入高频轮询，折叠即释放，内存与网络负载增量极小；
-    - 表格层不受干扰：`limitUpController.js:259` 与 `:411` 的 `isLimitUpDateToday()` 门禁完好保留，历史看板表格行继续稳定呈现历史收盘数据，图表层与列表层职责清晰正交。
+  - 改动为前端架构与协作链路的精准协同重构：
+    1. **调度层保活**：在 `app.js:1513-1515` 修正 `visible` 判定语义为 `needsSharedQuotes`，并在 `app.js:1607` 路由切换处移除 `stopMonitorTimer()`；
+    2. **订阅集合合流**：在 `monitorController.js:14-22` 将各页面 `expandedCodes` 并入 `getRefreshCodes()`；
+    3. **日期防污染双注入**：在 `chartRowController.js` 统一 `resolveTradeDate` 并为 `loadKline` 与 `applyLiveTick` 注入 `resolveLiveFallbackDate`。
+  - 不涉及服务端任何接口或存储结构改动，不影响涨停板核心筛选、语音告警、自选监控表格等既有业务链路。
+- **调度层保活与共享控制器影响面分析**：
+  - **调度层保活安全性**：
+    - 在 `#/limit-up` 路由下保持 `monitorController` 定时器运行，仅拉取用户自选（`watchList`）、全局订阅（`subscribed`）以及当前展开图表的标的（`expandedCodes`）。若用户未展开图表且自选股较少，轮询载荷极轻；
+    - `limitUpController` 自身的定时器（[`limitUpController.js:startLimitUpTimer`](file:///d:/AiPrograms/project1/market-voice-alert/src/js/controllers/limitUpController.js)）职责是拉取涨停列表并渲染表格（更新 `lu.items`），与 `monitorController`（负责全局 `state.quotes`）各司其职、互不抢占；
+    - 表格层数据隔离完好：`limitUpController.js:259` 与 `:411` 的 `isLimitUpDateToday()` 门禁完好保留，历史看板表格行继续稳定呈现历史收盘数据，图表层与列表层职责清晰正交。
+  - **图表控制器（`chartRowController.js`）安全性**：
+    - `chartRowController.js` 属 `monitorChartMgr`、`limitUpChartMgr` 和 `momentumChartMgr` 三方共享控制器：
+      - 对 `monitorChartMgr`：股票报价合并逻辑完全一致，消除了历史分时查看时的日 K 原地覆盖陷阱；
+      - 对 `momentumChartMgr`（`hasIntraday: false`，`selectedTradeDate` 恒为空）：开盘前（09:15 前）在股票报价缺日期字段时，兜底由 `getBeijingDate()` 切换为 `resolveStockChartDate()`，避免了盘前提前追加当日未开盘幽灵 Bar，行为更为严谨；
+      - 对期货标的：通过 `isFutureCode` 分支完整隔离保护了期货交易日历语义。
 - **向下兼容性与需求演进说明**：**演进重构（Evolved Refactor）**。
   - 明确承认本方案正式废止了 `2026-09-03 P0-3` 历史交接中“展开即强行锁定历史分时”的粗粒度策略，改由更符合用户看盘习惯的“默认展开最新图 + 历史柱子主动下钻分时”双向通道替代；
   - 用户查看历史拉板分时的核心需求通道未被剥夺，而是迁移至更合理的日 K 历史柱子主动下钻交互（在历史分钟源可得的前提下支持查看，不再以劫持全站默认初始呈现为代价）。
 - **验证与回滚预案**：
-  - 实施时先运行全量测试套件保证基线不坏；
-  - 若在生产验证阶段发现任何未预期的行为偏差，仅需回滚对应三处前端改动即可安全恢复至改动前状态。
+  - 实施前先运行全量测试套件保证基线不坏；
+  - 针对 P1、P2、P3 设立的专项测试矩阵（含调度保活与行情端到端到达性断言）能够 100% 验证改动的完整性与有效性；
+  - 若在生产验证阶段发现任何未预期的行为偏差，仅需回滚对应的前端改动点即可安全恢复至改动前状态。
