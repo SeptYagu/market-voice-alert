@@ -382,7 +382,7 @@ function isLatestKlineDate(inst, date) {
   ```
 - **技术效果**：
   - 用户停留在 `#/limit-up` 时，后台共享行情轮询定时器保持健康运转，不再被整体掐断；
-  - 在历史看板展开任意标的图表后，该标的作为活跃图表订阅立即合流进入下一次 `fetchQuotes` 请求批次，在 1 个报价周期内（默认 10s，可选 3s）自动填充进 `state.quotes`；
+  - 在历史看板展开任意标的图表后，该标的作为活跃图表订阅立即合流进入下一次 `fetchQuotes` 请求批次，在 1 个报价周期内（默认 10s，可配置 `3/10/30/60` 秒）自动填充进 `state.quotes`；
   - 驱动 `loadKline` 成功追加今日蜡烛（当命中盘前 1d 缓存时），驱动 `updateChartLastTickMulti` 持续注入 Tick 并维持 10s 分时定时刷新；
   - 暴露调度层访问器至 `_internal()` 并为 `monitorCtrl.inspect()` 扩充 `pollTimerAlive` 与 `pollTimerId` 字段，彻底排除常驻 `checker` 对 `timerCount` 的非零干扰，并为受控沙盒提供以唯一句柄精准提取被测定时器的纯身份键接入点；
   - 表格侧数据隔离完好：`limitUpController.js:259` 与 `:411` 的 `isLimitUpDateToday()` 门禁不受改动影响，历史看板表格行保持历史收盘数据，图表与表格职责明确解耦。
@@ -416,7 +416,7 @@ function isLatestKlineDate(inst, date) {
 >    ```
 >    或参考 [`tests/chartRequestOwnership.test.js:6-8`](file:///d:/AiPrograms/project1/market-voice-alert/tests/chartRequestOwnership.test.js#L6-L8) 统一接管全局 `fetch` 响应全部端点，保证 1 次请求即正常短路返回，调用链路畅通无报错。
 > 3. **定时器 Mock 与受控驱动约定（按 id 隔离的多定时器自闭环沙盒与纯身份键绑定）**：
->    仓库 `devDependencies` 无 `sinon` / `@sinonjs/fake-timers` 外部依赖，现有定时器测试均采用受控沙盒。在 `applyDataRefreshSchedule()` 执行路径中，若 `hasLimitUpRoot = true` 且处于盘中，系统会先后注册 `monitorCtrl` 的行情轮询定时器（`ms = state.refreshInterval`，默认 `10000`，可选 `3000/10000/30000`）以及 `limitUpCtrl` 的涨停列表定时器（`ms = lu.refreshInterval`，默认 `30000`，可选 `10000/30000/60000`）。若用户持久化配置使 `state.limitUp.refreshInterval === state.refreshInterval`（例如同为 `10000` 或同为 `30000`），二者将具有相同数值的 `ms`。为彻底避免单槽覆盖与同周期混淆、确保在 `state.limitUp.refreshInterval × state.refreshInterval` 全组合下均能 100% 身份型唯一选中，方案采取纯身份键绑定机制（亦可在单测驱动前显式置 `state.limitUp.autoRefreshEnabled = false` 进行前置隔离防御）：
+>    仓库 `devDependencies` 无 `sinon` / `@sinonjs/fake-timers` 外部依赖，现有定时器测试均采用受控沙盒。在 `applyDataRefreshSchedule()` 执行路径中，若 `hasLimitUpRoot = true` 且处于盘中，系统会先后注册 `monitorCtrl` 的行情轮询定时器（`ms = state.refreshInterval`，默认 `10000`，可选 `3000/10000/30000/60000`）以及 `limitUpCtrl` 的涨停列表定时器（`ms = lu.refreshInterval`，默认 `30000`，可选 `10000/30000/60000`）。若用户持久化配置使 `state.limitUp.refreshInterval === state.refreshInterval`（例如同为 `10000`、`30000` 或 `60000`），二者将具有相同数值的 `ms`。为彻底避免单槽覆盖与同周期混淆、确保在 `state.limitUp.refreshInterval × state.refreshInterval` 全组合下均能 100% 身份型唯一选中，方案采取纯身份键绑定机制（亦可在单测驱动前显式置 `state.limitUp.autoRefreshEnabled = false` 进行前置隔离防御）：
 >    沙盒采用自增 id 映射表（`registeredTimers = new Map()`）管理，`monitorCtrl.inspect()` 显式暴露内部持有的唯一句柄 `pollTimerId: timer`，单测直接通过 `registeredTimers.get(pollTimerId)` 提取被测行情轮询条目，彻底杜绝依赖数值 `ms` 互异或注册先后顺序的隐式假设。并在 `afterEach` 中严格原样还原全局函数，杜绝跨测试用例状态泄漏：
 >    ```javascript
 >    const registeredTimers = new Map();

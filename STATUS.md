@@ -1,6 +1,24 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 独立审查 round 15（涨停看板历史日期图表修复方案）**未通过** —— P3×1
+## 2026-09-14 当前状态：WorkBuddy 审查（round 15）缺陷全面闭环（行情轮询周期取值域补齐 60000 / 三档同 ms 碰撞穷举闭合）—— 提交 round 16 独立审查
+
+最新交接文档：[`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)
+前序审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round15-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round15-handoff.md)
+审查基线：`f48e592`
+
+针对 round 15 独立审查报告指出的 1 项 P3 严谨性缺陷完成全面彻底闭环：
+
+1. **【P3 闭环】§4.3 与 §4.2 行情轮询刷新周期取值域补齐 `60000` 并闭合同 `ms` 碰撞全组合** ✅：
+   - 严格对照 `src/js/app.js:151-156` 的 `REFRESH_OPTIONS` 白名单，在 §4.3:419 将 `state.refreshInterval` 取值域枚举完整补齐为 `3000/10000/30000/60000`（原漏列第 4 档 60 秒）；
+   - 在 §4.3:419 将同 `ms` 碰撞示例扩充为 `10000`、`30000` 与 `60000` 三个合法重叠档位，与涨停列表刷新间隔 `LIMIT_UP_REFRESH_OPTIONS`（`10000/30000/60000`）实现全组合穷举覆盖；
+   - 同步修正 §4.2:385 报价周期表述为「在 1 个报价周期内（默认 10s，可配置 `3/10/30/60` 秒）」；
+   - 保持所有历史段（如 round 14 历史段等）的原有引述文本不变，杜绝跨轮次回填。
+
+**门禁验证**：
+- `npm test`（QUnit）：**814/814 全部通过（0 失败，0 偶发）**；
+- 全文代码引用、符号与行号经抽查 30+ 处核验，与 HEAD 逐条一致。
+
+## 2026-09-14 历史状态：WorkBuddy 独立审查 round 15（涨停看板历史日期图表修复方案）**未通过** —— P3×1
 
 审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round15-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round15-handoff.md)
 被审 HEAD：`bd0e939`　审查基线：`f48e592`　审查范围：`git diff f48e592..bd0e939`（10 文件 / +1412 / -22，全为文档：`AGENTS.md`、`STATUS.md`、图表调查与解决方案文档、round 9-14 审查报告、`docs/handoff/INDEX.md`；相对 round 14 HEAD `1adf743` 的增量 = 3 文件 / +39 / -14）
