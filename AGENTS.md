@@ -80,6 +80,7 @@ python "C:\Users\12915\.gemini\config\plugins\workbuddy-plugin\scripts\workbuddy
 1. **唤醒与判断**：
    - **分支 A（无问题）**：WorkBuddy 回复确认审查通过，且无新增缺陷 handoff ➔ 审查闭环通过，向用户汇报最终成果，流程结束。
    - **分支 B（有缺陷）**：WorkBuddy 发现了问题并推送了新 handoff ➔ Antigravity 执行 `git pull --ff-only` 同步交接文档 ➔ 根据 handoff 修改代码并补充测试 ➔ 本地门禁验证 ➔ `git commit` & `git push` ➔ 再次调用 `workbuddy_cli.py review`（指定 `--round 2` 等）派发 WorkBuddy 复审。
+   - **分支 C（方案收敛与推进代码）**：若当前属于纯技术方案/文档阶段审查，且审查报告中仅残留非代码级建议、或纯文档/文书/笔误类轻微瑕疵（核心架构可行性与接口契约已闭合），Antigravity 有权判定方案已收敛，终止文档复审循环，直接推进至源码实现与自动化测试落地阶段。在代码与测试全部就绪后，再进入针对真实代码实现的独立审查闭环。
 2. **安全熔断（Safeguard）**：
    - 最大自动循环次数为 **10 轮**。若达到 10 轮仍存在分歧或未通过，自动中断循环，整理双方论据向用户汇报，由用户裁决。
 
