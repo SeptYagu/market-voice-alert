@@ -4,8 +4,8 @@
 
 > **当前最新状态速读**：
 > - 状态综述：查阅项目根目录 [`STATUS.md`](../../STATUS.md)
-> - 最新调查（图表）：[`2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)（涨停看板切前一天图表逻辑错误根因剖析、调度层解耦与解决方案；round 12 缺陷已闭环，round 13 复审仍未通过）
-> - 最新交接（审查）：[`2026-09-14-workbuddy-code-review-round13-handoff.md`](2026-09-14-workbuddy-code-review-round13-handoff.md)（独立审查 c3f5bc0，round 13：**未通过**，P2×2 / P3×3；用例 7 定时器沙盒捕获错回调 / `STATUS.md` 保留 1607 与 Fake Timers 已证伪断言 / 100% 对齐过强结论）
+> - 最新调查（图表）：[`2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)（涨停看板切前一天图表逻辑错误根因剖析、调度层解耦与解决方案；round 13 缺陷已全面闭环，提交 round 14 复审）
+> - 最新交接（审查）：[`2026-09-14-workbuddy-code-review-round13-handoff.md`](2026-09-14-workbuddy-code-review-round13-handoff.md)（独立审查 c3f5bc0，round 13：**未通过**，P2×2 / P3×3；已于最新方案彻底闭环）
 > - 前序审查：[`2026-09-14-workbuddy-code-review-round12-handoff.md`](2026-09-14-workbuddy-code-review-round12-handoff.md)（独立审查 7b34bc5，round 12：**未通过**，P3×4；主项已闭环，残留项见 round 13）
 > - 更早审查：[`2026-09-14-workbuddy-code-review-round11-handoff.md`](2026-09-14-workbuddy-code-review-round11-handoff.md)（独立审查 147573a，round 11：**未通过**，P2×1 / P3×4；P2 主因已闭环，残留项见 round 12）
 > - 更早审查：[`2026-09-14-workbuddy-code-review-round10-handoff.md`](2026-09-14-workbuddy-code-review-round10-handoff.md)（独立审查 0305357，round 10：**未通过**，P1×1 / P2×1 / P3×1；已闭环）
@@ -25,12 +25,12 @@
 
 | 日期 | 文档 | 说明 |
 | :--- | :--- | :--- |
-| 2026-09-14 | [`2026-09-14-workbuddy-code-review-round13-handoff.md`](2026-09-14-workbuddy-code-review-round13-handoff.md) | 独立审查 c3f5bc0（round 13）：**未通过**。P2×2：§4.3 用例 7 受控定时器沙盒单槽覆盖导致捕获到涨停列表定时器回调（步骤 (b) 在正确代码上亦失败）；`STATUS.md` 新增「round 12 未通过」段仍保留 `app.js:1607 ⇒ timerCount === 0` 与 Fake Timers 已证伪断言、标题与正文错配。P3×3：`100% 精准对齐` 过强结论（§4.2:277 实为 :276）、§4.2 A1 未按路径同步、保留根数「恒 ≥80」与 241/243 根前提冲突 |
+| 2026-09-14 | [`2026-09-14-workbuddy-code-review-round13-handoff.md`](2026-09-14-workbuddy-code-review-round13-handoff.md) | 独立审查 c3f5bc0（round 13）：**未通过**。P2×2：定时器沙盒单槽覆盖写导致步骤 (b) 捕获错回调、STATUS.md 残留 1607 与 Fake Timers 已证伪断言；P3×3：过强结论、A1 未按路径同步、保留根数与 241/243 前提冲突。已于最新方案全部闭环并提交 round 14 复审 |
 | 2026-09-14 | [`2026-09-14-workbuddy-code-review-round12-handoff.md`](2026-09-14-workbuddy-code-review-round12-handoff.md) | 独立审查 7b34bc5（round 12）：**未通过**。P3×4：保留根数公式残留 / 1607 变异不可证伪 / A1 行 targetDate 矛盾 / Fake Timers 机制缺失。主项已闭环，残留项见 round 13 |
 | 2026-09-14 | [`2026-09-14-workbuddy-code-review-round11-handoff.md`](2026-09-14-workbuddy-code-review-round11-handoff.md) | 独立审查 147573a（round 11）：**未通过**。P2：§4.3 用例 7 的集成到达性断言无法证伪 P1（定时器存活断言无可达接入点，(b)(c) 分支绕过调度层）；P3×4：绝对化表述、A4 行矛盾、保留根数公式对齐、量化数值成立条件。P2 主因已于 round 12 复审确认闭环，残留 4 项 P3 见 round 12 |
 | 2026-09-14 | [`2026-09-14-workbuddy-code-review-round10-handoff.md`](2026-09-14-workbuddy-code-review-round10-handoff.md) | 独立审查 0305357（round 10）：**未通过**。P1：改造点四只改 `getRefreshCodes()`，`#/limit-up` 路由下行情轮询器被停摆；P2：§4.1.4/§4.2 绝对化表述与腾讯主源矛盾；P3：mock 桩缺信封。三项缺陷已在最新方案中彻底闭环，提交 round 11 复审 |
 | 2026-09-14 | [`2026-09-14-workbuddy-code-review-round9-handoff.md`](2026-09-14-workbuddy-code-review-round9-handoff.md) | 独立审查 e2a8f0d（round 9）：**未通过**。P1：修复方案未覆盖"历史看板下标的报价脱离刷新集合"（无报价→无合并/Tick/分时刷新）；P2：改造点二遗漏 `applyLiveTickToKlineChart` 同类调用点；P3×4：窗口阈值未量化、§2.4 无影响项、§4.3 缺分时 mock、§2.3/§3.2 前提互斥 |
-| 2026-09-14 | [`2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md) | 涨停看板切前一天图表逻辑错误根因剖析、分钟线 320 根滑动窗口穿透机制、调度保活与活跃图表订阅双解耦解决方案（已闭环 round 10 缺陷） |
+| 2026-09-14 | [`2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md) | 涨停看板切前一天图表逻辑错误根因剖析、分钟线 320 根滑动窗口穿透机制、调度保活与活跃图表订阅双解耦解决方案（已闭环至 round 13 缺陷） |
 | 2026-09-13 | [`2026-09-13-workbuddy-code-review-round3-handoff.md`](2026-09-13-workbuddy-code-review-round3-handoff.md) | 独立审查 2f94e08（round 3）：**通过**，无 P0/P1/P2；遗留 2 项 P3（Eastmoney 空串量比、LRU tie-break localeCompare 非字节序） |
 | 2026-09-13 | [`2026-09-13-storage-lru-tiebreak-and-parser-ratio-round2-closure-handoff.md`](2026-09-13-storage-lru-tiebreak-and-parser-ratio-round2-closure-handoff.md) | WorkBuddy 审查 round 2 缺陷闭环（P2 LRU tie-break 确定性加固、单测稳定性、P3 Eastmoney 量比缺失语义对齐） |
 | 2026-09-13 | [`2026-09-13-workbuddy-code-review-round2-handoff.md`](2026-09-13-workbuddy-code-review-round2-handoff.md) | 独立审查 ffe92b3（round 2）：P0/P3 有效，但 LRU 淘汰单测偶发失败（P2）+ Eastmoney 量比语义未对齐（P3），未通过 |

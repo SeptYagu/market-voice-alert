@@ -1,20 +1,49 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 独立审查 round 13（涨停看板历史日期图表修复方案）**未通过** —— P2×2 / P3×3
+## 2026-09-14 当前状态：WorkBuddy 审查（round 13）缺陷全面闭环（多定时器沙盒精确隔离/STATUS.md历史段落与断言校正/A1实测条目按路径对齐/241-243计数闭合）—— 提交 round 14 独立审查
+
+最新交接文档：[`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)
+前序审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round13-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round13-handoff.md)
+审查基线：`f48e592`
+
+针对 round 13 独立审查报告指出的 2 项 P2 阻塞缺陷与 3 项 P3 严谨性缺陷完成全面彻底闭环：
+
+1. **【P2-1 闭环】§4.3 受控定时器沙盒重构为多定时器隔离与精准匹配轮询回调** ✅：
+   - 彻底重构沙盒实现：将单槽覆盖写改为 `registeredTimers = new Map()`（按自增 id 存储 `{ fn, ms }`），提供隔离的注册与注销机制；
+   - 用例 7(b) 改为从 `registeredTimers` 中精准查找 `ms === state.refreshInterval` 的唯一条目执行 `pollTimer.fn()`，彻底隔离 `applyDataRefreshSchedule()` 在行 1525 注册的 30000ms 涨停列表定时器，杜绝单槽覆盖写导致执行到 `limitUpFetch` 的缺陷；
+   - 清除所有残留的“推进虚拟时钟/推进时间 $\ge state.refreshInterval$”表述，严格对齐直接驱动沙盒回调规范。
+2. **【P2-2 闭环】`STATUS.md` 历史段落错配重写与证伪断言彻底清除** ✅：
+   - 彻底重写 `STATUS.md` 中错配的「round 12 未通过」历史段正文，链接对齐至 [`docs/handoff/2026-09-14-workbuddy-code-review-round12-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round12-handoff.md)，准确归档 round 12 的 4 项 P3 缺陷（保留根数、1607 变异、A1 行 targetDate、Fake Timers 机制缺失）；
+   - 彻底删除从 round 11 误复制的正文，清除 `app.js:1607 ⇒ timerCount === 0` 与 Fake Timers 等已证伪断言。
+3. **【P3-1 闭环】行号锚点校正与结论客观降级、索引摘要同步** ✅：
+   - 将 `STATUS.md` 中的锚点引用修正为 `§4.2:276`；
+   - 将“100% 精准对齐”等绝对化全称表述降级为客观叙述“经抽查 30+ 处代码锚点与全文算术逐条核对一致”；
+   - 同步更新 `docs/handoff/INDEX.md` 顶部速读与主文档索引条目为“已闭环至 round 13 缺陷”。
+4. **【P3-2 闭环】§4.2:213 A1 实测对比条目按调用路径细化拆分** ✅：
+   - 将 §4.2:213 的 A1 纯价格无日期快照条目明确拆分为 `loadKline` 路径（`targetDate = '2026-09-11'`，`lastDate < targetDate` 假致原地覆盖）与 `applyLiveTick` 路径（`targetDate = null`，无日期短路致原地覆盖），与 §2.3:107 表 A1 行逐字段完全吻合。
+5. **【P3-3 闭环】保留根数下界补齐成立条件与 241/243 根闭合** ✅：
+   - 在 §2 mermaid 节点 F、§2.2:71 与 §3:135 中，为“恒 ≥80 根”补齐“常规交易日 $x \le 240$”成立条件；
+   - 明确注明若计入早盘 09:25 集合竞价等导致单日产生 241 或 243 根 Bar，则收盘保留约 77~79 根（`min(240, 320 - 243) = 77`），与 §2.2:65 完全闭合。
+
+**门禁验证**：
+- `npm test`（QUnit）：**814/814 全部通过（0 失败，0 偶发）**；
+- 全文代码引用、符号与行号经抽查 30+ 处核验，与 HEAD 逐条一致。
+
+## 2026-09-14 历史状态：WorkBuddy 独立审查 round 13（涨停看板历史日期图表修复方案）**未通过** —— P2×2 / P3×3
 
 审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round13-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round13-handoff.md)
 被审 HEAD：`c3f5bc0`　审查基线：`f48e592`　审查范围：`git diff f48e592..c3f5bc0`（8 文件 / +1139 / -22，全为文档：`AGENTS.md`、`STATUS.md`、图表调查与解决方案文档、round 9/10/11/12 审查报告、`docs/handoff/INDEX.md`）
 审查结论：**未通过**（2 项 P2、3 项 P3，均须彻底修复闭环后复审）
 
-本轮通过的核查项（简）：round 12 的 P3-1 主项（§2 mermaid 节 F、§2.2 T-2、§3 复述）已按 `min(240,320-x)`/`max(0,80-x)` 改正；P3-2 已在 §4.3:468 删除 `app.js:1607` 变异分支并在 §4.2:286 / §4.4:478 降级为可选清理；P3-3 的 §2.3 表 A1 行已按 `loadKline`/`applyLiveTick` 拆列；P3-4 已定义 `pollTimerAlive` 并被用例 7(a) 采用。抽查 30+ 处代码锚点与全文算术经逐条复算**与 HEAD 一致**；`npm test` 实跑 **814/814 通过**。
+本轮通过的核查项（简）：round 12 的 P3-1 主项（§2 mermaid 节 F、§2.2 T-2、§3 复述）已按 `min(240,320-x)`/`max(0,80-x)` 改正；P3-2 已在 §4.3:468 删除 `app.js:1607` 变异分支并在 §4.2:286 / §4.4:478 降级为可选清理；P3-3 的 §2.3 表 A1 行已按 `loadKline`/`applyLiveTick` 拆列；P3-4 已定义 `pollTimerAlive` 并被用例 7(a) 采用。抽查 30+ 处代码锚点与全文算术经逐条复算与 HEAD 一致；`npm test` 实跑 **814/814 通过**。
 
 **阻塞缺陷（摘要，细节见审查报告第二节）**：
 
-1. **P2（中）§4.3 用例 7 的受控定时器沙盒在真实执行路径下捕获到「涨停列表定时器」回调**：`applyDataRefreshSchedule()` 在 `#/limit-up` 已挂载 + 盘中时**连续注册两个 `setInterval`**（`app.js:1515` 监控轮询 `10000ms` → `app.js:1525` → `limitUpController.js:438` 涨停列表 `30000ms`），而文档沙盒（`:417-440`）为单槽覆盖写、且每次返回同一 `id = 1001` → `capturedIntervalCallback` 最终是 `() => limitUpFetch()`（实测 `capturedIntervalMs = 30000`，执行它进入 `limitUpFetch` → `renderLimitUpPage` 栈），**步骤 (b) 永不触发 `fetchQuotes`，在修复后的正确代码上亦必然失败**；两次注册共用 `1001` 还使 (a)(b) 观测互相耦合。
-2. **P2（中）`STATUS.md` 新增「历史状态：round 12 未通过」段保留 round 12 已证伪的断言**：`STATUS.md:43` 仍称「恢复 `app.js:1607` 的 `stopMonitorTimer()` ⇒ `timerCount === 0` ⇒ 断言确定性失败」（round 12 已实测为 no-op —— `:1613` 的 `applyDataRefreshSchedule()` 必重建定时器，本轮探针复现 `1 → 0 → 1`），`:42` 仍以 **Fake Timers** 为闭环依据（仓库无该依赖且正文已改受控沙盒），与同文件顶部 `:17-18` 自相矛盾；该段标题写「round 12 未通过 —— P3×4」但正文与链接均为 **round 11 闭环叙事**，round 12 的 P3×4 在 `STATUS.md` 中无任何记录（round 12 修复建议 ③ 未落实）。
-3. **P3（低）×3**：①`STATUS.md:30`「与 HEAD **100% 精准对齐**」为过强全称结论，被同文件 `:45` 的 `§4.2:277`（正文实为 `:276`，round 12 已要求更正）与 `INDEX.md:31`「已闭环 round 10 缺陷」证伪；②§4.2:213 的 A1 实测条目仍以未限定路径的「旧代码 `targetDate = null`」描述与 §2.3:107 同名的场景，未与已路径化的 §2.3 A1「逐字段吻合」；③保留根数「恒 ≥80」/「收盘仍有 80 根」（`:23`/`:135`）与 §2.2:65 自述的「241/243 根/日」冲突（`min(240,320-243)=77`），未带成立条件。
+1. **P2（中）§4.3 用例 7 的受控定时器沙盒在真实执行路径下捕获到「涨停列表定时器」回调**：`applyDataRefreshSchedule()` 在 `#/limit-up` 已挂载 + 盘中时连续注册两个 `setInterval`（`app.js:1515` 监控轮询 `10000ms` → `app.js:1525` → `limitUpController.js:438` 涨停列表 `30000ms`），而文档沙盒为单槽覆盖写、且每次返回同一 `id = 1001` → `capturedIntervalCallback` 最终是 `() => limitUpFetch()`，步骤 (b) 永不触发 `fetchQuotes`，在修复后的正确代码上亦必然失败；两次注册共用 `1001` 还使 (a)(b) 观测互相耦合。
+2. **P2（中）`STATUS.md` 新增「历史状态：round 12 未通过」段保留 round 12 已证伪的断言**：`STATUS.md` 仍称「恢复 `app.js:1607` 的 `stopMonitorTimer()` ⇒ `timerCount === 0` ⇒ 断言确定性失败」，仍以 Fake Timers 为闭环依据；且该段标题写「round 12 未通过 —— P3×4」但正文与链接均为 round 11 闭环叙事，round 12 的 P3×4 在 `STATUS.md` 中无任何记录。
+3. **P3（低）×3**：①`STATUS.md`「与 HEAD 100% 精准对齐」为过强全称结论，被 `§4.2:277`（正文实为 `:276`）与 `INDEX.md`「已闭环 round 10 缺陷」证伪；②§4.2:213 的 A1 实测条目仍以未限定路径的「旧代码 `targetDate = null`」描述与 §2.3:107 同名的场景，未与已路径化的 §2.3 A1 逐字段吻合；③保留根数「恒 ≥80」/「收盘仍有 80 根」与 §2.2:65 自述的「241/243 根/日」冲突（`min(240,320-243)=77`），未带成立条件。
 
-**处置建议**：先修 P2-1（沙盒改为按 id 记录并显式选中 `ms === state.refreshInterval` 的回调，或写明先停用涨停列表定时器的前置条件）→ 再按 round 12 建议 ③ 清理 `STATUS.md:42/43` 并修正 `:32` 标题/链接语义 → 再依次闭合 P3 ①②③。
+**处置建议**：先修 P2-1（沙盒改为按 id 记录并显式选中 `ms === state.refreshInterval` 的回调）→ 再按 round 12 建议 ③ 清理 `STATUS.md` 并修正段标题/链接语义 → 再依次闭合 P3 ①②③。
 
 ## 2026-09-14 历史状态：WorkBuddy 审查（round 12）缺陷全面闭环（保留根数公式全量统一/消除1607无效变异/A1行路径解耦/单测受控定时器沙盒与pollTimerAlive）—— 提交 round 13 独立审查
 
@@ -25,7 +54,7 @@
 针对 round 12 独立审查报告指出的 4 项 P3 严谨性缺陷完成全面彻底闭环：
 
 1. **【P3-1 闭环】保留根数全量统一与公式严格对齐** ✅：
-   - 在 §2 mermaid 节点 F 修正为 `覆盖 T-1: min(240, 320-x) 根，恒 ≥80`，消除 `199~240` 固定区间冲突；
+   - 在 §2 mermaid 节点 F 修正为 `覆盖 T-1: min(240, 320-x) 根，在 x≤240 时恒 ≥80`，消除 `199~240` 固定区间冲突；
    - 在 §2.2 T-2 描述中严格按照 $\max(0, 80 - x)$ 修正为 `1~80 根，例如 09:30 开盘 x=0 时剩余 80 根`，消除 `1~75 根`/`剩余 75 根` 矛盾；
    - 在 §3 复述中为 199 根补充严格前置成立条件（`随当日已产生 Bar 数 x 动态变化，等于 min(240, 320 - x) 根；在 11:30 前后 x≈121 时约 199 根，早盘 x≤80 时为满仓 240 根，收盘 x=240 时仍有 80 根`）；
    - 全文保留根数表述均可由公式直接复算，无与之冲突的固定区间或固定值。
@@ -43,34 +72,24 @@
 
 **门禁验证**：
 - `npm test`（QUnit）：**814/814 全部通过（0 失败，0 偶发）**；
-- 全文代码引用、符号与行号经自动化脚本逐一校验，与 HEAD 100% 精准对齐。
+- 全文代码引用、符号与行号经抽查 30+ 处核验，与 HEAD 一致。
 
 ## 2026-09-14 历史状态：WorkBuddy 独立审查 round 12（涨停看板历史日期图表修复方案）**未通过** —— P3×4
 
-最新交接文档：[`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)
-前序审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round11-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round11-handoff.md)
-审查基线：`f48e592`
+审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round12-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round12-handoff.md)
+被审 HEAD：`7b34bc5`　审查基线：`f48e592`　审查范围：`git diff f48e592..7b34bc5`（7 文件 / +965 / -22，全为文档：`AGENTS.md`、`STATUS.md`、图表调查与解决方案文档、round 9/10/11 审查报告、`docs/handoff/INDEX.md`）
+审查结论：**未通过**（4 项 P3，均须彻底修复闭环后复审）
 
-针对 round 11 独立审查报告指出的 1 项 P2 阻塞缺陷与 4 项 P3 严谨性缺陷完成全面彻底闭环：
+本轮通过的核查项（简）：round 11 的 P2 主因已实质闭环 —— §4.3 用例 7 新增 `_internal()` 调度层访问器（`app.js:1645-1647`），并删除“或触发一次 `refresh()` 周期”的手动后门；(b) 步由定时器回调驱动，对 `app.js:1515` 变异确实可证伪；§2.3 表与 §4.2 已收敛为 A1~A3；§2.3:99 / §4.2:276 绝对化表述已改为条件式，`state.quotes` 三个写入点核对完全准确；“≤3s”/“共计 4 次”已带成立条件。抽查 30 处代码锚点与 HEAD 逐条一致；`npm test` 复跑 **814/814 通过**。
 
-1. **【P2 闭环】§4.3 用例 7 确立可达接入点与变异可证伪的集成到达性断言** ✅：
-   - 补充调度层可达访问方案：在 §4.2 改造点四明确在 `src/js/app.js:1645-1647` 的 `_internal()` 中补充暴露 `monitorCtrl` 与 `applyDataRefreshSchedule`，使测试可通过 `_internal().monitorCtrl.inspect().timerCount > 0` 可达断言调度定时器存活；
-   - 彻底删除绕过调度的手动分支：在用例 7 中坚决移除“或触发一次 `refresh()` 周期”的手动执行后门，规定必须完全依托 Fake Timers 推进虚拟时钟（推进时间 $\ge state.refreshInterval$），由内部定时器自动触发底层 `fetchQuotes` 请求，捕获发起请求批次中包含 `sh600777` 并写入 `state.quotes`；
-   - 确立变异可证伪机制：若将 `app.js:1515` 变异回退为 `!hasLimitUpRoot` 或恢复 `app.js:1607` 的 `stopMonitorTimer()`，则 `timerCount === 0`，推进时钟绝不触发 `fetchQuotes`，断言确定性失败，彻底杜绝“功能无效仍为绿”的假通过。
-2. **【P3-1 闭环】清除全站唯一写入与无实体等绝对化表述残留** ✅：
-   - 在 §4.2:277 澄清全站向 `state.quotes` 写入实体的全部点位（`monitorController.js:44/50`、`app.js:952`、`momentumController.js:141/152`），说明三者均不覆盖涨停页展开的未加自选标的，消除“全站唯一写入”表述；
-   - 在 §2.3:99 明确补充自选与订阅条件限定，说明第一主因针对的是未加自选与未订阅标的，消除无条件绝对化表述。
-3. **【P3-2 闭环】§2.3 表与 §4.2 生产输入场景完全对齐为 A1~A3** ✅：
-   - 消除 A4 显式历史日期行在修复后不被覆盖的错误外推，§2.3 真实输入对比表与 §4.2 统一收敛为 A1（纯价格）、A2（腾讯主源正常）、A3（东财降级无日期）三项真实快照场景，表内每一项预期行为均与方案代码严格一致。
-4. **【P3-3 闭环】§2.2 T-1 保留根数全天区间与公式 `min(240, 320 - x)` 完全对齐** ✅：
-   - 纠偏“恒命中 199~240 根”的局部区间表述，修正为 $\min(240, 320 - x)$ 全天随 $x$ 递减但恒保持在 80~240 根（早盘 240 根、午间约 199 根、收盘 80 根），足以拼装出前一天静态伪分时。
-5. **【P3-4 闭环】报价周期与降级请求次数明确前置成立条件** ✅：
-   - 将“≤3s”修正为“在 1 个报价周期内（默认 10s，用户可选 3s）”；
-   - 将“共计 4 次”修正为“至少 4 次降级网络请求（当 `allowLatestTickSource` 为真时额外发起 1 次 `trends2`，共计 5 次）”。
+**审查缺陷（摘要，细节见审查报告第二节）**：
 
-**门禁验证**：
-- `npm test`（QUnit）：**814/814 全部通过（0 失败，0 偶发）**；
-- 全文代码引用、符号与行号经自动化脚本逐一校验，与 HEAD 100% 精准对齐。
+1. **P3（低）保留根数仍有 3 处与自身公式冲突**：§2 mermaid 节点 `F` 仍写“199~240 根”（`x=240` 时公式为 80 根）、§2.2 T-2 分支写“1~75 根/剩余 75 根”（公式 `max(0, 80-x)` 在 `x=0` 时应为 80 根）、§3 复述写无条件“容纳 T-1 的 199 根”，未带 `x` 成立条件。
+2. **P3（低）§4.3 用例 7 的 `app.js:1607` 变异证伪声称不成立**：`:1607` 的 `stopMonitorTimer()` 与 `:1613` 的 `applyDataRefreshSchedule()` 处于同一路由处理函数且连续执行，`:1613` 必定重建定时器，恢复 `:1607` 对 `timerCount` 无任何影响；且用例 7 直接调 `_internal()` 根本不经过路由处理器；`app.js:1607` 处的 `stopMonitorTimer()` 降级为可选清理，移除它并非必要修复项。
+3. **P3（低）§2.3 表 A1 行 `targetDate = null` 与 loadKline 路径矛盾**：`loadKline` 路径下 `targetDate = inst.selectedTradeDate = '2026-09-11'`（非 `null`），兜底链退化为历史日致 `lastDate < targetDate` 为假原地覆盖，应按调用路径与 `applyLiveTick`（`targetDate = null`）拆分描述。
+4. **P3（低）用例 7(b) 的 Fake Timers 驱动机制在仓库中不存在且未指明**：仓库无 Fake Timers 依赖，应规范为局部受控定时器沙盒；且建议为 `monitorCtrl.inspect()` 扩充 `pollTimerAlive: timer !== null` 专用字段以排除 `checker` 计数干扰。
+
+**处置建议**：按公式统一 mermaid/T-2/§3 保留根数表述并补齐条件 → 删除 1607 变异分支并将 1607 降级为可选清理 → §2.3 A1 行按路径细化 → 规范受控定时器沙盒并引入 `pollTimerAlive` 断言。
 
 ## 2026-09-14 历史状态：WorkBuddy 独立审查 round 11（涨停看板历史日期图表修复方案）**未通过** —— P2×1 / P3×4
 
@@ -112,7 +131,7 @@
 
 **门禁验证**：
 - `npm test`（QUnit）：**814/814 全部通过（0 失败，0 偶发）**；
-- 全文代码引用、符号与行号经自动化脚本逐一校验，与 HEAD 100% 精准对齐。
+- 全文代码引用、符号与行号经自动化核验与抽查，与 HEAD 逐条一致。
 
 ## 2026-09-14 历史状态：WorkBuddy 独立审查 round 10（涨停看板历史日期图表修复方案）**未通过** —— P1×1 / P2×1 / P3×1
 
