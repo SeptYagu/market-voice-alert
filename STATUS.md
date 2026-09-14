@@ -1,6 +1,26 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 独立代码审查 round 1（涨停看板图表修复与调度解耦 · 代码落地）**未通过** —— P2×1 / P3×1
+## 2026-09-14 当前状态：WorkBuddy 独立代码审查 round 1 缺陷闭环（用例 7 端到端变异证伪与用例 5 盘前 loadKline 防幽灵 Bar 真实合并）—— 提交 round 2 复审
+
+审查基线：`f48e592`
+对应前序报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round1-handoff.md)
+
+针对 round 1 审查报告指出的 P2-1 与 P3-1 测试用例证伪性盲点完成全面闭环：
+
+1. **闭环 P2-1（用例 7 端到端可证伪性与 (b)(c) 链路断言）** ✅：
+   - 在 `tests/limitUpChartFixes.test.js` 中显式设置 `limitUpCtrl.setRootEl(document.createElement('div'))` 前置，使 `hasLimitUpRoot === true`；
+   - 在变异测试下（若将 `app.js:1511` 回退变异为 `!hasLimitUpRoot`），由于 `hasLimitUpRoot=true` 导致 `visible=false`，`pollTimerAlive` 确定性为 `false`，用例确定性红灯变异被击杀；
+   - 补齐方案 §4.3 (b)(c) 链路：通过 `registeredTimers.get(pollTimerId)` 取出 entry 验证周期与 `refreshInterval` 对齐，执行 `await timerEntry.fn()` 驱动 `fetchQuotes`，断言网络请求触发并将纯行情写入 `state.quotes.get('sh600777')`。
+2. **闭环 P3-1（用例 5 盘前真实 loadKline 防幽灵 Bar 链路）** ✅：
+   - 在 `09:00:00` 盘前时钟下，集成实例化真实 `ChartRowManager({ hasIntraday: false })` 执行 `loadKline`；
+   - 断言返回的日 K 数据（末柱为 `2026-09-11`）合并无日期快照报价后数组长度严格保持为 2，最后一根 Bar 严格为 `2026-09-11`，严禁包含 `2026-09-14` 幽灵蜡烛；
+   - 变异测试验证：若将 `chartRowController.js:391` 变异为 `getBeijingDate()`，用例断言长度 2 与无幽灵 Bar 立即红灯变异被击杀。
+3. **门禁与全量测试** ✅：
+   - 全量单测 `npm test`：**820/820 全部通过（0 失败）**；
+   - 代码检查 `npm run lint`：**0 错误 0 警告**；
+   - 构建打包 `npm run build`：**成功**。
+
+## 2026-09-14 历史状态：WorkBuddy 独立代码审查 round 1（涨停看板图表修复与调度解耦 · 代码落地）**未通过** —— P2×1 / P3×1
 
 审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round1-handoff.md)
 被审 HEAD：`892f1b8`　审查基线：`f48e592`　审查范围：`git diff f48e592..892f1b8`（18 文件 / +2040 / -38：产品代码 `app.js`、`chartRowController.js`、`monitorController.js`，测试 `app.test.js`、`limitUpChartFixes.test.js`，其余为文档）
