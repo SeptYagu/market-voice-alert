@@ -1,6 +1,20 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 审查（round 15）缺陷全面闭环（行情轮询周期取值域补齐 60000 / 三档同 ms 碰撞穷举闭合）—— 提交 round 16 独立审查
+## 2026-09-14 当前状态：WorkBuddy 独立审查 round 16（涨停看板历史日期图表修复方案）**未通过** —— P3×1
+
+审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round16-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round16-handoff.md)
+被审 HEAD：`9c78a3c`　审查基线：`f48e592`　审查范围：`git diff f48e592..9c78a3c`（11 文件 / +1500 / -22，全为文档：`AGENTS.md`、`STATUS.md`、图表调查与解决方案文档、round 9-15 审查报告、`docs/handoff/INDEX.md`；相对 round 15 审查报告 `e129c18` 的增量 = 3 文件 / +24 / -6）
+审查结论：**未通过**（1 项 P3，须彻底修复闭环后复审）
+
+本轮通过的核查项（简）：round 15 的 1 项 P3 经独立复核**确认闭环** —— `doc:419` 已补齐 `3000/10000/30000/60000` 且碰撞示例扩为 `10000`/`30000`/`60000`、`doc:385` 已改为「默认 10s，可配置 `3/10/30/60` 秒」，仓库外探针以真实 `REFRESH_OPTIONS`（`app.js:151-156` = `3000/10000/30000/60000`）× `LIMIT_UP_REFRESH_OPTIONS`（`format.js:3-7` = `10000/30000/60000`）复算，交集恰为 `{10000,30000,60000}`（三档穷举闭合）；§4.3 `pollTimerId` 纯身份键在 `monitor × limitUp` 12 组全组合下均唯一命中行情轮询条目（含 3 组同 `ms` 撞车；负向对照 `visible=false` 下监控轮询定时器不注册，与用例 7(a) 的变异可证伪声明一致）；`STATUS.md` 历史段逐字未变（round 15 段仅由「当前状态」下移为「历史状态」，正文与 `e129c18` 逐字一致，可由 `git diff e129c18..9c78a3c -- STATUS.md` 单 hunk 复核）；`STATUS.md:127` round 12 引文仍与 `git show c3f5bc0:STATUS.md | sed -n '12p'` 一致。实跑 `node scripts/run-tests.mjs` = **814/814 通过（0 失败）**。
+
+**阻塞缺陷（摘要，细节见审查报告第二节）**：
+
+1. **P3（低）§2.2/§3 滑动窗口保留根数与滑出阈值以「每交易日恰 240 根」为隐含前提却断言「严格服从」**：`doc:68` 写 T-2 保留根数「严格服从 $\max(0, 80-x)$」「1~80 根」「$x \ge 80$ 后才滑出」，`doc:29`/`:138-139`/`:143` 同述「第 80 根 Bar / 约 10:48」阈值；但同文件 `:65` 与 `STATUS.md:96` 自述单日可因 9:25 集合竞价点达 241/243 根，且该 320 窗口取自 `tencent-legacy` 源（T-1/T-2 同源）→ 实际为 `max(0, 320-x-n)`，`x=0` 时 T-2 上限为 80/79/77 根、滑出阈值为 `x ≥ 80/79/77`（约 10:48/10:47/10:45）；`doc:67` 的 T-1 上界 `min(240, 320-x)` 同理低估为 241/243。round 13 只为 T-1 的「恒 ≥80」补了「当日 x ≤ 240」条件，**「历史日自身为 241/243 根」维度从未处理**（同类表述横向扫描缺口，共 4 处）。探针实测 x∈[0,260] 有 160 个取值与文档公式不符。修复：`doc:68` 改通用式 `max(0, 320-x-n)` 或显式标注「T-1 为常规 240 根」并补 241/243 分支，同步 `:29`/`:138-139`/`:143`/`:67`/`:71`；`STATUS.md` 历史段按原文保留、不得回填改写。
+
+**处置建议**：仅需统一方案文档 §2.2/§3 的 320 根窗口量化表述（不涉及产品代码与测试），并确保 round 15 已闭环项（`doc:419`/`doc:385` 取值域枚举、§4.3 纯身份键绑定、`STATUS.md` 历史引文）不被回退，即可提交 round 17 复审。
+
+## 2026-09-14 历史状态：WorkBuddy 审查（round 15）缺陷全面闭环（行情轮询周期取值域补齐 60000 / 三档同 ms 碰撞穷举闭合）—— 提交 round 16 独立审查
 
 最新交接文档：[`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)
 前序审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round15-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round15-handoff.md)
