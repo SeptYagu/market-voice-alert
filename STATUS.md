@@ -1,6 +1,21 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 审查（round 10）缺陷全面闭环（行情调度层解耦保活 / 腾讯主源前提纠偏 / Mock信封与集成测试契约加固）—— 提交 round 11 独立审查
+## 2026-09-14 当前状态：WorkBuddy 独立审查 round 11（涨停看板历史日期图表修复方案）**未通过** —— P2×1 / P3×4
+
+审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round11-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round11-handoff.md)
+被审 HEAD：`147573a`　审查基线：`f48e592`　审查范围：`git diff f48e592..147573a`（6 文件 / +792 / -22，全为文档：`AGENTS.md`、`STATUS.md`、图表调查报告、round 9/10 审查报告、`docs/handoff/INDEX.md`）
+审查结论：**未通过**（1 项 P2、4 项 P3，均须彻底修复闭环后复审）
+
+本轮通过的核查项（简）：round 10 的 P1（调度层改动已明确落于 `app.js:1508-1515` + `app.js:1602-1614`，`needsSharedQuotes` 为自声明变量、`state.expandedCodes`/`state.limitUp.expandedCodes`/`state.momentum.expandedCodes` 均真实存在于 `app.js:319/352/370`）、P2（§4.1.4/§2.3/§4.2 主源前提已改为与 `api.js:161/172` + `parser.js:64/82/93-127` 一致的条件式表述）、P3（mock 信封已改为 `{ok,data}`、`loadIntraday` 已加 `this.hasIntraday` 门控）**三处均已闭环**；全文 43 处代码引用锚点、`32da3ca`/`eae67ae`/`2f94e08` 提交溯源与 round 9/10 范围统计经逐条比对与 HEAD **完全一致**；`npm test` 复跑 **814/814 通过**。
+
+**阻塞缺陷（摘要，细节见审查报告第二节）**：
+
+1. **P2（中）§4.3 用例 7 的"集成到达性断言"无法证伪 P1**：唯一覆盖调度层的断言 (a)"断言 `monitorCtrl` 定时器存活（`timer !== null`）"无可达接入点 —— `app.js` 未导出 `monitorCtrl`/`applyDataRefreshSchedule`，`_internal()`（`app.js:1645-1647`）仅返回 `{state, chartInstanceMap, limitUpRootEl}`，且 `tests/app.test.js:874-878` 已明确记载 startApp 级集成测试因清理复杂而被省略；而 (b)(c) 提供的"或触发一次 `refresh()` 周期"分支绕过 `applySchedule`，**实测**在 `applySchedule(allowed, false)`（`timerCount=0`，即 P1 未修）下 `refresh()` 仍成功且 `state.quotes` 仍被写入 → 用例 7 在缺陷存在时同样为绿，属"功能无效仍通过"的假通过测试。
+2. **P3（低）×4**：①§4.2:277 "全站唯一写入 `state.quotes` 的正是 `monitorController` 的 `refresh()`" 与 `grep` 事实矛盾（`app.js:952`、`momentumController.js:141/152` 亦写入），§2.3:99 "根本没有该标的的报价实体"与同段 `:279` 的条件式表述（自选/强势股）互相矛盾；②§2.3 表 A4 行"修复后预期：`resolveLiveFallbackDate` 隔离、不覆盖末根蜡烛"与本方案代码矛盾（显式 `date` 短路兜底链，实测 `{price:21,date:'2026-09-10'}` 仍原地覆盖 `2026-09-11` 末柱，§4.2 的 A 列表已只保留 A1~A3）；③§2.2:71 "恒命中前一天的约 199~240 根 Bar" 与同段 `:67` 自身公式 `min(240,320-x)` 矛盾（`199~240` 仅在 `x∈[80,121]` 成立，收盘 `x=240` 时为 80 根）；④§4.2:360 "报价周期（≤3s）"（默认 `DEFAULT_REFRESH=10000`，`app.js:157/1569`）与 §4.3:386 "共计 4 次降级请求"（`allowLatestTickSource` 为真时实测为 5 次，含 `trends2`）两处量化表述未带成立条件。
+
+**处置建议**：先修 P2（为用例 7 给出可达接入方式并删除绕过调度的等价分支，使断言在 `app.js:1515` 回退时必然失败）→ 再按 §二 P3 ①②③④ 顺序闭合 4 项表述缺陷。
+
+## 2026-09-14 历史状态：WorkBuddy 审查（round 10）缺陷全面闭环（行情调度层解耦保活 / 腾讯主源前提纠偏 / Mock信封与集成测试契约加固）—— 提交 round 11 独立审查
 
 最新交接文档：[`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)
 前序审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round10-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round10-handoff.md)
