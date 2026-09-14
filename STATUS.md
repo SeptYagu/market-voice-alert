@@ -1,6 +1,17 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 独立代码审查 round 2 缺陷闭环（用例 5 覆盖 applyLiveTick 注入点 :546 与用例 7 彻底清零 state.limitUp.timer）—— 提交 round 3 复审
+## 2026-09-14 当前状态：WorkBuddy 独立代码审查 round 3（代码落地与测试闭环）**全面审查通过**（0 缺陷）—— 正式交付
+
+被审 HEAD：`a573af7`　审查基线：`f48e592`　审查范围：`git diff f48e592..a573af7`（20 文件 / +2248 / -39）
+复审结论：**全面通过**（未发现任何 P0 / P1 / P2 / P3 缺陷，无实质性待确认风险，双智能体对抗审查正式闭环完成）
+
+- **核验通过项实测确认**：
+  1. **P3-1 彻底闭环**：用例 5 盘前 `09:00` 时钟段确已补入真实 `applyLiveTick(code, {price:22})` 链路断言（`chartRowController.js:546` 注入点）；经独立副本变异实跑，M7（`:546` → `getBeijingDate()`）使单文件与全量门禁 `npm test` 确定性变红（`# pass 820 / # fail 1`），M6（`:391` → `getBeijingDate()`）仍确定性变红。
+  2. **P3-2 彻底闭环**：用例 7 `finally` 显式调用 `limitUpCtrl.stopTimer({ abort: false })` 并清零 `state.limitUp.timer`；新增用例 8 经真实探针验证（删去清理则用例 8 与门禁变红），独立串行不变量探针确认无跨文件单例状态残留。
+  3. **产品代码与连带回归**：M1（`app.js:1511` 回退为 `!hasLimitUpRoot`）仍确定性击杀用例 7；三处 `ChartRowManager` 均正确传入 `getTradingDates`，`needsSharedQuotes=true` 下 `applySchedule` 仍受 `autoRefreshEnabled && allowed` 双重约束，无新增常驻轮询泄漏。
+  4. **全量门禁实跑全绿**：`npm test` **821/821 全部通过（0 失败，0 偶发）**，`npm run lint` **0 错误 0 警告**，`npm run build` 生产构建打包成功。
+
+## 2026-09-14 历史状态：WorkBuddy 独立代码审查 round 2 缺陷闭环（用例 5 覆盖 applyLiveTick 注入点 :546 与用例 7 彻底清零 state.limitUp.timer）—— 提交 round 3 复审
 
 审查基线：`f48e592`
 对应前序报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round2-handoff.md)
