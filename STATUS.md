@@ -1,6 +1,24 @@
 # STATUS.md - 项目状态
 
-## 2026-09-14 当前状态：WorkBuddy 独立审查 round 16（涨停看板历史日期图表修复方案）**未通过** —— P3×1
+## 2026-09-14 当前状态：WorkBuddy 审查（round 16）缺陷全面闭环（320 根滑动窗口保留根数与滑出阈值通用化与日长前提统一）—— 提交 round 17 独立审查
+
+最新交接文档：[`docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md`](docs/handoff/2026-09-14-limit-up-chart-date-flip-investigation-and-resolution-handoff.md)
+前序审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round16-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round16-handoff.md)
+审查基线：`f48e592`
+
+针对 round 16 独立审查报告指出的 1 项 P3 严谨性缺陷完成全面彻底闭环：
+
+1. **【P3 闭环】§2.2/§3 的 320 根滑动窗口保留根数与滑出阈值通用化为 $\max(0, 320 - x - n)$ 并统一横向表述** ✅：
+   - 在 §2.2:68 将 T-2 保留根数公式升级为通用形式 $\max(0, 320 - x - n)$（$n \in \{240, 241, 243\}$ 为 T-1 日自身 Bar 数），明确指出在常规 $n=240$ 下化简为 $\max(0, 80-x)$，在集合竞价点 $n=241/243$ 下对应 $\max(0, 79-x)/\max(0, 77-x)$；明确 $x=0$ 盘前上限对应 77/79/80 根，滑出阈值严格对应 $x \ge 320 - n$（即 $x \ge 77 \sim 80$ 根）；
+   - 在 §2.2:67 与 `:71` 为 T-1 容量 $\min(n, 320 - x)$ 补充通用日长 $n$ 参数及其在上界与集合竞价点下的取值说明；
+   - 横向完整同步更新 mermaid 节点 F/K（§2:23, :29）与 §3 结论（§3:135, :138-139, :143），统一将 T-2 滑出时间阈值表述为「当日 Bar $\ge 77 \sim 80$ / 约 10:45~10:48（视 T-1 自身 Bar 数）」，彻底消除单一日长假设与全称断言偏差；
+   - 保持 round 15 已闭环项（`doc:419`/`doc:385` 取值域枚举、§4.3 纯身份键绑定等）完好无损，严格保持 `STATUS.md` 所有历史段原文不变，杜绝跨轮次回填。
+
+**门禁验证**：
+- `npm test`（QUnit）：**814/814 全部通过（0 失败，0 偶发）**；
+- 全文代码引用、符号与行号与 HEAD 逐条一致。
+
+## 2026-09-14 历史状态：WorkBuddy 独立审查 round 16（涨停看板历史日期图表修复方案）**未通过** —— P3×1
 
 审查报告：[`docs/handoff/2026-09-14-workbuddy-code-review-round16-handoff.md`](docs/handoff/2026-09-14-workbuddy-code-review-round16-handoff.md)
 被审 HEAD：`9c78a3c`　审查基线：`f48e592`　审查范围：`git diff f48e592..9c78a3c`（11 文件 / +1500 / -22，全为文档：`AGENTS.md`、`STATUS.md`、图表调查与解决方案文档、round 9-15 审查报告、`docs/handoff/INDEX.md`；相对 round 15 审查报告 `e129c18` 的增量 = 3 文件 / +24 / -6）
