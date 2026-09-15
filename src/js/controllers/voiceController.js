@@ -1,5 +1,5 @@
 import { decideVoiceSchedule } from '../services/voiceSchedule.js';
-import { formatQuoteSpeechDelta } from '../tts.js';
+import { formatQuoteSpeech, formatQuoteSpeechDelta } from '../tts.js';
 import { getBeijingDate } from '../time.js';
 
 export function createVoiceController({ getSettings, saveSettings, getCodes, getQuotes,
@@ -29,10 +29,17 @@ export function createVoiceController({ getSettings, saveSettings, getCodes, get
   function speakCodes(codes, { manual = false } = {}) {
     if (!speech.supported()) return;
     const settings = getSettings();
+    // "Same quote is not repeated" is the default and can be switched off from the
+    // voice bar; without it every round announces the full enabled content.
+    const dedupe = !manual && settings.skipUnchanged !== false;
     for (const code of codes) {
       const quote = getQuotes().get(code);
       if (!quote) continue;
-      const result = formatQuoteSpeechDelta(quote, manual ? null : memory.get(code), settings.fields, settings.fieldsOrder);
+      // The full formatter is required when dedup is off: the delta variant needs a
+      // changed price/percent and would stay silent for a name-only field selection.
+      const result = dedupe
+        ? formatQuoteSpeechDelta(quote, memory.get(code), settings.fields, settings.fieldsOrder)
+        : { text: formatQuoteSpeech(quote, settings.fields, settings.fieldsOrder), spoken: null };
       if (!result.text) continue;
       // The dedup baseline may only advance once the listener actually heard the
       // announcement: a queued item that is coalesced away, expires, times out or
@@ -127,8 +134,12 @@ export function createVoiceController({ getSettings, saveSettings, getCodes, get
     for (const code of memory.keys()) if (!codes.has(code)) memory.delete(code);
   }
 
+  // Drops the remembered baselines: the dedup memory is only meaningful for the
+  // exact field selection / dedup mode it was recorded under.
+  function resetMemory() { memory.clear(); }
+
   return { start, stop, startTimer, stopTimer, applySchedule, setEnabled, speakSubscribed,
     speakManual: code => speakCodes([code], { manual: true }), prune,
-    resetFields: () => memory.clear(),
+    resetFields: resetMemory, resetMemory,
     inspect: () => ({ memory: new Map(memory), timerCount: Number(runningInterval !== null) + Number(checker !== null) }) };
 }

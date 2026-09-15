@@ -160,6 +160,7 @@ export const DEFAULT_VOICE_SETTINGS = Object.freeze({
   manualDisabledDate: null,
   interval: 5000,
   volume: 80,
+  skipUnchanged: true,
   fields: Object.freeze({ name: true, price: true, percent: true }),
   fieldsOrder: Object.freeze(['name', 'price', 'percent']),
   smartSchedule: DEFAULT_SMART_SCHEDULE
@@ -246,6 +247,11 @@ export function normalizeVoiceSettings(input) {
     manualDisabledDate: src.manualDisabledDate || null,
     interval,
     volume,
+    // Missing key (settings written before the toggle existed) must default to ON:
+    // a plain `!!src.skipUnchanged` would silently switch dedup off for everyone.
+    skipUnchanged: src.skipUnchanged === undefined
+      ? DEFAULT_VOICE_SETTINGS.skipUnchanged
+      : !!src.skipUnchanged,
     fields: normalizeVoiceFields(src.fields),
     fieldsOrder: normalizeVoiceFieldsOrder(src.fieldsOrder),
     smartSchedule: normalizeSmartSchedule(src.smartSchedule)
@@ -570,7 +576,8 @@ function renderVoiceBar() {
       onTestSpeech: handleTestSpeech,
       onFieldChange: handleVoiceFieldChange,
       onMoveField: handleMoveField,
-      onScheduleChange: handleVoiceScheduleChange
+      onScheduleChange: handleVoiceScheduleChange,
+      onSkipUnchangedChange: handleVoiceSkipUnchangedChange
     }
   });
 }
@@ -1067,6 +1074,20 @@ function handleVoiceScheduleChange(key, checked) {
   if (state.voice.enabled) restartVoiceTimer();
   renderVoiceBar();
   renderStatus();
+}
+
+// The schedule row hands every handler `(key, checked)`. Declaring the key explicitly
+// keeps this in step with the view: a one-parameter signature would silently receive the
+// key string as its "checked" value and pin the switch to on.
+function handleVoiceSkipUnchangedChange(key, checked) {
+  if (key !== 'skipUnchanged') return;
+  state.voice = { ...state.voice, skipUnchanged: !!checked };
+  patchVoiceSettings({ skipUnchanged: !!checked });
+  // The remembered baselines belong to the mode they were recorded under: a stale one
+  // would swallow the first round after dedup is switched back on. The running timer
+  // needs no restart because each round reads the setting live.
+  voiceCtrl.resetMemory();
+  renderVoiceBar();
 }
 
 function handleAlertEnabledChange(checked) {

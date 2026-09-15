@@ -279,6 +279,15 @@ QUnit.module('app.normalizeVoiceSettings', () => {
     t.equal(normalizeVoiceSettings({ enabled: 0 }).enabled, false);
     t.equal(normalizeVoiceSettings({ enabled: true }).enabled, true);
   });
+  QUnit.test('skipUnchanged defaults to true so pre-existing settings keep dedup on', (t) => {
+    t.equal(normalizeVoiceSettings({}).skipUnchanged, true, 'key absent → dedup stays enabled');
+    t.equal(normalizeVoiceSettings(null).skipUnchanged, true);
+    t.equal(normalizeVoiceSettings({ skipUnchanged: undefined }).skipUnchanged, true);
+    t.equal(normalizeVoiceSettings({ skipUnchanged: false }).skipUnchanged, false);
+    t.equal(normalizeVoiceSettings({ skipUnchanged: 0 }).skipUnchanged, false, '0 is an explicit off');
+    t.equal(normalizeVoiceSettings({ skipUnchanged: true }).skipUnchanged, true);
+    t.equal(normalizeVoiceSettings({ skipUnchanged: 'yes' }).skipUnchanged, true);
+  });
   QUnit.test('interval accepts any positive integer ms >= 1000', (t) => {
     t.equal(normalizeVoiceSettings({ interval: 1000 }).interval, 1000);
     t.equal(normalizeVoiceSettings({ interval: 5000 }).interval, 5000);

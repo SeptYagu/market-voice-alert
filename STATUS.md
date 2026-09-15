@@ -1,5 +1,15 @@
 # STATUS.md - 项目状态
 
+## 2026-09-15 当前状态：新增「相同报价不重复播报」开关（语音播报去重可关闭）—— 已交付
+
+交接文档：[`docs/handoff/2026-09-15-voice-dedupe-toggle-handoff.md`](docs/handoff/2026-09-15-voice-dedupe-toggle-handoff.md)
+
+- **功能**：原本隐式的「报价没变就跳过该轮」规则改为显式开关 `voice.skipUnchanged`（默认开=保持原行为），作为交易时段那一排的**第 5 个开关**，复用 `.schedule-toggle` 样式；不受「智能交易时段」禁用影响。
+- **迁移安全**：缺键的旧配置归一回落到 `true`（写成 `!!src.skipUnchanged` 会把所有人的去重静默关掉）。关闭去重时改走全量格式化函数 `formatQuoteSpeech`——若不换函数，只勾选「名字」的用户会彻底听不到声音。
+- **交付中发现并修复 1 项真实接线缺陷**：视图契约是 `onChange(key, checked)`，新 handler 误写成单参数 `(checked)` → 收到的是字符串 `'skipUnchanged'`（恒真）→ 真实浏览器里「点开关没反应」。已改为 `(key, checked)` 并加 key 守卫；该缺陷只有真实点击的 E2E 能覆盖（826 条单测全绿时它依然存在）。
+- **验证**：新增 5 条单测 + 1 条 E2E；在缺陷引入前的 `ac09dde` worktree 上复跑，5 条新断言**全部失败**（其余 821 全过）⇒ 判别力成立；并做变异验证，确认用例能拦住「关闭去重时向 delta 传 null」的错解。E2E 在修复前确定性失败、修复后通过。
+- **门禁实跑**：`npm run lint` 0 错误 → `npm test` **826/826** → `npx playwright test` **75/75** → `npm run build` 成功。
+
 ## 2026-09-14 当前状态：WorkBuddy 独立代码审查 round 3（代码落地与测试闭环）**全面审查通过**（0 缺陷）—— 正式交付
 
 被审 HEAD：`a573af7`　审查基线：`f48e592`　审查范围：`git diff f48e592..a573af7`（20 文件 / +2248 / -39）

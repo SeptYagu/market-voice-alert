@@ -181,6 +181,51 @@ QUnit.module('Production voice controller', () => {
     h.controller.stop();
   });
 
+  QUnit.test('skipUnchanged off re-announces an unchanged quote every round', assert => {
+    const h = harness();
+    h.configure({ skipUnchanged: false });
+    h.controller.setEnabled(true);
+    h.quotes.get('sh600000').price = 11;
+    const before = h.spoken.length;
+    h.controller.speakSubscribed();
+    h.controller.speakSubscribed();
+    h.controller.speakSubscribed();
+    assert.equal(h.spoken.length - before, 3, 'every round is announced although the quote never changed');
+    assert.equal(h.controller.inspect().memory.size, 0, 'dedup off records no baseline at all');
+
+    // Turning dedup back on must not be swallowed by a baseline recorded in the other mode.
+    h.configure({ skipUnchanged: true });
+    const beforeBack = h.spoken.length;
+    h.controller.speakSubscribed();
+    assert.equal(h.spoken.length - beforeBack, 1, 'the first round after re-enabling dedup is heard');
+    h.controller.speakSubscribed();
+    assert.equal(h.spoken.length - beforeBack, 1, 'and the following unchanged round is silent again');
+    h.controller.stop();
+  });
+
+  QUnit.test('skipUnchanged off still announces a name-only field selection', assert => {
+    const h = harness();
+    h.configure({ skipUnchanged: false, fields: { name: true, price: false, percent: false } });
+    h.controller.setEnabled(true);
+    const before = h.spoken.length;
+    h.controller.speakSubscribed();
+    h.controller.speakSubscribed();
+    const rounds = h.spoken.slice(before);
+    assert.equal(rounds.length, 2, 'the full formatter is used, not the change-only variant');
+    assert.deepEqual(rounds, ['sh600000', 'sh600000'],
+      'a constant name carries no delta, so only the full formatter can announce it');
+    h.controller.stop();
+
+    const dedup = harness();
+    dedup.configure({ fields: { name: true, price: false, percent: false } });
+    dedup.controller.setEnabled(true);
+    const beforeDedup = dedup.spoken.length;
+    dedup.controller.speakSubscribed();
+    assert.equal(dedup.spoken.length - beforeDedup, 0,
+      'with dedup on the same selection stays silent by design');
+    dedup.controller.stop();
+  });
+
   QUnit.test('calendar completion after stop cannot revive timers', async assert => {
     const h = harness();
     let resolve;

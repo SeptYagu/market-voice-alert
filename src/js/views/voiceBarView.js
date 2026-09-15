@@ -22,10 +22,12 @@ function el(tag, attrs, ...children) {
   return node;
 }
 
-export function renderVoiceScheduleToggle(key, label, checked, disabled = false, onChange) {
+// `title` is appended last on purpose: inserting it before `onChange` would silently
+// remap the callback of every existing caller.
+export function renderVoiceScheduleToggle(key, label, checked, disabled = false, onChange, title = '') {
   return el(
     'label',
-    { class: 'schedule-toggle' + (checked ? ' active' : '') },
+    { class: 'schedule-toggle' + (checked ? ' active' : ''), title: title || null },
     el('input', {
       type: 'checkbox',
       checked: !!checked,
@@ -208,7 +210,11 @@ export function renderVoiceBar(ctx) {
     renderVoiceScheduleToggle('enabled', '智能交易时段', smart.enabled, false, handlers.onScheduleChange),
     renderVoiceScheduleToggle('pauseLunchBreak', '午休暂停/下午恢复', smart.pauseLunchBreak, !smart.enabled, handlers.onScheduleChange),
     renderVoiceScheduleToggle('autoStopAfterClose', '收盘自动停止', smart.autoStopAfterClose, !smart.enabled, handlers.onScheduleChange),
-    renderVoiceScheduleToggle('autoStartAuction', '集合竞价自动开始', smart.autoStartAuction, !smart.enabled, handlers.onScheduleChange)
+    renderVoiceScheduleToggle('autoStartAuction', '集合竞价自动开始', smart.autoStartAuction, !smart.enabled, handlers.onScheduleChange),
+    // Independent of the smart schedule: dedup stays operable even when the schedule is off.
+    // `!== false` keeps a state object written before this key existed rendering as checked.
+    renderVoiceScheduleToggle('skipUnchanged', '相同报价不重复播报', voiceState.skipUnchanged !== false, false,
+      handlers.onSkipUnchangedChange, '关闭后每轮都完整播报，即使现价和涨幅没有变化')
   );
 
   if (!speechOK) {
