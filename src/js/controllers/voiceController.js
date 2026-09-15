@@ -26,12 +26,13 @@ export function createVoiceController({ getSettings, saveSettings, getCodes, get
     runningInterval = null;
   }
 
-  function speakCodes(codes, { manual = false } = {}) {
+  function speakCodes(codes, { manual = false, full = false } = {}) {
     if (!speech.supported()) return;
     const settings = getSettings();
     // "Same quote is not repeated" is the default and can be switched off from the
-    // voice bar; without it every round announces the full enabled content.
-    const dedupe = !manual && settings.skipUnchanged !== false;
+    // voice bar. `full` is the one-off path (manual test broadcast, closing snapshot):
+    // it always announces the selected fields, even when nothing changed.
+    const dedupe = !manual && !full && settings.skipUnchanged !== false;
     for (const code of codes) {
       const quote = getQuotes().get(code);
       if (!quote) continue;
@@ -96,7 +97,13 @@ export function createVoiceController({ getSettings, saveSettings, getCodes, get
       stopTimer();
       if (wasRunning) speech.cancel();
     } else if (runningInterval !== getSettings().interval) startTimer();
-    if (d.transitionNotice && speech.supported()) speech.speak(d.transitionNotice, { volume: volume() });
+    if (d.transitionNotice && speech.supported()) {
+      speech.speak(d.transitionNotice, { volume: volume() });
+      // One last round of the fields the user selected, right after the pause notice.
+      // Only the selected fields are spoken (no forced name), and it is not fed into
+      // the dedup memory: the session is over and the next start clears it anyway.
+      if (d.finalCodes && d.finalCodes.length) speakCodes(d.finalCodes, { full: true });
+    }
     previous = d;
     onChange({ paused: d.enabled && !d.timerShouldRun, decision: d, settingsChanged });
     return d;

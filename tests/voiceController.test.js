@@ -53,13 +53,15 @@ QUnit.module('Production voice controller', () => {
     assert.false(isLiveTradeDate('2026-09-11', 'AU0', now, ['2026-09-09', '2026-09-11']));
   });
   QUnit.test('stock lunch resumes, stock close disables, same-day manual off overrides auction', assert => {
+    // 停播提示后面都会跟一轮「用户选中字段」的最终快照。
+    const FULL = 'sh600000，10.00 元，涨 1.00';
     const h = harness();
     h.controller.applySchedule();
     assert.true(h.at('2026-09-09T11:30:00+08:00').enabled);
-    assert.deepEqual(h.spoken, ['中午休市']);
+    assert.deepEqual(h.spoken, ['中午休市', FULL]);
     assert.true(h.at('2026-09-09T13:00:00+08:00').timerShouldRun);
     assert.false(h.at('2026-09-09T15:00:00+08:00').enabled);
-    assert.deepEqual(h.spoken, ['中午休市', '已收盘']);
+    assert.deepEqual(h.spoken, ['中午休市', FULL, '已收盘', FULL]);
     h.configure({ smartSchedule: { enabled: true, autoStartAuction: true } });
     h.at('2026-09-10T09:20:00+08:00');
     h.controller.setEnabled(false);
@@ -79,9 +81,53 @@ QUnit.module('Production voice controller', () => {
     assert.deepEqual(h.at('2026-09-09T23:01:00+08:00').eligibleCodes, ['nf_AU0']);
     h.at('2026-09-10T02:31:00+08:00');
     h.at('2026-09-10T02:32:00+08:00');
-    assert.deepEqual(h.spoken, ['已收盘', '已收盘'], 'one day-close and one actual final night-close');
+    // 每次「已收盘」后面跟着刚停播那一批标的的最终快照，且只跟一次。
+    assert.deepEqual(h.spoken, [
+      '已收盘', 'nf_T0，10.00 元，涨 1.00',
+      '已收盘', 'nf_AU0，10.00 元，涨 1.00'
+    ], 'one day-close and one actual final night-close, each with its own snapshot');
     h.controller.setEnabled(false);
     assert.false(h.at('2026-09-10T09:00:00+08:00').timerShouldRun);
+    h.controller.stop();
+  });
+
+  QUnit.test('the closing snapshot repeats an unchanged quote in the selected fields only', assert => {
+    const h = harness();
+    h.configure({ fields: { name: false, price: true, percent: false } });
+    h.controller.setEnabled(true);
+    h.quotes.get('sh600000').price = 11.25;
+    h.controller.speakSubscribed();
+    const silent = h.spoken.length;
+    h.controller.speakSubscribed();
+    assert.equal(h.spoken.length, silent, 'sanity: an unchanged round stays silent while dedup is on');
+
+    h.at('2026-09-09T15:00:00+08:00');
+    assert.deepEqual(h.spoken.slice(silent), ['已收盘', '11.25 元'],
+      'the snapshot speaks the price again and never adds the unselected name');
+    h.at('2026-09-09T15:01:00+08:00');
+    assert.deepEqual(h.spoken.slice(silent), ['已收盘', '11.25 元'], 'and it is not repeated on later ticks');
+    h.controller.stop();
+  });
+
+  QUnit.test('the closing snapshot leaves the dedup memory untouched', assert => {
+    const h = harness();
+    h.controller.setEnabled(true);
+    h.quotes.get('sh600000').price = 11;
+    h.controller.speakSubscribed();
+    const before = [...h.controller.inspect().memory];
+    assert.equal(before.length, 1, 'sanity: the periodic round seeded the baseline');
+
+    h.at('2026-09-09T15:00:00+08:00');
+    assert.deepEqual([...h.controller.inspect().memory], before, 'the snapshot is not remembered');
+    h.controller.stop();
+  });
+
+  QUnit.test('the closing snapshot skips codes without a quote', assert => {
+    const h = harness();
+    h.quotes.delete('sh600000');
+    h.controller.setEnabled(true);
+    h.at('2026-09-09T15:00:00+08:00');
+    assert.deepEqual(h.spoken, ['已收盘'], 'only the notice is heard');
     h.controller.stop();
   });
 

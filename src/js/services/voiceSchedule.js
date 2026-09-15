@@ -26,6 +26,13 @@ export function decideVoiceSchedule({ codes, settings, now, tradingDates = [], p
   // Stock-only automatic close remains a persisted off switch. Futures retain
   // the user's armed preference across the gap between day and night sessions.
   if (cfg.enabled && enabled && !futures.length && session === 'after-close' && cfg.autoStopAfterClose) enabled = false;
+  // Every pause notice (lunch / futures gap / close) is followed by one last round of
+  // what was being announced. This tick's `eligibleCodes` is empty by definition — that
+  // is exactly why the notice fires — so the previous decision is the only source, and
+  // codes unsubscribed in the meantime must not be announced.
+  const finalCodes = transitionNotice
+    ? (previous?.eligibleCodes || []).filter(code => list.includes(code))
+    : [];
   return { enabled, eligibleCodes, timerShouldRun: !!enabled && allowed,
-    pauseReason, transitionNotice, session, date };
+    pauseReason, transitionNotice, session, date, finalCodes };
 }

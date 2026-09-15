@@ -1,5 +1,16 @@
 # STATUS.md - 项目状态
 
+## 2026-09-15 当前状态：停播提示后补播「最后一轮选中字段」—— 已交付
+
+交接文档：[`docs/handoff/2026-09-15-close-snapshot-handoff.md`](docs/handoff/2026-09-15-close-snapshot-handoff.md)
+
+- **效果**：每条停播提示（`已收盘` / `中午休市` / 期货日夜空档 `休市`）播完，紧跟一轮**用户选中字段**的快照。只勾「价格」时即「已收盘，1272.75元」——不强行带名字。
+- **实现**：`decideVoiceSchedule` 新增 `finalCodes`（取上一拍 `previous.eligibleCodes` 并按当前订阅过滤）；控制器 `speakCodes` 新增 `full` 选项（无视去重、不写记忆），在提示后立即调用。**不加开关**。
+- **关键约束（实测）**：发提示那一拍 `eligibleCodes` 必为空（正因"没得播"才提示），所以快照集合只能来自上一拍；且必须按当前订阅过滤，否则会把收盘前已退订的标的也播出来。
+- **更正**：交付前口头汇报中「上一拍可播标的被全部退订 → 提示照发」的判断有误，实测为**不发**（既有行为），已在测试与文档中更正。
+- **验证**：新增 1 个纯函数测试文件（8 条）+ 控制器 3 条新增/2 条更新；在改动前的 `141ddef` worktree 上 11 条断言**全红**（其余 826 全过）；E2E 用临时掐掉补播调用做变异，确定性失败后恢复通过。
+- **门禁实跑**：`npm run lint` 0 错误 → `npm test` **837/837** → `npx playwright test` **75/75** → `npm run build` 成功。
+
 ## 2026-09-15 当前状态：新增「相同报价不重复播报」开关（语音播报去重可关闭）—— 已交付
 
 交接文档：[`docs/handoff/2026-09-15-voice-dedupe-toggle-handoff.md`](docs/handoff/2026-09-15-voice-dedupe-toggle-handoff.md)

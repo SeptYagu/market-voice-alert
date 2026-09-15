@@ -35,6 +35,10 @@ test('real app checker keeps mixed night voice armed and respects manual stop', 
   await page.clock.setSystemTime(new Date('2026-09-09T23:01:00+08:00'));
   await page.clock.runFor(31000);
   expect(await page.evaluate(async () => (await import('/src/js/app.js'))._internal().state.voicePausedBySchedule)).toBe(true);
+  // 收盘提示后面紧跟一轮「用户选中字段」的最终快照。整段夜盘 rb0 报价没变过（一直静默），
+  // 所以这一条同时证明：确实补播了、且确实绕过了去重（否则这条会缺席）。
+  expect(await page.evaluate(() => window.reviewSpoken.slice(-2)))
+    .toEqual(['已收盘', expect.stringContaining('Rebar sentinel')]);
   await page.getByRole('button', { name: '⏸ 停用定时语音播报' }).click();
   await page.clock.setSystemTime(new Date('2026-09-10T09:30:00+08:00'));
   await page.clock.runFor(31000);
