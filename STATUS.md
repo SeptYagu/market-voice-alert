@@ -1,6 +1,23 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 v5 —— WorkBuddy 审查 round 5 **未通过**（3×P2 + 2×P3），待修复闭环
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 v6 —— 闭环 Round 5 全部缺陷（3×P2 + 2×P3），发起 WorkBuddy 审查 round 6
+
+方案交接（v6 全量闭环版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+Round 5 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round5-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round5-handoff.md)
+Round 4 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round4-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round4-handoff.md)
+Round 3 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round3-handoff.md)
+Round 2 审查报告：[`docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md)
+Round 1 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md)
+
+- **闭环内容（Round 5 缺陷闭环）**：
+  1. **P2-1（彻底消除结构性重复，恢复单份正文与闭合表格）**：彻底清除由 replace 特殊字符引发的 3 份多余副本，全篇保持严格单份正文（H1、§3.1.2 均唯一，章节严格单调）；恢复 §3.1.2 改造清单中 `parser.js:11-25` 为单行完整定义，全表 11 行全部严格以 `|` 闭合成表；
+  2. **P2-2（A50 端点单位登记与 parser 入口归一化）**：纠正 A50 10× 差异发生于「东财 qt 与东财走势端点」的事实（qt 以 0.1 点为单位，trends2/kline/新浪均为 1.0 点），在 §3.1.1 显式登记端点级单位，在 §3.1.2 改造清单落实 `parseEastmoney` 将 A50 报价字段除以 10 归一化为点数，并在 §3.4 与 §5 建立与 trends2 及新浪的 1:1:1 一致性验收断言，彻底闭环默认主源路径；
+  3. **P2-3（浏览器代理出网兜底与全链路多主机覆盖）**：在 §2.1 与 §3.1.2 改造清单中明确将浏览器代理出网路径（`server/proxyRoutes.js:10, 13` 及 `server/klineService.js:40`）正式纳入改造范围，追加对 `push2delay.eastmoney.com` 的目标轮转与失败兜底，确保在 `push2his`/`push2` 不可达的受限网络下浏览器侧行情与图表 100% 成功取数，并在 §5 增加环境隔离验收断言；
+  4. **P3-1（契约正则补齐 `$` 终结锚点与自洽验证）**：在 §3.1.2 契约与单测用例中完整补齐 `$` 终结锚点（`^hf_[A-Za-z0-9_]+$`、`^(?:sh|sz|bj)\d{6}$`、`^(?:hk|r_hk)\d{5}$`、`^(?:us)?[A-Za-z]+$`），探针实跑 10/10 PASS（`unknown_foo` 确定性回退 `'stock_cn'`，外盘备源代码不误判为 A 股），正文与 `STATUS.md` 描述逐字一致；
+  5. **P3-2（根数表述收敛为下限与时刻，限定受限网络实测范围）**：在 §2.1 中统一 `m:134` 根数表述为「≥900 根（随交易时段逐步累加；16:18 实测 `trends2` 964 根、`kline` 963 根）」，消除多处互斥定值；将主机可达性严格限定为「受限网络实测（2026-09-16，单主机实测）」，消除无范围全称断言。
+- **验证结论**：本地门禁全部通过（`npm run lint` 0 错误，`npm test` 843/843 全部通过，`npm run build` 成功）；向 WorkBuddy 发起 Round 6 审查。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v5 —— WorkBuddy 审查 round 5 **未通过**（3×P2 + 2×P3），待修复闭环
 
 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round5-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round5-handoff.md)（被审 `cfd243c`，基准 `45593a5`，本轮修复增量 `f637dd9..cfd243c` = 3 文件 / +529 −23，纯文档）
 被审方案（v5，round 5 被审版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
