@@ -1,6 +1,17 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 v4 —— 闭环 Round 3 全部缺陷（1×P2 + 3×P3），发起 WorkBuddy 审查 round 4
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 v4 —— WorkBuddy 审查 round 4 **未通过**（3×P2），待修复闭环
+
+审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round4-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round4-handoff.md)（被审 `cb49106`，基准 `45593a5`，范围 6 文件 / +839 −2，纯文档；本轮修复增量 `7781fe1..cb49106` = 3 文件 / +46 −20）
+被审方案（v4，round 4 被审版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+
+- **未通过结论（3×P2）**：
+  1. **P2-1 §3.4.2 A50 合约锚点「完全一致」被真源证伪**：`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md:219` 写「新浪 `hf_CHA50CFD` 昨结（14271.000）与东财 `104.CN00Y` `f60`（142710）完全一致」，实测两值相差 **10 倍**（`f43=143980` 对最新 `14400.000` 同为 10 倍；÷10 后才对齐），而同段 `hf_HSI` 一档确为 1:1（24676 == 24676.000）→ 方案未登记"市场 104（SGX）以 0.1 点为单位"的缩放约定，按字面实现备源切换会使 `GL_A50` 昨结基准 10× 错位，与 §3.4「保证…无缝对接」冲突。
+  2. **P2-2 §2.1:58 新增主机断言不可复现**：文档称「`push2delay.eastmoney.com` 与 `push2his.eastmoney.com` 实测均可稳定拉取 `m:134` 与 `m:100-104` 的 `trends2` 与 `kline`」，实测 `push2his`/`90.push2his`/`1.push2.*` 全部 `UND_ERR_SOCKET`（4/4）、`push2` 恒 502，仅 `push2delay` 可达；仓库自身注释亦记载 `push2his` 主主机 `0/10` 失败（`server/marketData.js:14-16`、`server/klineService.js:91-92`），且 `EASTMONEY_TRENDS_HOSTS`（`server/marketData.js:18-22`）不含 `push2delay` → Round 3 待确认风险 1 被未复现的实测断言"闭环"。
+  3. **P2-3 §3.1.2:137 新增 `inferAssetType` 契约值域遗漏 `hf_` 形态**：按契约逐字实现后 `inferAssetType('hf_HSI')/('hf_CL')/('hf_SI')` 均回落 `'stock_cn'`（`isFutureCode('hf_SI')===false`，无分支可救），与 §3.4.2:218（新浪 `hf_` 为外盘全量备源）、§5:271（`hf_SI` 应映射 COMEX 白银）矛盾，`resolveSessionStrategy('hf_HSI')` 落 `chinaStockStrategy`（Round 1 P2-4 的 22:00 播"已收盘"并 `autoStop` 关语音失效模式）；Round 3 P3-1 明确要求的「同步核对 `hf_` 形态归属」未闭环，`:129` 的"全值域正交断言"措辞与枚举不符。
+- **本轮通过项**：Round 3 P2-1 主项（`GL_HSI` → `134.HSI_M`，`m:134` `total=112`、`qt rc=0 f60=24676`、`kline(klt=1)` 938 根、反例 `134.HSI00Y`/`134.MHI_M` 均 `rc=100`）经本机真源复测成立；P3-1 断言块改为仓库既有导出后实跑 **9/9 PASS**；P3-2 行号 `kline.js:326-341` / `:347` 与源码逐字相符；P3-3 美股「基准 71 + 偶发追加 2 尾部空字段至 73」经三轮采样复现成立；`m:100–104` 规模 63/104/117/178/33 逐条复现；门禁 `npm test` 843/843 实跑通过；本轮 diff 全为文档，未触碰产品代码与测试。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v4 —— 闭环 Round 3 全部缺陷（1×P2 + 3×P3），发起 WorkBuddy 审查 round 4（**round 4 复审判定：未通过，3×P2**——A50 锚点 10× 单位未登记、`push2his` 主机断言不可复现、`inferAssetType` 值域遗漏 `hf_`）
 
 方案交接（v4 全量闭环版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
 Round 3 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round3-handoff.md)
