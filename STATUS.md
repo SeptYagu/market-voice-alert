@@ -1,6 +1,19 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 v6 —— 闭环 Round 5 全部缺陷（3×P2 + 2×P3），发起 WorkBuddy 审查 round 6
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 v6 —— WorkBuddy 审查 round 6 **未通过**（2×P2 + 1×P3），待修复闭环
+
+审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round6-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round6-handoff.md)（被审 `823f3df`，基准 `45593a5`，本轮修复增量 `bb2e47d..823f3df` = 3 文件 / +71 −507，纯文档）
+被审方案（v6，round 6 被审版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+
+- **未通过结论（2×P2 + 1×P3）**：
+  1. **P2-1 §3.1.2 行 5 的单位归一化只枚举 `f43/f60/f169` 三个字段**：`§3.1.1` 已按「**端点**」登记「东财 qt = 0.1 点」，而实施指令只覆盖 3 个字段，`f44/f45/f46`（最高/最低/开盘）仍走 A 股 `div100`（`src/js/parser.js:99/114/115`）→ 按 `:164` 字面实施后 A50 的 `open/high/low` 仍为真值 1/10（`1426.7/1441.8/1419.8` vs `14267/14418/14198`），且 `openChangePercent` 由 `-0.028%` 变为 **`-90.003%`**（自选表「开盘」列 `src/js/views/monitorTableView.js:131/360` 用户可见）；`§5:303` 断言只校验 `price/prevClose`，零判别力。
+  2. **P2-2 改造清单未覆盖 `parseEastmoney` 的 code 身份推导**：`src/js/parser.js:106-107` 对非 A 股恒走 `('sz') + f57` 兜底，实跑真源 payload 得 `code = 'szcn00y'`（A50）/`'szhsi_m'`（HSI），而 `src/js/controllers/monitorController.js:44` 以 `currentCodes.has(quote.code)` 为门禁 → 报价永不进 `state.quotes`；`§3.4:243`「消费层全面 1:1 精确对接」与 `§5:303`（不含 code 断言）均拦不住，`api.js:161-167` 恒判「缺」并反复触发兜底请求。
+  3. **P3-1 §2.1 字段 2/3 被改标为「买一量/卖一量」且示例值改写为 9.940/9.960（本轮新引入回归）**：与同段 `:33` payload `99.940,99.960` 及真源矛盾 —— 实测 `hf_CL` 第 2/3 位 `99.980/99.990` 夹住最高 `100.610`/最低 `99.050`，`hf_CHA50CFD` 第 2 位 `14365.000` 等于同刻 `trends2` 末根，真正量在 `index10/11`（`2/7`）→ 2/3 为买一价/卖一价（round 4 文本即为「买一/卖一」）。
+- **本轮通过项**：Round 5 的 P2-1 结构（H1/各章节唯一、章节单调、§3.1.2 表 11 行全部 `|` 闭合）、P2-3 出网点（`proxyRoutes.js:10/13`、`klineService.js:40` 入清单；逐主机实测 `push2his`/`90.push2his`/`1.push2`/`push2` 不可达、`push2delay` 三端点 `rc=0`）、P3-1 契约锚点（逐字实现后 10/10 PASS）、P3-2 根数（全篇单处权威表述，16:18 的 964/963 与本轮 16:35 实测 976/975 按分钟增量自洽）经独立复测**全部成立**；§3.1.1 既有导出断言块 9/9 PASS；`§3.4` A50 昨结 1:1 断言成立（`142710 × 0.1 == 14271 == 新浪字段 7`）。
+- **待确认风险**：§3.1.2 行 3 只列静态 target 常量（`proxyRoutes.js:10,13`、`klineService.js:40`），而「多主机轮转 + 失败重试」的落点须在 `server/proxyService.js:10/31`（`resolveProxyTarget` 返回单一 target.url）—— 按清单字面只改常量会得到「换了 host 但没有轮转」。
+- **验证结论**：本轮为纯文档审查，未改动产品代码/测试，门禁基数不变；需按上述 3 项 + 1 项待确认风险修复后发起 Round 7 复审。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v6 —— 闭环 Round 5 全部缺陷（3×P2 + 2×P3），发起 WorkBuddy 审查 round 6（**round 6 复审判定：未通过，2×P2 + 1×P3**——§3.1.2 行 5 单位归一化漏 `f44/f45/f46` 致 A50 开盘/最高/最低仍为 1/10 且 `openChangePercent` 变 `-90.00%`、`parseEastmoney` 的 code 身份推导未纳入清单致 A50/HSI 报价在 `monitorController.js:44` 门禁被整段丢弃、§2.1 字段 2/3 被改标为「量」且示例值不可复现）
 
 方案交接（v6 全量闭环版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
 Round 5 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round5-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round5-handoff.md)
