@@ -1,6 +1,20 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 —— WorkBuddy 审查 round 1 **未通过**（6×P2 + 4×P3），待修复闭环
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 —— 闭环 Round 1 全部 6×P2 + 4×P3 缺陷，提交 Round 2 复审
+
+方案交接（v2 全量闭环版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+Round 1 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md)
+
+- **Round 1 指出的 6×P2 + 4×P3 缺陷实测全面闭环**：
+  1. **P2-1（东财 secid 规则与多主机）**：废弃 `102.${symbol}00Y` 推导，改为按交易所显式注册（COMEX `m:101`、NYMEX `m:102`、CME 指数 `m:103`、A50/恒指 `m:100`）；纳入 `EASTMONEY_TRENDS_HOSTS` 多主机轮转消除 502。
+  2. **P2-2（标识冲突与无效代码）**：建立 `GL_` 独立外盘命名空间（`GL_SI0` 与国内工业硅 `SI0` 绝对隔离）；引入启动期命名空间互斥断言；`CHA500` 更正为有效代码 `CHA50CFD`。
+  3. **P2-3（分时管线 A 股硬编码与跨午夜）**：下沉 `INTRADAY_SESSION_RANGES` 与交易日归属至 `SessionStrategy`，美股按美东日历日对齐，确保 391 根跨午夜（21:30-04:00）不丢点。
+  4. **P2-4（会话分派契约与语音状态机防污染）**：新增 `resolveSessionStrategy(code)` 分派契约，确立多资产 Any-Trading 策略，杜绝 22:00 因 A 股 `after-close` 误触发全局 `autoStop` 关闭外盘语音。
+  5. **P2-5（全链路 ≥8 处代码形态假设）**：服务端 `server/utils.js`、`server/marketData.js` 及客户端 `api.js`、`parser.js`、`kline.js` 等 8 处代码形态与时间正则纳入统一改造清单。
+  6. **P2-6（报价与图表合约基准对齐）**：确立东财为外盘单一事实来源（同源共享 `preClose` 与合约），新浪作为降级备用源，消除 5% 价差。
+  7. **P3-1 ~ P3-4 闭环**：货币改为按品种元数据定义（恒指期货播报港币）；`getPriceLimit` 增加非 A 股守卫返回 `null`；性能红线收敛为单一指标（Gzip增量 ≤ 10KB，词库增量 ≤ 25KB）；修正 CME/ICE 持仓量可用性说明。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 —— WorkBuddy 审查 round 1 **未通过**（6×P2 + 4×P3），待修复闭环
 
 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md)（被审 `a2b8791`，基准 `45593a5`）
 被审方案：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)

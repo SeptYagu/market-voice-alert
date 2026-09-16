@@ -1,9 +1,9 @@
-# 国际期货与国际股票接入可行性调研与架构设计方案 (Handoff)
+# 国际期货与国际股票接入可行性调研与架构设计方案 (Handoff v2 - 闭环审查修订单)
 
-> **文档性质**：需求可行性调研、系统架构演进规划与分阶段实施方案  
+> **文档性质**：需求可行性调研、系统架构演进规划与全链路实施方案（WorkBuddy Round 1 审查后全量闭环版）  
 > **适用项目**：股票期货实时监控助手 (`market-voice-alert`)  
 > **日期**：2026-09-16  
-> **状态**：方案提出，待多智能体独立审查
+> **状态**：Round 1 审查缺陷（6×P2 + 4×P3）已全面修正，提交 Round 2 复审
 
 ---
 
@@ -15,164 +15,237 @@
 2. [`docs/plans/2026-09-03-futures-requirements-technical-plan.md`](../plans/2026-09-03-futures-requirements-technical-plan.md)：§3.2 与 §12.1 明确将“外盘期货、外汇、数字货币、期权”划定为 Out of Scope，仅支持中国境内六家期货交易场所（上期所、上期能源、大商所、郑商所、广期所、中金所）。
 3. [`docs/requirements-stock-search-suggest.md`](../requirements-stock-search-suggest.md)：§1.1 明确“ETF、指数、债券、B 股、港美股名称联想及完整月份合约目录不在本期范围”。
 
-### 1.2 本方案演进诉求
-随着用户监控需求的拓展，现评估将监控范围延伸至**国际/外盘主流期货**（如美原油、COMEX 黄金、美白银、美铜、纳斯达克100期货、标普500期货、富时A50、恒指期货等）以及**国际股票**（港股、美股）的可行性，并确立低风险、模块化解耦的演进方案。
+### 1.2 本方案演进诉求与覆盖标的
+随着用户跨市场资产监控诉求的提出，本方案评估并确立将监控范围扩展至：
+1. **国际/外盘主流期货**：COMEX（纽约黄金、白银、美铜）、NYMEX（美原油、天然气）、CME（纳指期货、标普期货、道指期货）、SGX（富时中国A50 `CHA50CFD`）、HKFE（恒生指数期货 `HSI`）；
+2. **国际股票**：港股（腾讯控股、阿里巴巴等）、美股（苹果、特斯拉、英伟达等）。
 
 ---
 
-## 2. 外部数据源可行性（现场实测验证）
+## 2. 外部数据源可行性与实测核验（含字段可用性纠偏）
 
-经 2026-09-16 现场实测，公网免费低延迟数据源（新浪财经、腾讯行情、东方财富）对目标国际品种均有完备覆盖：
+经 2026-09-16 现场实测与独立复核，公网免费数据源覆盖情况与约束如下：
 
-```mermaid
-flowchart LR
-    subgraph Client ["前端浏览器 Web"]
-        App["Monitor Controller / Charts"]
-    end
-    subgraph Server ["Node.js 代理与缓存层"]
-        Proxy["Server Proxy / Cache"]
-    end
-    subgraph Sources ["公网数据源"]
-        Sina["新浪财经 (Sina): hf_ 外盘期货 / gb_ 美股"]
-        Tencent["腾讯行情 (Tencent): us 美股 / hk 港股"]
-        Eastmoney["东方财富 (Eastmoney): 102/105/116 分时/K线"]
-    end
-    App --> Proxy
-    Proxy --> Sina
-    Proxy --> Tencent
-    Proxy --> Eastmoney
-```
-
-### 2.1 国际期货（外盘期货）实测
-* **实时报价**：新浪外盘期货接口 `https://hq.sinajs.cn/list=hf_CL,hf_GC,hf_NQ,hf_SI`
-  * 实测响应延时 `< 100ms`，直出原生字段：
+### 2.1 国际期货（外盘期货）实测与契约约束
+* **实时报价源（Sina）**：新浪外盘期货接口 `https://hq.sinajs.cn/list=hf_{CODE}`
+  * 必须带请求头 `Referer: https://finance.sina.com.cn`。
+  * 实测响应延时 `< 100ms`，原生格式（15 字段）：
     `var hq_str_hf_CL="99.903,,99.940,99.960,100.610,99.360,13:58:38,100.750,100.460,0,1,17,2026-09-16,纽约原油,0";`
-  * 字段映射：`[现价, _, 买一, 卖一, 最高, 最低, 报价时间, 昨结, 今开, 持仓量, _, _, 报价日期, 品种中文名, _]`。
-* **分时走势与历史 K 线**：东方财富接口 `https://push2.eastmoney.com/api/qt/stock/trends2/get?secid=102.CL00Y`
-  * 实测返回 470 根分钟分时点，结构与现有 A 股/内盘期货完全一致。
+  * **字段逐位映射核验**：
+    * `0`: 最新价（99.903）
+    * `1`: 买价（通常为空）
+    * `2`: 买一（99.940）
+    * `3`: 卖一（99.960）
+    * `4`: 最高价（100.610）
+    * `5`: 最低价（99.360）
+    * `6`: 报价时间（13:58:38）
+    * `7`: 昨结算（100.750）
+    * `8`: 今开盘（100.460）
+    * `9`: 持仓量（**可用性纠偏**：CME/NYMEX/COMEX 品种实测盘中恒为 0，因为交易所持仓量为日终一次性公布；仅 SGX A50 `CHA50CFD` 与 HKFE `HSI` 盘中返回非零实时持仓量）
+    * `10, 11`: 买卖量
+    * `12`: 报价日期（2026-09-16）
+    * `13`: 品种中文名称（纽约原油）
+    * `14`: 状态位
+* **分时走势与历史 K 线（Eastmoney）**：
+  * **主机轮转架构**：单主机 `push2.eastmoney.com` 对 `trends2` 存在高频 502，必须复用仓库既有 `EASTMONEY_TRENDS_HOSTS` 多主机轮转机制（`1.push2.eastmoney.com`、`90.push2his.eastmoney.com`）。
+  * **按交易所精准分发 secid 市场号（彻底废弃统一 102 规则）**：
+    东财外盘期货按交易所分设不同市场分类，严禁统一使用 `102.`：
+    * `m:101` = COMEX 金属（黄金 `101.GC00Y`、白银 `101.SI00Y`、美铜 `101.HG00Y`）
+    * `m:102` = NYMEX 能源化工（美原油 `102.CL00Y`、天然气 `102.NG00Y`）
+    * `m:103` = 指数与利率期货（标普期货 `103.ES00Y`、纳指期货 `103.NQ00Y`、道指期货 `103.YM00Y`）
+    * `m:100` = 新加坡/港期（富时A50 `100.CHA50CFD`、恒指期货 `100.HSI00Y`）
 
 ### 2.2 港股（HK Stocks）实测
-* **实时报价**：腾讯 `https://qt.gtimg.cn/q=r_hk00700` 或新浪 `https://hq.sinajs.cn/list=rt_hk00700`
-  * 字段包含昨收、今开、现价、最高、最低、成交额、成交量、更新时间，支持五位港股代码。
-* **分时走势与历史 K 线**：东财 `secid=116.00700`
-  * 实测返回 240 根分钟走势（09:30-12:00, 13:00-16:00）。
+* **实时报价**：腾讯 `https://qt.gtimg.cn/q=r_hk00700`（五位代码，78 字段），时间格式为 `YYYY/MM/DD HH:mm:ss`。
+* **分时走势与历史 K 线**：东财 `secid=116.00700`（全日理论 330 根分时线：09:30-12:00 共 150 根，13:00-16:00 共 180 根；盘中按已进行时间返回累积根数）。
 
 ### 2.3 美股（US Stocks）实测
-* **实时报价**：腾讯 `https://qt.gtimg.cn/q=usAAPL` 或新浪 `https://hq.sinajs.cn/list=gb_aapl`
-  * 支持常规时段报价及盘前盘后价格提取。
-* **分时走势与历史 K 线**：东财 `secid=105.AAPL`（纳斯达克）/ `secid=106.BABA`（纽交所）
-  * 实测返回美东 09:30-16:00 对应北京时间 21:30-04:00 的 391 根分钟走势。
+* **实时报价**：腾讯 `https://qt.gtimg.cn/q=usAAPL`（73 字段），常规收盘价位于 f3，时间格式为 `YYYY-MM-DD HH:mm:ss`。
+* **分时走势与历史 K 线**：东财 `secid=105.AAPL`（纳斯达克）/ `secid=106.BABA`（纽交所），美东 09:30-16:00 对应 391 根分钟走势（含开盘集合快照）。
 
 ---
 
 ## 3. 系统核心改造点与架构设计
 
-### 3.1 资产领域模型（Domain Model）扩展
-在 `src/js/parser.js` 与 `src/js/services/` 中建立统一资产类型：
+### 3.1 资产领域模型（Domain Model）与代码命名空间隔离
+为彻底杜绝外盘代码（如白银 `SI0`）与国内既有品种（广期所工业硅 `gfex/SI0`）发生标识冲突与静默误路由，确立**前缀命名空间（Namespaced Identifier）**与独立元数据目录：
 
 ```js
 export const ASSET_TYPES = Object.freeze({
-  STOCK_CN: 'stock_cn',     // A股 (sh600519, sz000001, bj830001)
-  FUTURES_CN: 'futures_cn', // 国内期货 (RB0, IF2603)
-  FUTURES_GLOBAL: 'futures_global', // 外盘期货 (hf_CL, hf_GC, hf_NQ)
-  STOCK_HK: 'stock_hk',     // 港股 (hk00700, hk09988)
-  STOCK_US: 'stock_us'      // 美股 (usAAPL, usTSLA, usNVDA)
+  STOCK_CN: 'stock_cn',           // A股 (sh600519, sz000001, bj830001)
+  FUTURES_CN: 'futures_cn',       // 国内期货 (RB0, IF2603, SI0[工业硅])
+  FUTURES_GLOBAL: 'futures_global', // 外盘期货 (GL_CL0, GL_GC0, GL_SI0[白银], GL_A50)
+  STOCK_HK: 'stock_hk',           // 港股 (hk00700, hk09988)
+  STOCK_US: 'stock_us'            // 美股 (usAAPL, usTSLA, usNVDA)
 });
 ```
 
-* **归一化函数（`normalizeCode`）增强**：
-  * `hk\d{5}` -> 标记为 `stock_hk`
-  * `us[A-Za-z]+` -> 标记为 `stock_us`
-  * `hf_[A-Za-z]+` 或已知外盘符号（如 `CL0`, `GC0`, `NQ0`） -> 标记为 `futures_global`
-* **东财 `secid` 映射扩展（`toEastmoneySecId`）**：
-  * 港股：`116.${code.slice(2)}`
-  * 美股：根据 Ticker 所属交易所映射 `105.` (NASDAQ) 或 `106.` (NYSE)
-  * 外盘期货：映射 `102.${symbol}00Y` (主连)
+#### 3.1.1 外盘期货元数据与 secid 静态显式注册表（消除动态猜测）
+不再使用易错的动态前缀拼接，在 `src/js/futures/globalCatalog.js` 中逐品种显式注册映射：
 
-### 3.2 交易会话与日历解耦（策略模式）
-针对此前多轮审查中已高度闭环的国内 A 股与国内期货会话模型（避免破坏性回归），必须使用**独立会话策略（Session Strategy）**进行隔离：
+| 内部统一代码 | 品种名称 | 计价货币 | 新浪报价符号 | 东财 secid | 交易场所 |
+|---|---|---|---|---|---|
+| `GL_CL0` | 纽约原油 | `USD` | `hf_CL` | `102.CL00Y` | NYMEX |
+| `GL_GC0` | 纽约黄金 | `USD` | `hf_GC` | `101.GC00Y` | COMEX |
+| `GL_SI0` | 纽约白银 | `USD` | `hf_SI` | `101.SI00Y` | COMEX（隔离国内工业硅 SI0） |
+| `GL_HG0` | 纽约美铜 | `USD` | `hf_HG` | `101.HG00Y` | COMEX |
+| `GL_NG0` | 天然气 | `USD` | `hf_NG` | `102.NG00Y` | NYMEX |
+| `GL_NQ0` | 纳斯达克期货 | `USD` | `hf_NQ` | `103.NQ00Y` | CME |
+| `GL_ES0` | 标普500期货 | `USD` | `hf_ES` | `103.ES00Y` | CME |
+| `GL_YM0` | 道琼斯期货 | `USD` | `hf_YM` | `103.YM00Y` | CME |
+| `GL_A50` | 富时中国A50 | `USD` | `hf_CHA50CFD` | `100.CHA50CFD` | SGX（更正原无效 CHA500） |
+| `GL_HSI` | 恒生指数期货 | `HKD` | `hf_HSI` | `100.HSI00Y` | HKFE（明确计价货币为港币） |
 
-1. **`ChinaStockSessionStrategy`**：保持既有 09:30-11:30, 13:00-15:00 逻辑不变。
-2. **`ChinaFuturesSessionStrategy`**：保持既有日夜盘、节假日前夜无夜盘、品种差异化闭市逻辑不变。
-3. **`HkStockSessionStrategy`**：
-   * 交易时段：早盘 09:30-12:00，午盘 13:00-16:00；
-   * 独立香港交易日历（剔除复活节、佛诞等港股休市日）。
-4. **`UsStockSessionStrategy`**：
-   * 夏令时（EDT）：北京时间 21:30 - 次日 04:00；
-   * 冬令时（EST）：北京时间 22:30 - 次日 05:00；
-   * 具备纯函数 `isUsDaylightSavingTime(date)` 自动换算；
-   * 盘前（16:00-开盘）与盘后（收盘-08:00）状态标识。
-5. **`GlobalFuturesSessionStrategy`**：
-   * CME/ICE 电子盘基本处于近 24 小时交易状态（周一 06:00 至周六 05:00/06:00）；
-   * 每日仅有 1 小时结算休市窗口（北京时间 05:00-06:00 或 06:00-07:00）；
-   * 调度逻辑极度简化，大部分时段允许实时行情轮询。
+* **启动期冲突断言**：
+  ```js
+  // 单元测试与系统启动时双重校验，保证国内与国际期货命名空间绝对正交
+  for (const key of Object.keys(GLOBAL_PRODUCT_MAP)) {
+    assert(!DOMESTIC_PRODUCT_MAP[key], `Identifier collision detected: ${key}`);
+  }
+  ```
 
-### 3.3 图表渲染与时间轴适配
-* **TradingView Lightweight Charts**：
-  * 底层基于秒级 Unix 时间戳，天然不受北京时间或美东时间跨日限制；
-  * 分时图自适应总根数：
-    * A 股：240 根
-    * 港股：330 根
-    * 美股：390 根
-    * 外盘期货：采用滚动 24 小时滑动窗口或以结算日为界的跨度。
+#### 3.1.2 归一化全链路改造点清单（覆盖全仓 ≥8 处形态假设）
+为防止新资产请求在客户端或服务端被静默判空，必须全面扩展以下 8 处代码形态过滤点：
 
-### 3.4 语音播报（TTS）与告警适配
-* **货币单位自适应**：
-  * `stock_cn` / `futures_cn`: “元”
-  * `stock_hk`: “港币”
-  * `stock_us` / `futures_global`: “美元”
-* **标的读音**：
-  * 美股代码（如 `AAPL`）在有中文名时优先播报中文名“苹果”，无中文名时播报英文字母；
-  * 外盘期货直接播报品名（如“纽约原油”、“纽约黄金”）。
-
-### 3.5 搜索词库与输入联想策略
-* **外盘期货**：核心主流品种仅约 30~50 个，完全可以直接静态内置于本地词典，支持拼音与中文直搜（如输入 `meiyuanyou` / `myy` / `ny原油` 均能联想到 `hf_CL`）。
-* **港美股**：全量标的过万只，首版采取分级策略：
-  1. 代码全量支持直接输入添加（如 `hk00700`、`usAAPL`）；
-  2. 本地静态词典仅内置高频头部权重股（恒生科技成份股 + 标普500/纳指100核心股）。
+| 层级 | 文件位置 | 既有逻辑 | 改造目标 |
+|---|---|---|---|
+| **服务端** | `server/utils.js:76-86` (`normalizeCodeParam`) | 仅匹配 `^(sh\|sz\|bj)\d{6}$` 或 6 位纯数字，其余返空 | 支持 `hk\d{5}`、`us[A-Za-z]+`、`GL_[A-Z0-9]+`、`hf_[A-Z0-9]+` |
+| **服务端** | `server/marketData.js:160, 194` | `normalizeCodeParam(code).slice(2)` 取数字 | 接入资产感知，按资产类型分发各市场的东财 secid 与 Aktools 参数 |
+| **客户端** | `src/js/parser.js:11-25` (`normalizeCode`) | 仅识别 `sh/sz/bj` | 统一输出规范化资产对象 `{ code, type, market }` |
+| **客户端** | `src/js/parser.js:42` (`TENCENT_LINE_RE`) | 正则 `v_([a-z]{2}\d{6})` | 扩展为支持 `v_((?:sh\|sz\|bj)\d{6}\|r_hk\d{5}\|us[A-Za-z]+)` |
+| **客户端** | `src/js/parser.js:64` (时间字段校验) | 硬编码 `^\d{14}$` (如 20260916142000) | 兼容港股 `YYYY/MM/DD HH:mm:ss` 与美股 `YYYY-MM-DD HH:mm:ss` |
+| **客户端** | `src/js/parser.js:129` (`SINA_FUTURE_RE`) | 正则 `hq_str_(nf_?[a-z0-9]+)` | 扩展支持 `hq_str_(?:nf_?[a-z0-9]+\|hf_[A-Za-z0-9_]+)` 并挂载 `parseSinaGlobalFuture` |
+| **客户端** | `src/js/api.js:30-31` (`STOCK_RE`, `FUTURE_RE`) | 仅支持国内 A 股与国内期货 | 改造为资产类型分发器，新标的不被 `buildTencentUrl` 剔除 |
+| **客户端** | `src/js/kline.js:210, 331` (`STOCK_CODE_RE`) | 仅处理 6 位 A 股 | 分发港股（`116.`）、美股（`105/106.`）、外盘期货显式 secid |
+| **客户端** | `src/js/kline.js:326-345` (`getPriceLimit`) | 默认回落 10% 涨跌幅限制 | 非 A 股标的返回 `null`，彻底消除港美股/外盘 K 线上无意义的 ±10% 限价线 |
 
 ---
 
-## 4. 推荐落地实施路线图（Roadmap）
+### 3.2 交易会话（Market Session）解耦与语音调度防污染契约
+
+#### 3.2.1 策略模式（Strategy Pattern）接口契约
+```ts
+interface MarketSessionStrategy {
+  readonly assetType: string;
+  isTradingNow(now: Date): boolean;
+  getSession(now: Date): 'pre-open' | 'trading' | 'lunch' | 'after-close' | 'closed';
+  getIntradaySessionRanges(): Array<[startMinutes: number, endMinutes: number]>;
+  getTradingDay(now: Date): string; // YYYY-MM-DD
+}
+```
+
+1. **`ChinaStockSessionStrategy`**：保持原 09:30-11:30, 13:00-15:00 与节假日日历不变。
+2. **`ChinaFuturesSessionStrategy`**：保持原日夜盘、节前夜无夜盘、品种闭市时点不变。
+3. **`HkStockSessionStrategy`**：早盘 09:30-12:00，午盘 13:00-16:00；港股交易日历。
+4. **`UsStockSessionStrategy`**：
+   * 采用纯函数 `isUsDaylightSavingTime(date)` 严格判定美东夏冬令时（每年 3 月第二个周日 至 11 月第一个周日）；
+   * 夏令时常规时段：北京时间 21:30 - 次日 04:00；冬令时：北京时间 22:30 - 次日 05:00；
+   * 美东交易日归属：以美东本地日历日作为该交易日分时的唯一归属键，解决跨午夜拆分问题。
+5. **`GlobalFuturesSessionStrategy`**：
+   * CME 电子盘连续交易（周一 06:00 至周六 05:00/06:00，除每日 05:00-06:00 结算休市）。
+
+#### 3.2.2 调度分派器与全局语音状态机安全收窄（杜绝 A 股污染外盘）
+现有缺陷根因在于：`getVoiceEligibleCodes` 采用二元分派，且 `resolveVoiceScheduleAction` 在 A 股 `after-close` 时直接触发全局 `autoStop`，导致 15:00 或 22:00 播报“已收盘”并永久关闭语音。
+**破局改造契约**：
+1. **显式策略分派（`resolveSessionStrategy(code)`）**：
+   ```js
+   export function resolveSessionStrategy(code) {
+     const asset = inferAssetType(code);
+     switch (asset) {
+       case ASSET_TYPES.STOCK_CN: return chinaStockStrategy;
+       case ASSET_TYPES.FUTURES_CN: return chinaFuturesStrategy;
+       case ASSET_TYPES.STOCK_HK: return hkStockStrategy;
+       case ASSET_TYPES.STOCK_US: return usStockStrategy;
+       case ASSET_TYPES.FUTURES_GLOBAL: return globalFuturesStrategy;
+     }
+   }
+   ```
+2. **多资产调度聚合语义（Any-Trading Policy）**：
+   * 只要用户订阅的自选池中有**任意一个**标的处于可交易时段，全局语音引擎**不得被 autoStop 关闭**；
+   * 停播提示（“已收盘”/“午休”）改为**按资产分组播报**，或仅在“当前订阅的所有活跃标的均已收盘”时才触发总收盘提示；
+   * 在北京时间 22:00（美股开盘前或美原油交易中），A 股标的静默跳过，外盘期货正常播报，绝不误杀。
+
+---
+
+### 3.3 分时与 K 线数据管线改造（消除 A 股硬编码）
+
+1. **分时交易窗口参数化**：
+   * 废除 `api.js:36-39` 全局唯一的 `INTRADAY_SESSION_RANGES = [[9:15,11:30],[13:00,15:00]]`；
+   * 改为在 `_filterIntradaySessions(items, code)` 中根据标的策略动态获取有效窗口：
+     * A 股：`[[555, 690], [780, 900]]`
+     * 港股：`[[570, 720], [780, 960]]`
+     * 美股：夏令时 `[[1290, 1440], [0, 240]]`（支持跨午夜有效区间）
+     * 外盘期货：全天窗口，剔除每日 05:00-06:00 结算点。
+2. **交易日跨午夜对齐**：
+   * 废除 `chartTimeToDate(it.time) !== selectedDate` 简单的北京日历日比对；
+   * 改为 `strategy.getTradingDay(it.time) !== selectedTradingDay`，确保美股（21:30 至 04:00）的 391 根分钟点统一归属于同一美东交易日，避免被截断为空。
+
+---
+
+### 3.4 报价源与图表源合约及基准对齐机制（解决 5% 视觉互斥）
+
+为解决新浪 `hf_CL` 报价与东财 `102.CL00Y` 分时图因展期/合约口径不一致带来的 5% 价差与双重涨跌幅矛盾：
+1. **单一事实来源优先（Single Source of Truth）**：
+   * 对于外盘期货，**优先采用东方财富作为第一数据源**（既提供 `/api/qt/stock/get?secid=...` 实时行情，又提供 `trends2` 分时图与 K 线）；
+   * 两者直接共享同源的 `preClose` 昨结算价基准，保证表格最新价、涨跌幅与分时图末端价格 100% 吻合。
+2. **新浪作为降级备用源**：
+   * 当东财故障切换至新浪 `hf_` 备用源时，显式使用新浪提供的字段 7（昨结）重新校准基准，并在 UI 或诊断日志中注明数据源切换。
+
+---
+
+### 3.5 语音播报（TTS）与货币单位适配
+
+* **按品种元数据定义货币（废除按资产粗暴推断）**：
+  * 每种标的在注册时定义 `currency` 属性：
+    * A 股 / 国内期货：`CNY`（播报“元”）
+    * 港股 / 恒指期货（`GL_HSI`）：`HKD`（播报“港币”）
+    * 美股 / 美原油 / 纽约黄金 / 富时A50：`USD`（播报“美元”）
+* **英文代码与中文名播报规则**：
+  * 美股在有中文名时（如“苹果”）优先播报中文名；若无中文名则拼读字母代码；
+  * 外盘期货直接播报注册的中文化品种名（如“纽约原油”）。
+
+---
+
+## 4. 分阶段演进实施路线图（Roadmap）
 
 ```mermaid
 gantt
-    title 国际品种接入落地计划
+    title 国际品种接入分阶段实施计划 (v2)
     dateFormat  YYYY-MM-DD
     section Phase 1 外盘主流期货
-    Sina hf_ 报价与解析器          :2026-09-17, 2d
-    东财 102 分时与K线接入        :2026-09-19, 2d
-    外盘期货品种目录与静态联想    :2026-09-21, 1d
-    全天候交易时段策略与门禁测试  :2026-09-22, 2d
+    建立 globalCatalog 与显式 secid 表     :2026-09-17, 2d
+    全仓 8 处代码归一化改造 & 东方财富接入 :2026-09-19, 2d
+    多时区会话策略与语音调度解耦           :2026-09-21, 2d
+    外盘期货离线/在线单测与门禁验证        :2026-09-23, 1d
     section Phase 2 港股接入
-    港股代码识别与腾讯/新浪接口   :2026-09-24, 2d
-    港股交易时段与分时图对齐      :2026-09-26, 2d
+    港股代码接入与五位代码解析             :2026-09-24, 2d
+    港股时段 (09:30-16:00) 与分时 330 根   :2026-09-26, 2d
     section Phase 3 美股接入
-    美股夏/冬令时动态换算会话     :2026-09-28, 3d
-    美股报价与分时图接入          :2026-10-01, 2d
+    美东冬夏令时纯函数与美东日期归属       :2026-09-28, 3d
+    美股跨午夜 391 根分时与报价解析        :2026-10-01, 2d
 ```
 
-### Phase 1: 外盘主流期货接入（性价比最高、见效最快）
-* **优势**：品种集中（30+ 个核心品种），Sina 接口极度轻量稳定，交易时间全天连续无复杂日夜割裂，东财分时数据结构完美兼容。
-* **交付范围**：
-  * 纽约原油 (`CL0`)、COMEX 黄金 (`GC0`)、白银 (`SI0`)、美铜 (`HG0`)、天然气 (`NG0`)；
-  * 纳指期货 (`NQ0`)、标普期货 (`ES0`)、道指期货 (`YM0`)、富时A50 (`CHA500`) 等。
+### Phase 1: 外盘主流期货（首批 10 个高频品种，高性价比）
+* **标的范围**：`GL_CL0`(原油)、`GL_GC0`(黄金)、`GL_SI0`(白银)、`GL_HG0`(美铜)、`GL_NG0`(天然气)、`GL_NQ0`(纳指)、`GL_ES0`(标普)、`GL_YM0`(道指)、`GL_A50`(富时A50)、`GL_HSI`(恒指期货)。
+* **关键成果**：打通多主机东财外盘分时/K线 + 新浪备源，落地会话策略解耦，消除国内标的回归隐患。
 
-### Phase 2: 港股接入
-* **优势**：与北京时间完全同区，无时差转换负担，仅午休与闭市时间略有差异。
+### Phase 2: 港股接入（时差为零）
+* **标的范围**：港股五位代码全量支持输入，头部 30 只恒生科技成份股支持拼音联想。
 
-### Phase 3: 美股接入
-* **优势**：覆盖全球科技巨头股票，核心攻关在于夏冬令时动态换算与盘前盘后时段支持。
+### Phase 3: 美股接入（攻克冬夏令时与跨夜分时）
+* **标的范围**：美股代码直接输入添加，头部标普/纳指成分股拼音联想。
 
 ---
 
-## 5. 验收标准与门禁规范
+## 5. 验收标准与单一可测量门禁规范
 
-1. **防回归红线**：
-   * 改造过程中，既有 A 股（843 项 QUnit 单元测试与 75 项 Playwright E2E 测试）及国内期货夜盘/停播补播规则**必须全部保持 100% PASS**。
-2. **新增资产测试矩阵**：
-   * 覆盖外盘期货、港股、美股各至少 3 个典型标的的解析、分时加载、日K线获取与 TTS 语音播报断言；
-   * 时段策略测试：覆盖美股夏令时/冬令时切换日期、港股半日休市、外盘期货结算暂停时钟。
-3. **性能红线**：
-   * 客户端包体体积不因新增资产词典发生显著膨胀（词库增量控制在 `< 150KB`）；
-   * 行情轮询单批次延时 `< 300ms`。
+1. **防回归严格门禁**：
+   * 既有 A 股与国内期货所有 843 项 QUnit 单元测试与 75 项 Playwright E2E 测试保持 **100% PASS**。
+2. **新资产功能验收断言**：
+   * **secid 有效性**：Phase 1 全部 10 个品种的 Eastmoney secid 均能成功拉取 `trends2` 与 `kline`，无 502/空数据；
+   * **防误路由断言**：断言 `parseFutureInput('SI0')` 保持国内工业硅，而 `GL_SI0` / `hf_SI` 准确映射为 COMEX 白银；
+   * **会话与语音隔离断言**：在北京时间 22:00 注入自选 `['sh600519', 'GL_CL0']`，断言调度器输出 `pause=false, autoStop=false`，美原油正常获得播报，且不播报“已收盘”；
+   * **分时完整性断言**：美股分时图 391 根数据点无截断丢失，外盘分时无日内断裂。
+3. **单一客观性能红线（P3-3 修正）**：
+   * **构建体积门禁**：生产打包产物 `dist/assets/index-*.js` 的 Gzip 压缩后体积相比基准增量 **≤ 10.0 KB**（当前 Gzip 基准为 115.10 KB，构建后不得超过 125.10 KB）；
+   * **静态词库增量**：新增国际品种词典静态 JSON 增量 **≤ 25.0 KB**。
