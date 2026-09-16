@@ -1,6 +1,22 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 v9 —— WorkBuddy 审查 round 9 **未通过**（1×P2 + 3×P3），待修复闭环
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 v10 —— 闭环 Round 9 全部缺陷（1×P2 + 3×P3 与两项待确认风险），提交 WorkBuddy 审查 round 10
+
+方案交接（v10 全量闭环版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+Round 9 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round9-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round9-handoff.md)
+Round 8 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round8-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round8-handoff.md)
+Round 7 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round7-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round7-handoff.md)
+
+- **闭环内容（Round 9 缺陷与风险闭环）**：
+  1. **P2-1（消除 CL/NG 上游基差硬编码门禁，改为实现可控的百分比连续性断言）**：在 §5 中彻底废除对上游绝对价差 `[4.0%, 5.0%]` 的硬性门禁（该价差由上游合约结构决定，实测 4.15%~5.1% 随换月漂移）；改为断言实现可控性质：① 断言备源报价昨结基准绑定自身 field7（`fallbackCl.prevClose === Number(sinaClPayload.split(',')[7])`）；② 断言主备切换前后涨跌幅跳变平滑（`Math.abs(fallbackCl.changePercent - primaryCl.changePercent) < 0.6`，实测跳变约 0.4pp）；③ 变异测试：若备源错误绑定主源 f60，用例确定性转红；
+  2. **P3-1（消除未定义标识 resolveFallbackQuote，统一为 parseSinaGlobalFuture 规范导出）**：在 §3.1.2 改造清单行 8（`src/js/parser.js:129`）中，显式将备源解析器定义并新增导出为 `parseSinaGlobalFuture(raw, { code, scale, baseFromOwnField7 })`；在 §3.4.2 与 §5 中全面采用该函数，彻底消除全仓未定义的 `resolveFallbackQuote` 标识；
+  3. **P3-2（收敛 HKFE 声明口径为「日盘结算后」，对齐采样时段并纳入 18:26 归零证据）**：在 §2.1 与 §3.1.1 中，将表述由「日盘常规交易时段」精确收敛为「**日盘结算后（16:30 后）**」，使声明与 16:35 收盘采样严格自洽；在 §3.4.2 复采表中追加 18:26 独立复测数据（东财 24688 对 新浪 24688，点差 0 点 / 0.000%），以实测收敛证据佐证以东财分时 `trends2.preClose` 为权威基准的正确性；
+  4. **P3-3（港美股东财 qt 端点量纲 div1000 显式登记与兜底分派）**：在 §3.1.1.1 增设港股与美股东财 qt 端点报价量纲实测注册表，登记港美股（`m:105, 106, 116`）端点报价为 ×1000（真实除数 `qtDivisor = 1000`）；在 §3.1.2 清单行 5 中将通用回退改造为按 `f107` 市场号自动分派默认除数（A 股 `div100`，港美股 `div1000`），杜绝腾讯失败走东财兜底时价格出现 10 倍错位；在 §5 补齐港美股量纲断言与变异测试；
+  5. **待确认风险 1 处置（自选池代码准入策略与备源代码隔离）**：在 §3.1 明确自选池准入契约，用户输入与自选池仅准入 `GL_*`、`hk*`、`us*` 等规范代码；新浪 `hf_*` 仅作为内部备用源路由符号，`normalizeCode` 与搜索联想严禁将其输出为自选代码，彻底杜绝同品种双报价与图表缺失；
+  6. **待确认风险 2 处置（ChinaFuturesSessionStrategy 严格委托既有模块）**：在 §3.1.2、§3.2.1 与 §5 显式规定 `ChinaFuturesSessionStrategy` 必须直接委托既有 `src/js/futures/session.js` 中的 `getFuturesSession` 与 `isFuturesTradingTime`，完整复用节前夜无夜盘、02:30 凌晨续段收盘等精密规则，并在 §5 增设等价性门禁。
+- **验证结论**：本地三大门禁全部通过（`npm run lint` 0 错误，`npm test` 843/843 全部通过，`npm run build` 成功）；向 WorkBuddy 发起 Round 10 审查。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v9 —— WorkBuddy 审查 round 9 **未通过**（1×P2 + 3×P3），已闭环推进至 v10
 
 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round9-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round9-handoff.md)（被审 `4beb59c`，基准 `45593a5`，本轮实际审查增量 `b344926..4beb59c` = 4 文件 / +256 −58，纯文档）
 被审方案（v9，round 9 被审版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
