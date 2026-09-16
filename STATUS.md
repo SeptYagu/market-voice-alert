@@ -1,6 +1,26 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 v7 —— WorkBuddy 审查 round 7 **未通过**（2×P1 + 2×P3），待修复闭环
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 v8 —— 闭环 Round 7 全部缺陷（2×P1 + 2×P3 与待确认风险），发起 WorkBuddy 审查 round 8
+
+方案交接（v8 全量闭环版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+Round 7 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round7-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round7-handoff.md)
+Round 6 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round6-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round6-handoff.md)
+Round 5 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round5-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round5-handoff.md)
+Round 4 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round4-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round4-handoff.md)
+Round 3 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round3-handoff.md)
+Round 2 审查报告：[`docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md)
+Round 1 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md)
+
+- **闭环内容（Round 7 缺陷与风险闭环）**：
+  1. **P1-1（10 品种端点报价除数与新浪换算系数逐品种显式登记与归一化）**：在 §3.1.1 注册表中为 Phase 1 全部 10 个品种显式登记东财 qt 原始单价除数 `qtDivisor`（CL/NQ/ES=100、GC/A50=10、SI/NG=1000、HG=10000、YM/HSI=1）与新浪换算系数 `sinaScale`（特别针对 `GL_HG0` 登记 `sinaScale=0.01`，消除新浪美分/磅与东财美元/磅 100 倍差异）；在 §3.1.2 改造清单中将 `parseEastmoney` 扩展为按品种 `qtDivisor` 对全部价格字段（`f43-f46/f60/f169`）执行除法，彻底消除 5~6 个首批品种价格错 10~100 倍隐患；在 §5 升级为覆盖全部 10 个品种的 `qt / qtDivisor == trends2.last == sina * sinaScale` 全量缩放断言与变异测试；
+  2. **P1-2（彻底消除 15:00 误关语音与零判别力，纳管 `voiceSchedule.js:12, 28` 与 `marketSession.js:46-52`）**：在 §3.1.2 清单显式纳入 `src/js/services/voiceSchedule.js:12, 28` 与 `src/js/marketSession.js:46-52`；将 `voiceSchedule.js:28` 的自动关闭判据重构为识别全量非 A 股资产（`!hasExtendedHoursAssets && !allowed`），保证当自选池含有外盘或港美股时，A 股 15:00 收盘绝不持久化设置 `enabled=false`，绝不播报“已收盘”；在 §5 改造会话隔离断言为直接调用真实 `decideVoiceSchedule`，断言 22:00 与 16:00 混合自选 `enabled===true && timerShouldRun===true && transitionNotice===null`，并增加纯 A 股自选 16:00 停播反向断言，具备严格判别力；
+  3. **P3-1（纳管 `toEastmoneySecId` 解析器）**：在 §3.1.2 改造清单新增 `src/js/parser.js:34-40`（`toEastmoneySecId`）及服务端对应调用点，支持 `GL_*`、`hk*`、`us*` 反查注册表映射为对应东财 secid，杜绝构造 URL 时返回 null 导致东财三端点全部不可达；在 §5 补齐 `toEastmoneySecId` 4 类标的断言；
+  4. **P3-2（同步 `type='futures_global'` 消费点）**：在 §3.1.2 改造清单显式补入 `src/js/tts.js:217-218`、`src/js/alert.js:87-88`、`src/js/views/monitorTableView.js:95, 339`、`src/js/kline.js:522`、`src/js/services/batchExportService.js:102`，废除二元 `quote.type === 'future'` 判别，外盘期货不播“元”后缀，按品种货币元数据播报正确货币与小数位；并在 §5 增加语音格式断言；
+  5. **待确认风险 1 处置（HKFE 日夜盘结算衔接）**：在 §3.4.2 详细登记 HKFE 16:30–17:15 日夜盘转场时昨结滚动机制，确立以东财分时 `trends2.preClose` 为权威基准，备源切换对齐走势昨结，杜绝 0.05%（12点）跳变；
+  6. **附带说明细节校准**：校准 §2.1 单次快照数值恒等式、§3.3.1 函数名定位与 §3.1.2 行 11 消费方说明。
+- **验证结论**：本地三大门禁全部通过（`npm run lint` 0 错误，`npm test` 843/843 全部通过，`npm run build` 成功）；向 WorkBuddy 发起 Round 8 审查。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v7 —— WorkBuddy 审查 round 7 **未通过**（2×P1 + 2×P3），待修复闭环
 
 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round7-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round7-handoff.md)（被审 `8a05917`，基准 `45593a5`，本轮实际审查增量 `5e01a90..8a05917` = 3 文件 / +42 −21，纯文档）
 被审方案（v7，round 7 被审版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
