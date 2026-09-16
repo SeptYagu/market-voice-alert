@@ -1,6 +1,20 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 v10 —— 闭环 Round 9 全部缺陷（1×P2 + 3×P3 与两项待确认风险），提交 WorkBuddy 审查 round 10
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 v10 —— WorkBuddy 审查 round 10 **未通过（2×P2 + 2×P3），待修复闭环**
+
+审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round10-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round10-handoff.md)（被审 `be39cd9`，基准 `45593a5`，本轮实际审查增量 `cc760c4..be39cd9` = 3 文件 / +89 −34，纯文档）
+被审方案（v10，round 10 被审版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+
+- **未通过结论（2×P2 + 2×P3）**：
+  1. **P2-1 港美股市场号枚举漏掉东财第三个美股市场 `m:107`（AMEX / 腾讯后缀 `.AM`）**：`:88`（「美股（`m:105, 106`）」）、`:127-135`（§3.1.1.1 量纲表仅 `105/106/116`）、`:191`（§3.1.2 行 5「`us*`（`105/106.*`）」）、`:192`（行 6 ②「美股（`f107: 105, 106`）回退 `div1000`」）均按 `105.AAPL`（纳斯达克）与 `106.BABA`（纽交所）两个样本外推。**本轮真源实测**（`push2delay`，18:38）：`105.SPY`/`106.SPY`/`105.IMO`/`106.IMO`/`105.RLGT`/`106.RLGT` 全部 `rc:100 data:null`，而 `107.SPY` `rc=0 f43=757390 f107=107`、`107.IMO` `rc=0`、`107.RLGT` `rc=0`；`107.SPY` 三端点全可用（`trends2` n=391、`kline` n=390），`clist fs=m:107 → total=4774`，腾讯同标的交易所后缀为 `.AM`（`v_usSPY="…SPY.AM~757.39~760.88…"`）→ 属**市场号缺失**而非端点故障。后果：该市场（含 SPY）在腾讯失败走东财兜底时**恒无报价**；若补号而沿用登记集合，则 `f107=107` 落空按 `div100` → `7573.90` 对真值 `757.39` **10× 错位**；§5 港美股断言只覆盖 `f107: 105`（`:388`），两种错法均拦不住。
+  2. **P2-2 本轮新增的「`ChinaFuturesSessionStrategy` 必须直接委托 `getFuturesSession(code, now, tradingDates)`」（`:198`/`:222-225`）与既有「无 code 入参的单例策略接口」互斥**：接口方法唯参为 `now`（`:211-218`），`resolveSessionStrategy` 直接返回模块级单例（`:239-251`），且 `:179-180` 以对象同一性强制同类型共用一个对象 ⇒ 策略对象**不携带品种代码**；而 `getFuturesSession` 的结果逐品种不同（`src/js/futures/session.js:12-138`：中金所无夜盘、国债 15:15 收盘、`RB0` 夜盘至 23:00、`AU0` 至 02:30；`tests/codeReviewRegressions.test.js:157-171` 为既有证据）⇒ `§5:356` 的「严格等价」门禁不可落码，Round 9 待确认风险 2 所欲消除的品种级夜盘规则回归通道**仍未闭环**（关键反证：现网 `marketSession.js:135` 正是在逐 code 循环内传入品种）。
+  3. **P3-1 §3.2.1 项 2（`:223`）与 `STATUS.md:16` 引用未定义标识 `isFuturesTradingTime`**：`grep` 全仓仅命中该两处文档，`src/js/futures/session.js` 的真实导出为 `isFutureTrading`（`:145`，另有 `isAnyFutureTrading:157`、`isFuturesMarketOpenFallback:171`）→ 按字面落码 `SyntaxError`（与 Round 9 P3-1「`resolveFallbackQuote`」、Round 3 P3-1 同族，第 3 次复现）。
+  4. **P3-2 §5 新增 CL/NG 断言（`:374-378`）含未绑定伪变量 `sinaClPayload`/`primaryCl`，且 `< 0.6pp` 阈值仍是上游决定量**：实测恒等式 `|ΔchangePercent| ≡ |今日基差 − 昨日基差|`（东财 `103.82/105.83` 对新浪 `99.227/100.750` ⇒ 昨结基差 `5.042%`、现基差 `4.790%`、差 `0.252pp` ≈ 同刻实测跳变 `0.236pp`），而本轮登记的基差区间跨 1.0pp（`4.1%~5.1%`），Round 8/9 记录的**单日**基差移动已达 `0.31pp`（CL）/`0.34pp`（NG）；同刻 16 分钟内实测序列 `0.41pp`（Round 9 18:26）→ `0.236pp`（18:38）→ `0.306~0.356pp`（18:41~18:43 十连采），余量仅 ~0.24pp ⇒ 门禁会随换月基差漂移随机转红（与 Round 9 P2-1 同失效率）。
+- **待确认风险**：§3.1 `:106-108` 新增的「`hf_*` 仅内部化、严禁作为可自选代码」准入契约**未登记执行落点**（§3.1.2 的 17 行清单只纳管 `normalizeCode`，搜索联想/自选池准入过滤缺项）；现码 `normalizeCode('hf_CL') === null` 故无即时回归，但 Phase 1 新增联想词库若产出 `hf_*` 将无人拦截。**验证方法**：落地后断言搜索联想输出 ∩ `^hf_` = ∅。
+- **本轮通过项（Round 9 三项缺陷主项闭环）**：① `:351` 的 `[4.0%,5.0%]` 硬区间已删除并改为「备源昨结绑定自身 `field7`」断言；② `resolveFallbackQuote` 已由 §3.1.2 行 8（`:195`）定义为 `parseSinaGlobalFuture`；③ `:59`/`:72`/`:124` 的 HSI 声明已收敛为「日盘结算后（16:30 后）」并与 `:289-297` 采样表一一对应（18:38 复测东财 `f60 = 24688 = trends2.preClose`、新浪字段 7 `24688`）；④ P3-3 主项实测成立（港美股 `116/105/106` 的 `qt` 价格字段统一 ×1000，与同源 `trends2`、腾讯 1:1）。另：文档结构自检通过（标题唯一、`\|`=12 还原后 17 行 4 列无畸形行、`\d`=8）；§3.1.2 清单 17 行 `文件:行号` 逐条相符；`qt.f43/qtDivisor` 对同 secid `trends2` 末根比值 10/10 恒为 `1.00000`、`f169 == f43 - f60` 10/10 成立。
+- **未验证项**：§2.1 `:32` 新增括注「连接复用后 `< 100ms`」本机 8 连发实测稳态 `207~211ms`（首个 `923ms`）不可复现（环境相关，未定级）；Round 9 P2-1 的「连续两日门禁一致」单日不可验；受限网络「先失败→后轮转」时序不可复现（`push2his` 可达、`push2` 恒 502）；Phase 2/3 的 `klt=1` 根数与腾讯字段数未重采。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v10（闭环 Round 9 版）—— WorkBuddy 审查 round 10 **未通过**（2×P2 + 2×P3），已闭环推进至 v11
 
 方案交接（v10 全量闭环版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
 Round 9 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round9-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round9-handoff.md)
