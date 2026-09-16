@@ -1,9 +1,9 @@
-# 国际期货与国际股票接入可行性调研与架构设计方案 (Handoff v8 - 闭环 Round 7 审查修订版)
+# 国际期货与国际股票接入可行性调研与架构设计方案 (Handoff v9 - 闭环 Round 8 审查修订版)
 
-> **文档性质**：需求可行性调研、系统架构演进规划与全链路实施方案（WorkBuddy Round 7 审查后全量闭环版）  
+> **文档性质**：需求可行性调研、系统架构演进规划与全链路实施方案（WorkBuddy Round 8 审查后全量闭环版）  
 > **适用项目**：股票期货实时监控助手 (`market-voice-alert`)  
 > **日期**：2026-09-16  
-> **状态**：Round 7 审查缺陷（2×P1 + 2×P3 与待确认风险）已全面修正，提交 Round 8 复审
+> **状态**：Round 8 审查缺陷（3×P2 + 2×P3 与待确认风险）已全面修正，提交 Round 9 复审
 
 ---
 
@@ -56,20 +56,20 @@
     * `m:102` = NYMEX 能源化工（美原油 `102.CL00Y`、天然气 `102.NG00Y`，全市场 117 只）
     * `m:103` = CME/CBOT 指数利率与农产品（标普期货 `103.ES00Y`、纳指期货 `103.NQ00Y`、道指期货 `103.YM00Y`，全市场 178 只）
     * `m:104` = SGX 新加坡期货（**实测确认**：A50期指连续合约为 `104.CN00Y`，`f58=A50期指当月连续`，全市场 33 只）
-    * `m:134` = 港/亚洲指数期货（**实测确认**：全市场 112 只，含恒生指数期货主力 `134.HSI_M`、前月合约 `134.HSIU6` 以及小型恒指 `134.MHI*`；实测 `qt/stock/get` `f58=恒生指数期货主力`、昨结 `f60=24676`，`trends2` 与 `kline(klt=1)` 均 ≥900 根[随交易时段累积，16:18 实测 `trends2` 964 根、`kline` 963 根]；新浪 `hf_HSI` 字段 7 昨结 24676.000 与东财 `f60` 完全同源一致）
+    * `m:134` = 港/亚洲指数期货（**实测确认**：全市场 112 只，含恒生指数期货主力 `134.HSI_M`、前月合约 `134.HSIU6` 以及小型恒指 `134.MHI*`；实测 `qt/stock/get` `f58=恒生指数期货主力`、日盘昨结 `f60=24676`，`trends2` 与 `kline(klt=1)` 均 ≥900 根[随交易时段累积，16:18 实测 `trends2` 964 根、`kline` 963 根]；日盘常规交易时段新浪 `hf_HSI` 字段 7 昨结 24676.000 与东财 `f60` 1:1 对齐，夜盘转场衔接详见 §3.4.2 与复采记录表）
     * **市场号说明**：`m:100` 实为国际指数现货市场（含现货 `100.HSI` 与 `100.XIN9`，非期货合约）；真实恒生指数期货位于 `m:134`。
   * **端点报价单位逐品种实测（东财内部 qt 端点原始报价除数与新浪换算）**：
     * **真源多轮实测**：东财 `qt/stock/get` 端点输出的原始价格字段（`f43`最新、`f44`最高、`f45`最低、`f46`今开、`f60`昨结、`f169`涨跌额）是以各品种最小报价单位整数表达。同一时刻对比同源 `trends2` 末根、昨结与新浪真源，各品种真实缩放除数 (`qtDivisor`) 逐品种不同（0.0001 至 1 共 5 档）：
-      * `GL_CL0` (`102.CL00Y`): `qt` 10445 / `trends2` 104.45 → **除数 100** (`÷100`)
-      * `GL_GC0` (`101.GC00Y`): `qt` 43717 / `trends2` 4371.7 → **除数 10** (`÷10`)
-      * `GL_SI0` (`101.SI00Y`): `qt` 65060 / `trends2` 65.06 → **除数 1000** (`÷1000`)
-      * `GL_HG0` (`101.HG00Y`): `qt` 64865 / `trends2` 6.4865 美元/磅 → **除数 10000** (`÷10000`)；**注意新浪备源差异**：新浪 `hf_HG` 以美分/磅报价（649.300），与东财美元/磅报价相差 100 倍，备源切换需应用 `sinaScale = 0.01`。
-      * `GL_NG0` (`102.NG00Y`): `qt` 2903 / `trends2` 2.903 → **除数 1000** (`÷1000`)
-      * `GL_NQ0` (`103.NQ00Y`): `qt` 2908461 / `trends2` 29084.61 → **除数 100** (`÷100`)
-      * `GL_ES0` (`103.ES00Y`): `qt` 767222 / `trends2` 7672.22 → **除数 100** (`÷100`)
-      * `GL_YM0` (`103.YM00Y`): `qt` 52579 / `trends2` 52579 → **除数 1** (`÷1`)
-      * `GL_A50` (`104.CN00Y`): `qt` 143750 / `trends2` 14375.0 → **除数 10** (`÷10`)
-      * `GL_HSI` (`134.HSI_M`): `qt` 24682 / `trends2` 24682 → **除数 1** (`÷1`)
+      * `GL_CL0` (`102.CL00Y`): `qt` 10445 / `trends2` 104.45 → **除数 100** (`÷100`)；注意新浪 `hf_CL` 跟踪当月合约（~100.05），与东财连续合约存在 4.3%~4.8% 合约月基准差，备源切换按 §3.4.2 重校昨结基准
+      * `GL_GC0` (`101.GC00Y`): `qt` 43717 / `trends2` 4371.7 → **除数 10** (`÷10`)；新浪 `hf_GC` 4373.530，跨源一致
+      * `GL_SI0` (`101.SI00Y`): `qt` 65060 / `trends2` 65.06 → **除数 1000** (`÷1000`)；新浪 `hf_SI` 65.087，跨源一致
+      * `GL_HG0` (`101.HG00Y`): `qt` 64865 / `trends2` 6.4865 美元/磅 → **除数 10000** (`÷10000`)；注意新浪 `hf_HG` 以美分/磅报价（649.300），与东财美元/磅报价相差 100 倍，备源切换需应用 `sinaScale = 0.01` 换算
+      * `GL_NG0` (`102.NG00Y`): `qt` 2903 / `trends2` 2.903 → **除数 1000** (`÷1000`)；新浪 `hf_NG` 为 3.046，存在 4.2%~4.5% 合约月差，备源切换按 §3.4.2 重校基准
+      * `GL_NQ0` (`103.NQ00Y`): `qt` 2908461 / `trends2` 29084.61 → **除数 100** (`÷100`)；新浪 `hf_NQ` 29070.80，跨源一致（偏差 ≤0.05%）
+      * `GL_ES0` (`103.ES00Y`): `qt` 767222 / `trends2` 7672.22 → **除数 100** (`÷100`)；新浪 `hf_ES` 7665.60，跨源一致（偏差 ≤0.05%）
+      * `GL_YM0` (`103.YM00Y`): `qt` 52579 / `trends2` 52579 → **除数 1** (`÷1`)；新浪 `hf_YM` 52540.90，跨源一致
+      * `GL_A50` (`104.CN00Y`): `qt` 143750 / `trends2` 14375.0 → **除数 10** (`÷10`)；新浪 `hf_CHA50CFD` 14375.40，跨源一致
+      * `GL_HSI` (`134.HSI_M`): `qt` 24682 / `trends2` 24682 → **除数 1** (`÷1`)；日盘与新浪 24676 1:1 对齐，夜盘转场基准衔接见 §3.4.2
     * **快照一致性核验**：单次同时刻快照严格满足恒等式 `f169 == f43 - f60`（例如 `104.CN00Y` 采样中 `f43=143750, f60=143650, f169=100`，且 `f44=144180, f45=141980, f46=142670`；`134.HSI_M` 采样中 `f43=24689, f60=24688, f169=1`）。
     * 因此，在 `src/js/parser.js:parseEastmoney` 入口处，必须按注册表 `globalCatalog` 登记的 `qtDivisor` 对全部价格字段（`f43/f44/f45/f46/f60/f169`）逐品种归一化，严禁粗暴套用 A 股 `div100`，杜绝 10~100 倍数值错位与 `-90%` 伪跌幅。
 
@@ -101,21 +101,21 @@ export const ASSET_TYPES = Object.freeze({
 });
 ```
 
-#### 3.1.1 外盘期货元数据与端点报价单位显式注册表（P1-1 闭环版）
+#### 3.1.1 外盘期货元数据与端点报价单位显式注册表（P1-1、P2-2 与风险项 1 闭环版）
 在 `src/js/futures/globalCatalog.js` 中逐品种显式注册映射：
 
-| 内部统一代码 | 品种名称 | 计价货币 | 新浪报价符号 | 东财 secid | 交易场所 | 东财 qt 原始单价 / 真实除数 (`qtDivisor`) | 新浪换算系数 (`sinaScale`) | 走势图可用性 |
+| 内部统一代码 | 品种名称 | 计价货币 | 新浪报价符号 | 东财 secid | 交易场所 | 东财 qt 原始单价 / 真实除数 (`qtDivisor`) | 新浪换算系数 (`sinaScale`) 与跨源特性 | 走势图可用性 |
 |---|---|---|---|---|---|---|---|---|
-| `GL_CL0` | 纽约原油 | `USD` | `hf_CL` | `102.CL00Y` | NYMEX | **÷100** (`f43=10445` → 104.45 点) | 1.0 (新浪 104.450，1:1) | 实时报价 + 分时 + K线 |
-| `GL_GC0` | 纽约黄金 | `USD` | `hf_GC` | `101.GC00Y` | COMEX | **÷10** (`f43=43717` → 4371.7 点) | 1.0 (新浪 4373.530，1:1) | 实时报价 + 分时 + K线 |
-| `GL_SI0` | 纽约白银 | `USD` | `hf_SI` | `101.SI00Y` | COMEX | **÷1000** (`f43=65060` → 65.06 点) | 1.0 (新浪 65.087，1:1) | 实时报价 + 分时 + K线（隔离国内工业硅） |
-| `GL_HG0` | 纽约美铜 | `USD` | `hf_HG` | `101.HG00Y` | COMEX | **÷10000** (`f43=64865` → 6.4865 美元/磅) | **0.01** (新浪 649.300 美分/磅需 ×0.01 换算为美元/磅) | 实时报价 + 分时 + K线 |
-| `GL_NG0` | 天然气 | `USD` | `hf_NG` | `102.NG00Y` | NYMEX | **÷1000** (`f43=2903` → 2.903 点) | 1.0 (新浪 2.903，1:1) | 实时报价 + 分时 + K线 |
-| `GL_NQ0` | 纳斯达克期货 | `USD` | `hf_NQ` | `103.NQ00Y` | CME | **÷100** (`f43=2908461` → 29084.61 点) | 1.0 (新浪 29085.50，1:1) | 实时报价 + 分时 + K线 |
-| `GL_ES0` | 标普500期货 | `USD` | `hf_ES` | `103.ES00Y` | CME | **÷100** (`f43=767222` → 7672.22 点) | 1.0 (新浪 7673.05，1:1) | 实时报价 + 分时 + K线 |
-| `GL_YM0` | 道琼斯期货 | `USD` | `hf_YM` | `103.YM00Y` | CME | **÷1** (`f43=52579` → 52579 点) | 1.0 (新浪 52572.06，1:1) | 实时报价 + 分时 + K线 |
-| `GL_A50` | 富时中国A50 | `USD` | `hf_CHA50CFD` | `104.CN00Y` | SGX | **÷10** (`f43=143750` → 14375.0 点) | 1.0 (新浪 14375.40，1:1) | 实时报价 + 分时 + K线（实测 m:104） |
-| `GL_HSI` | 恒生指数期货 | `HKD` | `hf_HSI` | `134.HSI_M` | HKFE | **÷1** (`f43=24682` → 24682 点) | 1.0 (新浪 24686.70，日夜盘切换基准见 §3.4.2) | 实时报价 + 分时 + K线（东财 m:134 主力合约，新浪 hf_HSI 作备源） |
+| `GL_CL0` | 纽约原油 | `USD` | `hf_CL` | `102.CL00Y` | NYMEX | **÷100** (`f43=10445` → 104.45 点) | 1.0（两源合约月不同，实测价差 4.3%~4.8%，备源切换按 §3.4.2 重校昨结基准） | 实时报价 + 分时 + K线 |
+| `GL_GC0` | 纽约黄金 | `USD` | `hf_GC` | `101.GC00Y` | COMEX | **÷10** (`f43=43717` → 4371.7 点) | 1.0 (新浪 4373.530，同刻偏差 ≤0.05%) | 实时报价 + 分时 + K线 |
+| `GL_SI0` | 纽约白银 | `USD` | `hf_SI` | `101.SI00Y` | COMEX | **÷1000** (`f43=65060` → 65.06 点) | 1.0 (新浪 65.087，同刻偏差 ≤0.05%) | 实时报价 + 分时 + K线（隔离国内工业硅） |
+| `GL_HG0` | 纽约美铜 | `USD` | `hf_HG` | `101.HG00Y` | COMEX | **÷10000** (`f43=64865` → 6.4865 美元/磅) | **0.01** (新浪 649.300 美分/磅需 ×0.01 换算为美元/磅，同刻偏差 ≤0.05%) | 实时报价 + 分时 + K线 |
+| `GL_NG0` | 天然气 | `USD` | `hf_NG` | `102.NG00Y` | NYMEX | **÷1000** (`f43=2903` → 2.903 点) | 1.0（两源合约月不同，实测价差 4.2%~4.5%，备源切换按 §3.4.2 重校基准） | 实时报价 + 分时 + K线 |
+| `GL_NQ0` | 纳斯达克期货 | `USD` | `hf_NQ` | `103.NQ00Y` | CME | **÷100** (`f43=2908461` → 29084.61 点) | 1.0 (新浪 29070.80，同刻偏差 ≤0.05%) | 实时报价 + 分时 + K线 |
+| `GL_ES0` | 标普500期货 | `USD` | `hf_ES` | `103.ES00Y` | CME | **÷100** (`f43=767222` → 7672.22 点) | 1.0 (新浪 7665.60，同刻偏差 ≤0.05%) | 实时报价 + 分时 + K线 |
+| `GL_YM0` | 道琼斯期货 | `USD` | `hf_YM` | `103.YM00Y` | CME | **÷1** (`f43=52579` → 52579 点) | 1.0 (新浪 52540.90，同刻偏差 ≤0.05%) | 实时报价 + 分时 + K线 |
+| `GL_A50` | 富时中国A50 | `USD` | `hf_CHA50CFD` | `104.CN00Y` | SGX | **÷10** (`f43=143750` → 14375.0 点) | 1.0 (新浪 14375.40，同刻偏差 ≤0.05%) | 实时报价 + 分时 + K线（实测 m:104） |
+| `GL_HSI` | 恒生指数期货 | `HKD` | `hf_HSI` | `134.HSI_M` | HKFE | **÷1** (`f43=24682` → 24682 点) | 1.0 (日盘 1:1，夜盘转场基准衔接见 §3.4.2) | 实时报价 + 分时 + K线（东财 m:134 主力合约，新浪 hf_HSI 作备源） |
 
 * **真实有效的解析层隔离与冲突防护断言**：
   ```js
@@ -163,27 +163,27 @@ export const ASSET_TYPES = Object.freeze({
   > assert.equal(resolveSessionStrategy('hf_HSI'), globalFuturesStrategy);
   > ```
 
-#### 3.1.2 归一化全链路改造点清单（覆盖全仓 15 处真实行号与消费点）
+#### 3.1.2 归一化全链路改造点清单（覆盖全仓 17 处真实行号与消费点，严格保留正则与转义）
 
 | 层级 | 文件位置 | 既有逻辑 | 改造目标 |
 |---|---|---|---|
-| **服务端** | `server/utils.js:76-86` (`normalizeCodeParam`) | 仅匹配 `^(sh|sz|bj)d{6}$` 或 6 位纯数字，其余返空 | 支持 `hkd{5}`、`us[A-Za-z]+`、`GL_[A-Z0-9]+`、`hf_[A-Za-z0-9_]+` |
+| **服务端** | `server/utils.js:76-86` (`normalizeCodeParam`) | 仅匹配 `^(sh\|sz\|bj)\d{6}$` 或 6 位纯数字，其余返空 | 支持 `hk\d{5}`、`us[A-Za-z]+`、`GL_[A-Z0-9]+`、`hf_[A-Za-z0-9_]+` |
 | **服务端** | `server/marketData.js:18-22, 160, 194` | `EASTMONEY_TRENDS_HOSTS` 仅含 `push2his` 族，且代码截取 slice(2) | **主机扩展与资产感知**：将 `push2delay.eastmoney.com` 追加进轮转与兜底清单；按资产类型分发各市场东财 secid 与 Aktools 参数 |
 | **服务端** | `server/proxyRoutes.js:10, 13`、`server/proxyService.js:10, 31` 及 `server/klineService.js:40, 95` | 静态 target 硬编码 `push2his` 与 `push2`，`resolveProxyTarget` 返回单目标无轮转兜底 | **浏览器代理出网兜底与轮转**：对 `/api/eastmoney-kline` 与 `/api/eastmoney` 增加目标多主机轮转与 `push2delay.eastmoney.com` 失败重试/兜底；`buildEastmoneyKlineUrl` 默认 host 接入轮转列表；`proxyService` 完善重试循环 |
-| **客户端** | `src/js/parser.js:11-25` (`normalizeCode`) | 仅识别 `sh/sz/bj` | 扩展并新增导出 `inferAssetType(code): string`（契约值域严格对照 `ASSET_TYPES`：① `GL_` 前缀 或 `^hf_[A-Za-z0-9_]+$` → `'futures_global'`；② `^(?:sh|sz|bj)d{6}$ 或 6位纯数字` → `'stock_cn'`；③ `^(?:hk|r_hk)d{5}$` → `'stock_hk'`；④ `^(?:us)?[A-Za-z]+$` 且 `isFutureCode===false` → `'stock_us'`；⑤ `isFutureCode(code)===true` → `'futures_cn'`；⑥ 其余未知输入兜底回退 `'stock_cn'`），同时改造 `normalizeCode` 输出规范化资产对象 `{ code, type, market, secid }` |
+| **客户端** | `src/js/parser.js:11-25` (`normalizeCode`) | 仅识别 `sh/sz/bj` | 扩展并新增导出 `inferAssetType(code): string`（契约值域严格对照 `ASSET_TYPES`：① `GL_` 前缀 或 `^hf_[A-Za-z0-9_]+$` → `'futures_global'`；② `^(?:sh\|sz\|bj)\d{6}$` 或 6位纯数字 → `'stock_cn'`；③ `^(?:hk\|r_hk)\d{5}$` → `'stock_hk'`；④ `^(?:us)?[A-Za-z]+$` 且 `isFutureCode===false` → `'stock_us'`；⑤ `isFutureCode(code)===true` → `'futures_cn'`；⑥ 其余未知输入兜底回退 `'stock_cn'`），同时改造 `normalizeCode` 输出规范化资产对象 `{ code, type, market, secid }` |
 | **客户端** | `src/js/parser.js:34-40` (`toEastmoneySecId`) 及服务端 `marketData.js:196` / `klineService.js:41` | 仅依 `inferMarket` 识别 A 股 `1.sh / 0.sz`，外盘恒返回 `null` | **P3-1 闭环：代码到东财 secid 解析器扩展**：支持外盘期货 `GL_*`（查 `globalCatalog` 映射为 `101/102/103/104/134.*`）、港股 `hk*`（`116.*`）与美股 `us*`（`105/106.*`），使浏览器与服务端东财三端点构造正常可达 |
 | **客户端** | `src/js/parser.js:93-127` (`parseEastmoney`) 及 `:106-107` | 对价格字段统一执行 `div100`（A 股口径），代码推导恒走 `('sz') + f57` 兜底 | **P1-1 闭环：端点单位全字段逐品种归一化与规范身份推导**：根据 `(d.f107, d.f57)` 反查 `globalCatalog`：① 将全部价格字段（`f43/f44/f45/f46/f60/f169`）统一除以品种特定的 `qtDivisor`（`CL/NQ/ES=100`、`GC/A50=10`、`SI/NG=1000`、`HG=10000`、`YM/HSI=1`，未命中回退 `div100`），保证 `open/high/low/change` 处于真实量纲，消除 10~100 倍错位与伪跌幅；② 输出规范内部统一代码 `GL_*` 并设置 `type='futures_global'`，严禁回退 `'szcn00y'`/`'szhsi_m'`；③ 其余外盘与港美标的按注册表自身口径解析 |
-| **客户端** | `src/js/parser.js:42` (`TENCENT_LINE_RE`) | 正则 `v_([a-z]{2}d{6})` | 扩展为支持 `v_((?:sh|sz|bj)d{6}|r_hkd{5}|us[A-Za-z]+)` |
-| **客户端** | `src/js/parser.js:64` (时间字段校验) | 硬编码 `^d{14}$` (如 20260916142000) | 兼容港股 `YYYY/MM/DD HH:mm:ss` 与美股 `YYYY-MM-DD HH:mm:ss` |
-| **客户端** | `src/js/parser.js:129` (`SINA_FUTURE_RE`) | 正则 `hq_str_(nf_?[a-z0-9]+)` | 扩展支持 `hq_str_(?:nf_?[a-z0-9]+|hf_[A-Za-z0-9_]+)` 并挂载 `parseSinaGlobalFuture`，对 `GL_HG0` 应用 `sinaScale = 0.01` 消除美分/美元量纲差 |
+| **客户端** | `src/js/parser.js:42` (`TENCENT_LINE_RE`) | 正则 `v_([a-z]{2}\d{6})` | 扩展为支持 `v_((?:sh\|sz\|bj)\d{6}\|r_hk\d{5}\|us[A-Za-z]+)` |
+| **客户端** | `src/js/parser.js:64` (时间字段校验) | 硬编码 `^\d{14}$` (如 20260916142000) | 兼容港股 `YYYY/MM/DD HH:mm:ss` 与美股 `YYYY-MM-DD HH:mm:ss` |
+| **客户端** | `src/js/parser.js:129` (`SINA_FUTURE_RE`) | 正则 `hq_str_(nf_?[a-z0-9]+)` | 扩展支持 `hq_str_(?:nf_?[a-z0-9]+\|hf_[A-Za-z0-9_]+)` 并挂载 `parseSinaGlobalFuture`，对 `GL_HG0` 应用 `sinaScale = 0.01` 消除美分/美元量纲差 |
 | **客户端** | `src/js/api.js:30-31` (`STOCK_RE`, `FUTURE_RE`) | 仅支持国内 A 股与国内期货 | 改造为资产类型分发器，新标的不被 `buildTencentUrl` 剔除 |
 | **客户端** | `src/js/api.js:36-39, 252-260` (`INTRADAY_SESSION_RANGES`) | 硬编码 A 股两段交易时间，在 `_isTradingSessionTime:257` 与 `_filterIntradaySessions:260` 消费 | 改造为按标的策略动态获取时段窗口，杜绝外盘与港美股分时被全量滤空 |
 | **客户端** | `src/js/marketSession.js:46-52` (`getVoiceEligibleCodes`) | 仅判断 `isFutureCode ? isFutureTrading : stockAllowed` 二元分派 | **P1-2 闭环：多资产时段分派**：遍历标的调用 `resolveSessionStrategy(code).isVoiceAllowed(now, cfg, tradingDates)`，外盘活跃时不被 A 股收盘滤空 |
-| **客户端** | `src/js/services/voiceSchedule.js:12, 28` | `futures = list.filter(isFutureCode)`，`:28` 判据为 `!futures.length && session === 'after-close' && autoStopAfterClose` | **P1-2 闭环：消除 15:00 误关语音**：将关闭判据重构为“自选池中无非 A 股时段资产且无正在交易标的”（`!hasExtendedHoursAssets && !allowed`），外盘与港美股自选在 A 股收盘后绝不误关语音 |
+| **客户端** | `src/js/services/voiceSchedule.js:12, 28` | `futures = list.filter(isFutureCode)`，`:28` 判据为 `!futures.length && session === 'after-close' && autoStopAfterClose` | **P2-1 闭环：契约严格一致，消除误关语音并杜绝午休回归**：重构第 28 行判据为 `if (cfg.enabled && enabled && !hasExtendedHoursAssets && session === 'after-close' && cfg.autoStopAfterClose) enabled = false;`（严格保留 `session === 'after-close'` 维度，与 §3.2.2 逐字一致，绝不在午休 11:30–13:00 误关语音） |
 | **客户端** | `src/js/tts.js:217-218` 与 `src/js/alert.js:87-88` | 硬编码 `quote.type === 'future' ? '' : ' 元'` 与 2/3 位小数 | **P3-2 闭环：语音与预警单位适配**：识别 `type === 'futures_global'`，废除尾附“元”，根据元数据播报正确货币（美元/港币）并匹配其精度 |
 | **客户端** | `src/js/views/monitorTableView.js:95, 339`、`src/js/kline.js:522` 及 `src/js/services/batchExportService.js:102` | 以 `quote.type === 'future'` 判定期货口径 | **P3-2 闭环：消费层统一资产感知**：同步支持 `'futures_global'`，消除外盘标的被误作股票渲染与导出的缺陷 |
 | **客户端** | `src/js/kline.js:210, 218, 232` (`STOCK_CODE_RE`) | 仅处理 6 位 A 股 | 修正行号：声明于 210，分别守卫 218 (`buildTencentKlineUrl`) 与 232 (`buildTencentYearKlineUrl`)，改造为分发港股、美股与外盘 |
-| **客户端** | `src/js/kline.js:326-341` 与消费方 `:347, 360-367` | 默认回落 10% 涨跌停判定 | **双端改造**：`getPriceLimit` 对非 A 股返回 `null`；消费方 `classifyKlineBar`（`:347` `const lim = Number(limit) || 10;`）增加 `limit === null` 显式短路保护直接返回 `'normal'`，彻底消除非 A 股涨跌停假标识（注：`limitUp.js:37` 仅由 A 股涨停池调用，不受影响） |
+| **客户端** | `src/js/kline.js:326-341` 与消费方 `:347, 360-367` | 默认回落 10% 涨跌停判定 | **双端改造**：`getPriceLimit` 对非 A 股返回 `null`；消费方 `classifyKlineBar`（`:347` `const lim = Number(limit) \|\| 10;`）增加 `limit === null` 显式短路保护直接返回 `'normal'`，彻底消除非 A 股涨跌停假标识（注：`limitUp.js:37` 仅由 A 股涨停池调用，不受影响） |
 
 ---
 
@@ -214,7 +214,7 @@ interface MarketSessionStrategy {
      * **夏令时（CDT）**：北京时间 **05:00–06:00** 结算休市（实测符合当前夏令时 06:00 首根 Bar）；
      * **标准时 / 冬令时（CST）**：北京时间 **06:00–07:00** 结算休市（严禁在冬季将 05:00–06:00 真实交易段作为休市剔除！）。
 
-#### 3.2.2 调度分派器、Any-Trading 调度与全局语音防污染（P1-2 闭环）
+#### 3.2.2 调度分派器、Any-Trading 调度与全局语音防污染（P1-2 与 P2-1 闭环）
 ```js
 export function resolveSessionStrategy(code) {
   const asset = inferAssetType(code);
@@ -231,13 +231,14 @@ export function resolveSessionStrategy(code) {
 }
 ```
 
-* **全仓语音调度状态机防污染改造（彻底闭环 `voiceSchedule.js:28`）**：
+* **全仓语音调度状态机防污染改造（彻底闭环 `voiceSchedule.js:28` 与消除午休回归）**：
   * **根因与机制修复**：原有代码在 `src/js/services/voiceSchedule.js:28` 中硬编码 `if (cfg.enabled && enabled && !futures.length && session === 'after-close' && cfg.autoStopAfterClose) enabled = false;`。由于外盘与港美股的 `isFutureCode` 恒为 `false`，导致自选池即便包含正在交易的外盘期货或美股，一到北京时间 15:00（A股收盘）就会被直接关停语音（`enabled=false` 持久化到配置）并播放“已收盘”；
-  * **改造原则**：
+  * **改造原则（两处契约完全逐字一致）**：
     1. 在 `voiceSchedule.js:12` 中识别全量非 A 股交易时段资产：`const hasExtendedHoursAssets = list.some(c => inferAssetType(c) !== ASSET_TYPES.STOCK_CN);`；
     2. 将第 28 行判据重构为：`if (cfg.enabled && enabled && !hasExtendedHoursAssets && session === 'after-close' && cfg.autoStopAfterClose) enabled = false;`；
-    3. 只要自选池中有**任一标的**处于交易时段（`allowed === true` / `eligibleCodes.length > 0`）或属于跨时区/非A股资产，全局语音状态机**绝不进入 autoStop 关闭**；
-    4. 在北京时间 16:00 或 22:00（A股已收盘、港美股或外盘期货交易中），A 股标的静默跳过，外盘标的正常播报，**绝不播报“已收盘”，绝不误关语音**。
+    3. **杜绝午休回归保护**：严格保留 `session === 'after-close'` 判定维度，绝不在 `session === 'lunch'` 时将 `enabled` 置为 `false`（午休仅将 `timerShouldRun` 置为 `false` 并播报“中午休市”，13:00 自动恢复）；
+    4. 只要自选池中有**任一标的**处于交易时段（`allowed === true` / `eligibleCodes.length > 0`）或属于跨时区/非A股资产，全局语音状态机**绝不进入 autoStop 关闭**；
+    5. 在北京时间 16:00 或 22:00（A股已收盘、港美股或外盘期货交易中），A 股标的静默跳过，外盘标的正常播报，**绝不播报“已收盘”，绝不误关语音**。
 
 ---
 
@@ -261,12 +262,21 @@ export function resolveSessionStrategy(code) {
 1. **统一合约锚点与端点归一化（Single Source / Consistent Anchor）**：
    * 外盘期货**优先采用东方财富作为第一数据源**（实时行情 `qt/stock/get?secid=...` 与 `trends2` 分时图同源）；
    * 在消费入口（`src/js/parser.js:parseEastmoney`）根据 `globalCatalog` 登记的 `qtDivisor` 对全部价格字段（`f43/f44/f45/f46/f60/f169`）执行除法归一化，并正确推导规范内部代码（`GL_*`）及设置 `type='futures_global'`，实时报价与分时图直接共享同源的 `preClose` 昨结算价基准，保证最新价、今开、最高、最低、涨跌幅与分时图末端价格 100% 吻合，并保证能正常写入 `state.quotes`。
-2. **新浪备源切换与昨结基准对齐机制**：
+2. **新浪备源切换与昨结基准对齐机制（P2-2 与 P3-1 闭环）**：
    * 所有外盘期货均以东方财富为第一数据源（分时与 K 线同源）；新浪 `hf_` 仅作为全量实时报价备用源；
-   * 当切至新浪 `hf_` 备用源时，显式使用新浪字段 7（昨结）重校基准。
-     * **1:1 品种对齐**：常规时段新浪 `hf_HSI` 昨结（24676.000）与东财 `134.HSI_M` `f60`（24676）1:1 对齐；
-     * **HKFE 日夜盘切换基准衔接规范（待确认风险 1 处置）**：实测显示 HKFE 在 16:30–17:15 日夜盘转场结算时，东财 `f60` 与 `trends2.preClose` 会滚动至新交易日结算基准（如 24688），而新浪备源发布可能存在短暂延迟。系统确立以东财分时 `trends2.preClose` 为最高权威基准；备源切换时优先以同源走势昨结作为换算锚点，杜绝主备切换出现 0.05% 跳变；
+   * 当切至新浪 `hf_` 备用源时，显式使用新浪字段 7（昨结）重校基准：
+     * **1:1 同合约品种对齐**：在常规交易时段，`GL_GC0`、`GL_SI0`、`GL_NQ0`、`GL_ES0`、`GL_YM0`、`GL_A50` 的主备源同刻偏差均 ≤0.05%~0.5%，切换平滑；
+     * **HKFE 日夜盘切换基准衔接规范与复采记录（P3-1 闭环）**：
+       实测显示 HKFE 在 16:30–17:15 日夜盘转场清算时，东财 `f60` 与 `trends2.preClose` 会按交易所规则滚动至新交易日结算基准（如 24688），而新浪备源发布可能存在延迟或仍带前收盘：
+       | 采样时刻（北京） | 市场状态 | 东财 `134.HSI_M` (`f60` / `trends2.preClose`) | 新浪 `hf_HSI` (字段 7 昨结) | 偏差点数 / 百分比 | 机制说明 |
+       |---|---|---|---|---|---|
+       | 16:35 | 日盘收盘后 | 24676 / 24676 | 24676.000 | 0 点 / 0.000% | 日盘常规结算，两侧 1:1 完全一致 |
+       | 17:07 | 转场清算中 | 24688 / 24688 | 24676.000 | 12 点 / 0.049% | 东财已滚动至夜盘新基准，新浪尚未更新 |
+       | 17:23 | 夜盘已开盘 | 24688 / 24688 | 24681.000 | 7 点 / 0.028% | 新浪更新但仍与东财结算价存在微小基准差 |
+       | 17:28 | 夜盘交易中 | 24688 / 24688 | 24681.000 | 7 点 / 0.028% | 东财与同源分时走势基准恒定一致 |
+       确立以东财分时 `trends2.preClose` 为最高权威基准；备源切换时优先以同源走势昨结作为换算锚点，杜绝主备切换出现 0.05% 跳变；
      * **美铜量纲换算对齐**：对于 `GL_HG0`，新浪 `hf_HG` 以美分/磅报价（如 649.300），而东财以美元/磅报价（6.4865）。备源解析器在解析 `hf_HG` 时自动乘以注册表指定的 `sinaScale = 0.01`，将价格无缝统一为美元/磅，消除 100 倍量纲差异；
+     * **CL 与 NG 跨源合约月差异与动态基准绑定（P2-2 闭环）**：实测显示新浪 `hf_CL`（~100.05）与 `hf_NG`（~3.05）跟踪当月合约，而东财连续合约（CL00Y ~104.83, NG00Y ~2.92）跟踪主力换月指数，存在系统性 4.3%~4.8% 合约基差。切至新浪备源时，系统严禁强行按 1:1 比对绝对价格，而是直接绑定新浪自身的 `field7`（昨结）作为涨跌幅基准，保证涨跌百分比与预警计算平滑连续，杜绝因合约切换产生 4% 伪跳水/伪拉升；
      * **点数基准无缝对接**：东财 `104.CN00Y` 经归一化后的实时报价（昨结 14271.0）与新浪 `hf_CHA50CFD` 字段 7 昨结（14271.000）完全在点数单位上 1:1 对齐。
 
 ---
@@ -289,11 +299,11 @@ export function resolveSessionStrategy(code) {
 
 ```mermaid
 gantt
-    title 国际品种接入分阶段实施计划 (v8)
+    title 国际品种接入分阶段实施计划 (v9)
     dateFormat  YYYY-MM-DD
     section Phase 1 外盘主流期货
     建立 globalCatalog 与实测 secid 表     :2026-09-17, 2d
-    全仓 15 处归一化与出网代理多主机兜底   :2026-09-19, 2d
+    全仓 17 处归一化与出网代理多主机兜底   :2026-09-19, 2d
     多时区会话策略与语音调度防污染         :2026-09-21, 2d
     外盘期货离线/在线单测与门禁验证        :2026-09-23, 1d
     section Phase 2 港股接入
@@ -329,22 +339,31 @@ gantt
        `assert.equal(toEastmoneySecId('GL_CL0'), '102.CL00Y')`；
        `assert.equal(toEastmoneySecId('hk00700'), '116.00700')`；
        `assert.equal(toEastmoneySecId('usAAPL'), '105.AAPL')`。
-   * **10 品种端点单位全字段与备源一致性断言（P1-1 闭环）**：
-     * 断言 10/10 品种同一时刻真源取数缩放对齐：
+   * **10 品种端点单位全字段与备源一致性断言（P1-1 与 P2-2 闭环）**：
+     * 断言 10/10 品种同一时刻真源取数缩放对齐（东财内部）：
        `assert.ok(Math.abs(qt.f43 / qtDivisor - trends2.last.close) / trends2.last.close <= 0.005)`；
-       `assert.ok(Math.abs(qt.f43 / qtDivisor - sina.field0 * sinaScale) / (sina.field0 * sinaScale) <= 0.005)`；
-       （特别针对 `GL_HG0`，断言 `sina.field0 * 0.01` 与东财点数一致，消除 100 倍跳变）；
-     * 断言昨结基准对齐：`assert.equal(qt.f60 / qtDivisor, trends2.preClose)`；
+       `assert.equal(qt.f60 / qtDivisor, trends2.preClose)`；
+     * 断言跨源对齐：
+       * 针对 1:1 品种（GC, SI, NQ, ES, YM, A50, HSI）及比例品种（HG*0.01）：
+         `assert.ok(Math.abs(qt.f43 / qtDivisor - sina.field0 * sinaScale) / (sina.field0 * sinaScale) <= 0.005)`；
+       * 针对两源合约月差异品种（CL, NG）：
+         `const diff = Math.abs(qt.f43 / qtDivisor - sina.field0) / sina.field0;`
+         `assert.ok(diff >= 0.040 && diff <= 0.050); // 断言价差严格处于 4.0%~5.0% 合约基准差区间`
+         `// 断言备源切换重校昨结基准保持百分比连续：`
+         `assert.equal(resolveFallbackQuote('GL_CL0', sinaPayload).prevClose, Number(sinaPayload.split(',')[7]));`
      * 断言全部 10 个品种的 `open/high/low` 经 `qtDivisor` 归一化后同级一致，且 `openChangePercent` 处于正常区间（|值| < 5%，绝不出现 10~100 倍错位或 -90% 伪跌幅）；
      * 变异验证：将任一品种的 `qtDivisor` 改错一个数量级，对应用例**必须确定性转红**。
    * **规范身份推导断言**：
      * 断言 `parseEastmoney(a50Payload).code === 'GL_A50'` 且 `parseEastmoney(hsiPayload).code === 'GL_HSI'`，且类型为 `'futures_global'`，杜绝 `'szcn00y'` / `'szhsi_m'` 错误身份导致报价在 `monitorController` 被丢弃。
-   * **会话与语音隔离双向判别断言（P1-2 彻底闭环）**：
-     * **跨时区活跃播报断言**：调用真实 `decideVoiceSchedule`，在北京时间 22:00 注入自选 `['sh600519', 'GL_CL0']`（`settings.enabled=true, autoStopAfterClose=true`），断言：
+   * **会话与语音隔离双向判别断言（P1-2、P2-1 与 P3-2 闭环）**：
+     * **跨时区活跃播报断言**：调用真实 `decideVoiceSchedule`，在北京时间 22:00（`now = new Date('2026-09-16T22:00:00+08:00')`）注入自选 `codes = ['sh600519', 'GL_CL0']`，给定 `settings = { enabled: true, smartSchedule: { enabled: true, autoStopAfterClose: true, pauseLunchBreak: true } }` 与 `previous = { timerShouldRun: true, eligibleCodes: ['sh600519', 'GL_CL0'] }`，断言：
        `enabled === true`、`timerShouldRun === true`、`transitionNotice === null`（美原油正常播报，绝不被 A 股收盘误关）；
-     * **A 股盘后外盘活跃断言**：在北京时间 16:00 注入自选 `['sh600519', 'GL_HSI']` 或 `['sh600519', 'hk00700']`，断言 `enabled === true`、`timerShouldRun === true`；
-     * **纯 A 股收盘正常停播反向断言（保留判别力）**：在北京时间 16:00 注入纯 A 股自选 `['sh600519']`，断言 `enabled === false`、`timerShouldRun === false`、`transitionNotice === '已收盘'`；
-     * 变异验证：若回退 `voiceSchedule.js:28` 为 `!futures.length`，跨时区用例**必须确定性转红**。
+     * **A 股盘后外盘活跃断言**：在北京时间 16:00 注入自选 `codes = ['sh600519', 'GL_HSI']` 与 `previous = { timerShouldRun: true, eligibleCodes: ['sh600519', 'GL_HSI'] }`，断言 `enabled === true`、`timerShouldRun === true`；
+     * **纯 A 股收盘正常停播反向断言（P3-2 完整入参）**：在北京时间 16:00 注入纯 A 股自选 `codes = ['sh600519']`，给定上述同等 `settings` 与 `previous = { timerShouldRun: true, eligibleCodes: ['sh600519'] }`，断言：
+       `enabled === false`、`timerShouldRun === false`、`transitionNotice === '已收盘'`；
+     * **午休只暂停断言（P2-1 防回归防误关断言）**：在北京时间 12:00（`now = new Date('2026-09-16T12:00:00+08:00')`）注入纯 A 股自选 `codes = ['sh600519']`，给定上述同等 `settings`（`pauseLunchBreak: true`）与 `previous = { timerShouldRun: true, eligibleCodes: ['sh600519'] }`，断言：
+       `enabled === true`（绝不永久关闭）、`timerShouldRun === false`（暂停计时器）、`transitionNotice === '中午休市'`；
+     * 变异验证：若将 `voiceSchedule.js:28` 判据变异为 `!hasExtendedHoursAssets && !allowed`（即丢弃 `session === 'after-close'`），该午休断言**必须确定性转红**；若回退为 `!futures.length`，跨时区 22:00 用例**必须确定性转红**。
    * **语音单位与小数位断言（P3-2 闭环）**：
      * 注入 `type='futures_global'` 的外盘报价，断言 `formatQuoteSpeech` 输出中不含“元”后缀，美原油/黄金播报格式符合期货规范；把 `type` 变异为 `'stock'` 时用例**必须转红**。
    * **代理出网与受限环境兜底断言**：

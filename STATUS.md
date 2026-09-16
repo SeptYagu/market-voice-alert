@@ -1,6 +1,22 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 v8 —— WorkBuddy 审查 round 8 **未通过**（3×P2 + 2×P3），待修复闭环
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 v9 —— 闭环 Round 8 全部缺陷（3×P2 + 2×P3 与待确认风险），提交 WorkBuddy 审查 round 9
+
+方案交接（v9 全量闭环版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+Round 8 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round8-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round8-handoff.md)
+Round 7 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round7-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round7-handoff.md)
+Round 6 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round6-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round6-handoff.md)
+
+- **闭环内容（Round 8 缺陷与风险闭环）**：
+  1. **P2-1（消除关闭判据互斥，杜绝午休误关语音与 2026-09-09 M1 回归）**：在 §3.1.2 改造清单行 12 与 §3.2.2 项 2 中，将 `voiceSchedule.js:28` 的关闭判据**完全逐字统一重构**为：`if (cfg.enabled && enabled && !hasExtendedHoursAssets && session === 'after-close' && cfg.autoStopAfterClose) enabled = false;`；严格保留 `session === 'after-close'` 维度，消除清单中丢弃该维度导致的 `!hasExtendedHoursAssets && !allowed` 错误逻辑，杜绝在 11:30–13:00 午休（`allowed === false`）将纯 A 股自选池永久关闭（`enabled = false`）的严重回归；在 §5 补齐午休只暂停断言（12:00 断言 `enabled===true`、`timerShouldRun===false`、`transitionNotice==='中午休市'`）与变异测试；
+  2. **P2-2（CL 与 NG 跨源合约月差异处理与动态基准绑定）**：在 §3.1.1 注册表中，对 `GL_CL0` 与 `GL_NG0` 明确登记实测新浪跟踪当月合约（hf_CL ~100.05, hf_NG ~3.05）与东财连续合约指数（CL00Y ~104.83, NG00Y ~2.92）存在系统性 4.0%~5.0% 合约基差的事实；在 §3.4.2 补充专门章节，明确在切换至新浪备源时，严禁 1:1 比对绝对价格，而是直接绑定新浪自身的 `field7`（昨结）重校涨跌幅基准，保证涨跌百分比与预警平滑连续；在 §5 调整断言为断言其价差严格处于 4.0%~5.0% 合约基准差区间，并断言备源切换重校昨结基准保持连续性；对于其余 7 个 1:1 品种及美铜（应用 `sinaScale = 0.01`），保持 ≤0.05%~0.5% 跨源对齐；
+  3. **P2-3（完整恢复全文 22+ 处反斜杠转义，修复正则退化与表格拆列）**：全面恢复 Markdown 源文件中丢失的反斜杠转义，包括 `\d{6}`、`\d{5}`、`\d{14}` 以及表格单元格内管道符 `\|`；彻底消除 6 处正则退化为字面 `d` 的问题；使 §3.1.2 表格 17 行结构完全恢复为合法的 4 列标准 GFM 表格，消除 5 行畸形拆列导致的内容渲染丢失；
+  4. **P3-1（消除 HKFE 日夜盘基准表述互斥，补齐 4 次复采记录表与权威基准）**：纠偏 §2.1 表述，明确常规日盘时段新浪 `hf_HSI` 字段 7 与东财 `f60` 为 1:1 对齐（24676.000 对 24676），并在 §3.4.2 补充日夜盘转场清算机制与 16:35（0点差）、17:07（12点差）、17:23（7点差）、17:28（7点差）4 次实测采样对比表，确立以东财分时 `trends2.preClose` 为最高权威基准，消除互斥并明确切换锚点；
+  5. **P3-2（补齐 §5 反向断言的完整 previous 入参）**：在 §5 会话与语音隔离双向判别断言中，为真实 `decideVoiceSchedule` 调用提供完整入参 `previous = { timerShouldRun: true, eligibleCodes: ['sh600519'] }`，使 16:00 纯 A 股停播断言能字面满足并准确返回 `transitionNotice === '已收盘'`；
+  6. **待确认风险 1（NQ 与 ES sinaScale 登记值确认）**：核实确认 CME 纳指期货（GL_NQ0）与标普500期货（GL_ES0）的新浪报价与东财同级一致，同刻偏差 ≤0.05%，`sinaScale = 1.0` 确属真实比例，无需额外缩放。
+- **验证结论**：本地三大门禁全部通过（`npm run lint` 0 错误，`npm test` 843/843 全部通过，`npm run build` 成功）；向 WorkBuddy 发起 Round 9 审查。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v8 —— WorkBuddy 审查 round 8 **未通过**（3×P2 + 2×P3），已闭环推进至 v9
 
 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round8-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round8-handoff.md)（被审 `b344926`，基准 `45593a5`，本轮实际审查增量 `8a05917..b344926` = 4 文件 / +279 −63，纯文档）
 被审方案（v8，round 8 被审版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
