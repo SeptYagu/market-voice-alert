@@ -1,14 +1,20 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：WorkBuddy 审查 round 1 缺陷闭环（P2×3 修复完成，提交 round 2 复审）
+## 2026-09-16 当前状态：WorkBuddy 审查 round 2 **全面审查通过**（0 缺陷）—— 正式交付
 
+审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round2-handoff.md)
 交接文档：[`docs/handoff/2026-09-16-chart-date-format-and-volume-color-handoff.md`](docs/handoff/2026-09-16-chart-date-format-and-volume-color-handoff.md)
 Round 1 审查报告：[`docs/handoff/2026-09-15-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-15-workbuddy-code-review-round1-handoff.md)
 
-- **Round 1 审查指出的 3 项 P2 缺陷已全面闭环**：
-  1. **P2-1（`isVolumeBarUp` null 昨收→恒红）**：增加 `pc > 0` 严格守卫（`Number.isFinite(pc) && pc > 0 && close > pc`），彻底消除 `Number(null) === 0` 导致首根阴线/平盘误判为红柱的退化漏洞，与 `classifyKlineBar` 保持语义严格一致。
+- **被审 HEAD**：`1d08f60`　**基准**：`a334468`　**复审结论**：**全面通过**（未发现任何 P0 / P1 / P2 / P3 缺陷，双智能体对抗审查正式闭环完成）。
+- **Round 1 审查指出的 3 项 P2 缺陷已实测全面闭环**：
+  1. **P2-1（`isVolumeBarUp` null 昨收→恒红）**：增加 `pc > 0` 严格守卫（`Number.isFinite(pc) && pc > 0 && close > pc`），无效昨收（null/-5/0/NaN/undefined/'abc'）配合阴线/平盘全部判绿，字符串数字昨收正常可用，首根多路径行为全部正确。
   2. **P2-2（分时浮层丢失 HH:mm，回归）**：`chart.js:666` `renderIntradayDetail` 显式传参 `_detailTime(time, '1m')`，恢复分时图悬停浮层时间显示 `YYYY-MM-DD HH:mm`（如 `2026-09-11 10:30`）。
   3. **P2-3（测试假通过）**：重写 `tests/kline.test.js` 假阴真阳用例，补齐 9.09 真实昨收（8.76），将一字涨停与假阴真阳拆分为独立样本；新增首根无昨收时阴线/平盘判绿断言；`tests/chart.test.js` 新增分时图浮层 DOM 包含 `HH:mm` 断言。
+- **测试判别力验证**：
+  - 变异 M-A（移除 `pc > 0` 守卫）：3 条新增守卫断言确定性变红拦截。
+  - 变异 M-B（浮层传回 `'1d'`）：分时浮层 DOM 断言确定性变红拦截。
+  - 归因核验：一字涨停红柱由 `close 9.64 > pc 8.76` 驱动，不再依赖 `null -> 0` 路径。
 - **全量门禁实跑**：`npm run lint` **0 错误 0 警告** → `npm test` **843/843 全部通过** → `npx playwright test e2e/chart.spec.js` **12/12 全部通过** → `npm run build` 成功。
 
 ## 2026-09-15 历史状态：独立代码审查 round 1（图表日期格式与成交量红绿规则修复）**未通过**（P2×3）
