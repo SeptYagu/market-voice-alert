@@ -1,5 +1,15 @@
 # STATUS.md - 项目状态
 
+## 2026-09-15 当前状态：独立代码审查 round 1（图表日期格式与成交量红绿规则修复）**未通过**（P2×3）
+
+审查文档：[`docs/handoff/2026-09-15-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-15-workbuddy-code-review-round1-handoff.md)
+
+- 被审 HEAD：`46a33ca`（基准 `a334468`）。门禁全绿不构成审查通过；本轮通过 node 直跑构造反例证伪 3 项，均为 P2：
+- **P2-1（`isVolumeBarUp` null 昨收→恒红）**：`Number(null)===0` 有限，判据 `close > pc` 退化为 `close > 0`，数据集首根成交量柱阴线/平盘也恒为红（`chartRowController.js:95` 批量路径与实时单项路径均触发）；`classifyKlineBar:344` 有 `pc <= 0` 守卫而 `isVolumeBarUp` 缺失，语义不一致。复现：`isVolumeBarUp({open:10,close:9.5}, null) === true`。
+- **P2-2（分时浮层丢失 HH:mm，回归）**：`chart.js:666` `renderIntradayDetail` 调 `_detailTime(time)` 默认 `'1d'`，分时点为数值 chart-seconds（`parser.js:304`），浮层由旧版 `2026-09-11 10:30` 回归为纯日期；修复为传 `'1m'`。
+- **P2-3（测试假通过）**：`kline.test.js:280-287` 首根一字涨停断言因缺陷 1 的 `null→0` 路径而「因错误原因通过」，用例未提供真实昨收（8.76），对缺陷 1 零判别力；须随缺陷 1 修复同步改写并新增首根无昨收守卫断言。
+- 修复顺序：缺陷 1 → 缺陷 3 → 缺陷 2；复审验收标准见审查文档第四节。
+
 ## 2026-09-16 当前状态：图表时间轴中国习惯格式化与成交量红绿规则修复 —— 准备提审
 
 交接文档：[`docs/handoff/2026-09-16-chart-date-format-and-volume-color-handoff.md`](docs/handoff/2026-09-16-chart-date-format-and-volume-color-handoff.md)

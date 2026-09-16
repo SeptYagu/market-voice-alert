@@ -4,6 +4,7 @@
 
 > **当前最新状态速读**：
 > - 状态综述：查阅项目根目录 [`STATUS.md`](../../STATUS.md)
+> - 最新审查：[`2026-09-15-workbuddy-code-review-round1-handoff.md`](2026-09-15-workbuddy-code-review-round1-handoff.md)（独立审查 `46a33ca`，图表日期格式与成交量红绿修复 round 1：**未通过**，P2×3——① `isVolumeBarUp` 对 null 昨收缺 `pc>0` 守卫致数据集首根柱恒红；② 分时浮层 `_detailTime(time)` 漏传 `'1m'` 丢失 HH:mm（回归）；③ 假阴真阳用例首根断言因 ① 而假通过，对缺陷零判别力）
 > - 最新缺陷修复：[`2026-09-16-chart-date-format-and-volume-color-handoff.md`](2026-09-16-chart-date-format-and-volume-color-handoff.md)（图表时间轴年-月-日中国习惯格式化与成交量红绿规则修复：① 去除日K线无意义分钟 00:00，注册 zh-CN / yyyy-MM-dd 本土化时间轴十字线；② 修复高开低走假阴线收涨[如 9.11 新农开发]与一字涨停被误染为绿柱缺陷，导出 isVolumeBarUp 并补全实时行情 prevClose；门禁 841/841 + 12/12 + lint 0 + build 成功）
 > - 前序功能交付：[`2026-09-15-close-snapshot-handoff.md`](2026-09-15-close-snapshot-handoff.md)（停播提示后补播「最后一轮选中字段」：`已收盘`/`中午休市`/期货日夜空档均覆盖，只播用户勾选字段——只勾价格即「已收盘，1272.75元」；快照集合取上一拍 `eligibleCodes` 并按当前订阅过滤；不加开关。11 条断言在改动前全红、E2E 变异验证；门禁 837/837 + 75/75 + lint 0 + build 成功）
 > - 前序功能交付：[`2026-09-15-voice-dedupe-toggle-handoff.md`](2026-09-15-voice-dedupe-toggle-handoff.md)（语音播报新增「相同报价不重复播报」开关，作为交易时段那一排第 5 个开关；含 1 项真实接线缺陷的发现与修复——视图契约 `(key, checked)` 与单参数 handler 错位导致"点开关没反应"，仅 E2E 可覆盖；判别力与变异验证齐备，门禁 826/826 + 75/75 + lint 0 + build 成功）
