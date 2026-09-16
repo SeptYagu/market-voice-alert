@@ -1,6 +1,23 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入可行性调研与架构方案已建立 —— 待审查
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 —— WorkBuddy 审查 round 1 **未通过**（6×P2 + 4×P3），待修复闭环
+
+审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md)（被审 `a2b8791`，基准 `45593a5`）
+被审方案：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+
+- **判定**：未通过。方案对公网数据源的"实测"结论经现场复核出现**核心证伪**，须先修接口契约再进入实现排期。
+- **P2 缺陷（6）**：
+  1. 东财 secid 规则 `102.${symbol}00Y` 不成立——外盘期货按交易所分市场（`m:101` COMEX 金属 `GC00Y/SI00Y/HG00Y`、`m:102` NYMEX 能源 `CL00Y`、`m:103` 指数利率 `ES00Y/NQ00Y`），Phase 1 清单 9 品种中 8 个按原规则取数为空；
+  2. `SI0` 与既有广期所工业硅标识冲突（`isFutureCode('SI0')===true` → 静默误路由），`CHA500` 为无效代码（有效为 `CHA50CFD`）；
+  3. 分时/K线管线硬编码 A 股窗口 `INTRADAY_SESSION_RANGES=[09:15-11:30],[13:00-15:00]` 与北京日期过滤未纳入改造面 → 美股 391 根（21:30-04:00）全部被滤空、外盘/港股分时断裂，§3.3"Unix 时间戳天然不受跨日限制"结论被证伪；
+  4. 会话策略缺少"代码→策略"分派契约；既有二元分派与单例全局语音调度状态机才是污染点，混合自选在 22:00 会命中 `after-close` → 播报"已收盘"并永久关闭语音（CME 当时正在交易）；
+  5. 服务端与客户端共 ≥8 处代码形态归一化（含 `server/utils.js:78`、`server/marketData.js:160/196`）未纳入改造面 → 新资产请求在服务端即被判空，`TENCENT_LINE_RE` 对 `v_r_hk00700`/`v_usAAPL` 实测匹配数为 0；
+  6. 报价源（新浪 `hf_CL`）与图表源（东财 `102.CL00Y`）指向不同合约，同时刻实测各档位偏离约 4.97%–5.1% 且昨结基准互斥。
+- **P3 缺陷（4）**：恒指期货无路线图落点且会按 `futures_global` 播报"美元"（实为港币）；`getPriceLimit` 对港/美/外盘返回 10% 会画出不存在的涨跌停带；性能红线"不显著膨胀"与"<150KB"自相矛盾（现值 367KB，+41%）；§2.1"持仓量字段完备"对 Phase 1 的 CME/ICE 品种不成立（index 9 实测恒为 0）。
+- **已确认通过项**：`hf_` 15 字段映射（含 index 9 持仓量）经 8 品种实测逐位正确；港/美/外盘时段算术正确；`105/106/116` secid 与美股 391 根分时实测可复现；843/75 门禁基数与仓库一致。
+- **复审重点**：Phase 1 全品种 `trends2`+`kline` 非空探测、`SI0` 冲突断言、固定时钟下混合自选的 `getMarketSession`/`resolveVoiceScheduleAction` 行为。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入可行性调研与架构方案已建立（前序，已被上条审查替代）
 
 方案交接：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
 前序审查：[`docs/handoff/2026-09-16-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round2-handoff.md)（全面审查通过交付）
