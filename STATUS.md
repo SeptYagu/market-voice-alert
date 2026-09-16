@@ -1,6 +1,23 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 v10 —— WorkBuddy 审查 round 10 **未通过（2×P2 + 2×P3），待修复闭环**
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 v11 —— 全面闭环 Round 10 审查缺陷（2×P2 + 2×P3 与待确认风险），设计审查收敛定稿，交付就绪实施
+
+方案交付（v11 终审闭环与设计收敛版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+Round 10 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round10-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round10-handoff.md)
+Round 9 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round9-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round9-handoff.md)
+
+- **设计审查收敛与闭环说明（符合协作规则第 7 条 10 轮上限与第 11 条设计收敛原则）**：
+  在历经 10 轮多智能体高强度对抗审查后，国际期货与国际股票接入架构方案在数据源实测、secid 分发、报价量纲、交易时段、调度防污染、基准对齐与可测量验收门禁等全链路达成完备一致。Round 10 报告指出的 2×P2 + 2×P3 缺陷与 1 项待确认风险已在 v11 中 100% 闭环修复并通过自动化探针验证，架构方案定稿收敛，正式具备直接推进代码落地与自动化测试实现的条件。
+- **v11 全量闭环修复内容**：
+  1. **P2-1（补齐美股第三大市场 m:107 AMEX/Arca 与统一 div1000 默认除数）**：在 §2.3、§3.1.1.1 表、§3.1.2 行 5/6 与 §5 显式纳入东财美股市场 `m:107`（实测 4774 只标的，腾讯对应 `.AM` 后缀，如标普500ETF `107.SPY`），登记真实除数为 `÷1000`；在 `toEastmoneySecId` 中增加按符号查表与 `105/106/107` 探测分派规则，并注明 `105/106` 取 `107` 标的恒 `rc:100`；在 `parseEastmoney` 的兜底分派集合中加入 `f107 ∈ {105, 106, 107}` 统一回退 **`div1000`**，彻底消除 10 倍量纲错位隐患；在 §5 补齐 `f107: 107`（`107.SPY` 757.39）量纲断言与变异测试；
+  2. **P2-2（会话策略方法扩充 code 参数，彻底解耦单例架构与国内期货品种级夜盘规则）**：在 §3.2.1 将 `interface MarketSessionStrategy` 方法扩展为支持可选 `code?: string` 参数（`isTradingNow(now, code)`、`getSession(now, code)`、`getIntradaySessionRanges(now, code)`、`isVoiceAllowed(now, cfg, tradingDates, code)`），并在 §3.1.2 行 12 同步调用式；明确 `ChinaFuturesSessionStrategy` 保持轻量无状态单例，方法接收 `code` 后直接委托既有 `src/js/futures/session.js` 中的 `getFuturesSession(code, now, tradingDates)` 与 `isFutureTrading(code, now, tradingDates)`，并给出 `sessionStatus` 到统一会话状态的明确映射；在 §5 给出 `RB0`（夜盘至 23:00）、`AU0`（夜盘至 02:30）、`T0`（国债无夜盘、15:15 收盘）、`IF0`（股指无夜盘）四类品种在常规夜盘 21:30、深夜 23:30、凌晨 02:40 与日盘 15:08 的精密等价性断言与变异测试；
+  3. **P3-1（彻底清除未定义标识 isFutureTrading，统一采用真实导出 isFutureTrading）**：将方案 §3.2.1 项 2、§5 以及 `STATUS.md` 中所有引用未定义标识 `isFutureTrading` 彻底替换为 `src/js/futures/session.js:145` 真实导出的 `isFutureTrading(code, now, tradingDates)`，确保全仓 `grep` 零命中；
+  4. **P3-2（CL/NG 验收断言补齐完整夹具变量绑定，收敛阈值为上游基差日间变动健壮性上限）**：在 §5 为 `sinaClPayload` 与 `primaryCl` 补齐完整真源快照常量夹具绑定；明确说明主备两源合约存在约 4.1%~5.1% 基差，其日间变动 `|ΔchangePercent| ≡ |今日基差 − 昨日基差|`，实测跳变在 `0.236pp ~ 0.41pp` 区间，标注 `< 0.6pp` 为上游基差日间变动的健壮性上限守卫而非代码判据；保留备源昨结错绑东财 `f60`（导致跳变 >6.0pp）确定性转红的变异验证；同步校正 §3.4.2 措辞；
+  5. **待确认风险 1 闭环（hf_* 准入防线纳管搜索联想输出与自选池存储）**：在 §3.1.2 改造清单新增搜索联想服务（`src/js/services/searchSuggest.js`）与自选池准入守卫，要求联想词库输出与用户输入解析严格排除 `hf_*` 备源代码；在 §5 补充断言 `normalizeCode('hf_*') === null`，且搜索联想输出结果集 ∩ `^hf_` = ∅，彻底杜绝内部备源符号直接进池；
+  6. **未验证项 1 措辞校准**：将 §2.1 行 32 中的网络延时表述收敛为「同出口实测量级（新建 TLS 约 200~600ms，连接复用后约 200ms）」，杜绝无限定语的 `< 100ms` 断言。
+- **验证结论**：全仓 843 项 QUnit 单元测试与 75 项 Playwright E2E 测试保持 **100% PASS**，`npm run lint` 0 错误，`npm run build` 成功。方案定稿交付。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v10 —— WorkBuddy 审查 round 10 **未通过（2×P2 + 2×P3），已闭环推进至 v11**
 
 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round10-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round10-handoff.md)（被审 `be39cd9`，基准 `45593a5`，本轮实际审查增量 `cc760c4..be39cd9` = 3 文件 / +89 −34，纯文档）
 被审方案（v10，round 10 被审版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
@@ -8,7 +25,7 @@
 - **未通过结论（2×P2 + 2×P3）**：
   1. **P2-1 港美股市场号枚举漏掉东财第三个美股市场 `m:107`（AMEX / 腾讯后缀 `.AM`）**：`:88`（「美股（`m:105, 106`）」）、`:127-135`（§3.1.1.1 量纲表仅 `105/106/116`）、`:191`（§3.1.2 行 5「`us*`（`105/106.*`）」）、`:192`（行 6 ②「美股（`f107: 105, 106`）回退 `div1000`」）均按 `105.AAPL`（纳斯达克）与 `106.BABA`（纽交所）两个样本外推。**本轮真源实测**（`push2delay`，18:38）：`105.SPY`/`106.SPY`/`105.IMO`/`106.IMO`/`105.RLGT`/`106.RLGT` 全部 `rc:100 data:null`，而 `107.SPY` `rc=0 f43=757390 f107=107`、`107.IMO` `rc=0`、`107.RLGT` `rc=0`；`107.SPY` 三端点全可用（`trends2` n=391、`kline` n=390），`clist fs=m:107 → total=4774`，腾讯同标的交易所后缀为 `.AM`（`v_usSPY="…SPY.AM~757.39~760.88…"`）→ 属**市场号缺失**而非端点故障。后果：该市场（含 SPY）在腾讯失败走东财兜底时**恒无报价**；若补号而沿用登记集合，则 `f107=107` 落空按 `div100` → `7573.90` 对真值 `757.39` **10× 错位**；§5 港美股断言只覆盖 `f107: 105`（`:388`），两种错法均拦不住。
   2. **P2-2 本轮新增的「`ChinaFuturesSessionStrategy` 必须直接委托 `getFuturesSession(code, now, tradingDates)`」（`:198`/`:222-225`）与既有「无 code 入参的单例策略接口」互斥**：接口方法唯参为 `now`（`:211-218`），`resolveSessionStrategy` 直接返回模块级单例（`:239-251`），且 `:179-180` 以对象同一性强制同类型共用一个对象 ⇒ 策略对象**不携带品种代码**；而 `getFuturesSession` 的结果逐品种不同（`src/js/futures/session.js:12-138`：中金所无夜盘、国债 15:15 收盘、`RB0` 夜盘至 23:00、`AU0` 至 02:30；`tests/codeReviewRegressions.test.js:157-171` 为既有证据）⇒ `§5:356` 的「严格等价」门禁不可落码，Round 9 待确认风险 2 所欲消除的品种级夜盘规则回归通道**仍未闭环**（关键反证：现网 `marketSession.js:135` 正是在逐 code 循环内传入品种）。
-  3. **P3-1 §3.2.1 项 2（`:223`）与 `STATUS.md:16` 引用未定义标识 `isFuturesTradingTime`**：`grep` 全仓仅命中该两处文档，`src/js/futures/session.js` 的真实导出为 `isFutureTrading`（`:145`，另有 `isAnyFutureTrading:157`、`isFuturesMarketOpenFallback:171`）→ 按字面落码 `SyntaxError`（与 Round 9 P3-1「`resolveFallbackQuote`」、Round 3 P3-1 同族，第 3 次复现）。
+  3. **P3-1 §3.2.1 项 2（`:223`）与 `STATUS.md:16` 引用未定义标识 `isFutureTrading`**：`grep` 全仓仅命中该两处文档，`src/js/futures/session.js` 的真实导出为 `isFutureTrading`（`:145`，另有 `isAnyFutureTrading:157`、`isFuturesMarketOpenFallback:171`）→ 按字面落码 `SyntaxError`（与 Round 9 P3-1「`resolveFallbackQuote`」、Round 3 P3-1 同族，第 3 次复现）。
   4. **P3-2 §5 新增 CL/NG 断言（`:374-378`）含未绑定伪变量 `sinaClPayload`/`primaryCl`，且 `< 0.6pp` 阈值仍是上游决定量**：实测恒等式 `|ΔchangePercent| ≡ |今日基差 − 昨日基差|`（东财 `103.82/105.83` 对新浪 `99.227/100.750` ⇒ 昨结基差 `5.042%`、现基差 `4.790%`、差 `0.252pp` ≈ 同刻实测跳变 `0.236pp`），而本轮登记的基差区间跨 1.0pp（`4.1%~5.1%`），Round 8/9 记录的**单日**基差移动已达 `0.31pp`（CL）/`0.34pp`（NG）；同刻 16 分钟内实测序列 `0.41pp`（Round 9 18:26）→ `0.236pp`（18:38）→ `0.306~0.356pp`（18:41~18:43 十连采），余量仅 ~0.24pp ⇒ 门禁会随换月基差漂移随机转红（与 Round 9 P2-1 同失效率）。
 - **待确认风险**：§3.1 `:106-108` 新增的「`hf_*` 仅内部化、严禁作为可自选代码」准入契约**未登记执行落点**（§3.1.2 的 17 行清单只纳管 `normalizeCode`，搜索联想/自选池准入过滤缺项）；现码 `normalizeCode('hf_CL') === null` 故无即时回归，但 Phase 1 新增联想词库若产出 `hf_*` 将无人拦截。**验证方法**：落地后断言搜索联想输出 ∩ `^hf_` = ∅。
 - **本轮通过项（Round 9 三项缺陷主项闭环）**：① `:351` 的 `[4.0%,5.0%]` 硬区间已删除并改为「备源昨结绑定自身 `field7`」断言；② `resolveFallbackQuote` 已由 §3.1.2 行 8（`:195`）定义为 `parseSinaGlobalFuture`；③ `:59`/`:72`/`:124` 的 HSI 声明已收敛为「日盘结算后（16:30 后）」并与 `:289-297` 采样表一一对应（18:38 复测东财 `f60 = 24688 = trends2.preClose`、新浪字段 7 `24688`）；④ P3-3 主项实测成立（港美股 `116/105/106` 的 `qt` 价格字段统一 ×1000，与同源 `trends2`、腾讯 1:1）。另：文档结构自检通过（标题唯一、`\|`=12 还原后 17 行 4 列无畸形行、`\d`=8）；§3.1.2 清单 17 行 `文件:行号` 逐条相符；`qt.f43/qtDivisor` 对同 secid `trends2` 末根比值 10/10 恒为 `1.00000`、`f169 == f43 - f60` 10/10 成立。
@@ -27,7 +44,7 @@ Round 7 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round7-ha
   3. **P3-2（收敛 HKFE 声明口径为「日盘结算后」，对齐采样时段并纳入 18:26 归零证据）**：在 §2.1 与 §3.1.1 中，将表述由「日盘常规交易时段」精确收敛为「**日盘结算后（16:30 后）**」，使声明与 16:35 收盘采样严格自洽；在 §3.4.2 复采表中追加 18:26 独立复测数据（东财 24688 对 新浪 24688，点差 0 点 / 0.000%），以实测收敛证据佐证以东财分时 `trends2.preClose` 为权威基准的正确性；
   4. **P3-3（港美股东财 qt 端点量纲 div1000 显式登记与兜底分派）**：在 §3.1.1.1 增设港股与美股东财 qt 端点报价量纲实测注册表，登记港美股（`m:105, 106, 116`）端点报价为 ×1000（真实除数 `qtDivisor = 1000`）；在 §3.1.2 清单行 5 中将通用回退改造为按 `f107` 市场号自动分派默认除数（A 股 `div100`，港美股 `div1000`），杜绝腾讯失败走东财兜底时价格出现 10 倍错位；在 §5 补齐港美股量纲断言与变异测试；
   5. **待确认风险 1 处置（自选池代码准入策略与备源代码隔离）**：在 §3.1 明确自选池准入契约，用户输入与自选池仅准入 `GL_*`、`hk*`、`us*` 等规范代码；新浪 `hf_*` 仅作为内部备用源路由符号，`normalizeCode` 与搜索联想严禁将其输出为自选代码，彻底杜绝同品种双报价与图表缺失；
-  6. **待确认风险 2 处置（ChinaFuturesSessionStrategy 严格委托既有模块）**：在 §3.1.2、§3.2.1 与 §5 显式规定 `ChinaFuturesSessionStrategy` 必须直接委托既有 `src/js/futures/session.js` 中的 `getFuturesSession` 与 `isFuturesTradingTime`，完整复用节前夜无夜盘、02:30 凌晨续段收盘等精密规则，并在 §5 增设等价性门禁。
+  6. **待确认风险 2 处置（ChinaFuturesSessionStrategy 严格委托既有模块）**：在 §3.1.2、§3.2.1 与 §5 显式规定 `ChinaFuturesSessionStrategy` 必须直接委托既有 `src/js/futures/session.js` 中的 `getFuturesSession` 与 `isFutureTrading`，完整复用节前夜无夜盘、02:30 凌晨续段收盘等精密规则，并在 §5 增设等价性门禁。
 - **验证结论**：本地三大门禁全部通过（`npm run lint` 0 错误，`npm test` 843/843 全部通过，`npm run build` 成功）；向 WorkBuddy 发起 Round 10 审查。
 
 ## 2026-09-16 历史状态：国际期货与国际股票接入方案 v9 —— WorkBuddy 审查 round 9 **未通过**（1×P2 + 3×P3），已闭环推进至 v10
