@@ -1,18 +1,37 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 —— 闭环 Round 1 全部 6×P2 + 4×P3 缺陷，提交 Round 2 复审
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 —— WorkBuddy 审查 round 2 **未通过**（2×P2 + 5×P3），待修复闭环
+
+审查报告：[`docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md)（被审 `ea2bb5a`，基准 `45593a5`；报告文件名加任务作用域前缀，因模板名 `2026-09-16-workbuddy-code-review-round2-handoff.md` 已被图表审查链占用）
+被审方案（v2）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+Round 1 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md)
+
+- **判定**：未通过。Round 1 的 P2-3 / P2-4 / P2-5 / P3-3 / P3-4 经独立复核实测闭环，但 **P2-1 在新增的 `m:100` 行原形复现**，且本轮新引入一处**连带回归**（CME 结算窗口固化）。
+- **P2 缺陷（2）**：
+  1. **P2-1 `m:100` 行整行为伪**：东财 `m:100` 经 `clist` 全量枚举实为**国际指数**市场（63 只，含现货 `HSI|恒生指数`、`XIN9|富时中国A50`），并非方案所称「新加坡/港期」；`100.CHA50CFD` 与 `100.HSI00Y` 在 `qt/stock/get` + `trends2` 双端点、多主机多轮重试下**恒为 `data:null`**；真实 A50 期指 secid 为 `104.CN00Y`（`f58=A50期指当月连续`，`trends2` n=1088）；`m:100–124` 全量扫描未发现恒指期货合约。→ Phase 1 的 `GL_A50`/`GL_HSI` 无法按方案取数，与方案自身 §5.2「Phase 1 全部 10 品种 secid 非空」验收断言及 §3.4「东财单源优先」冲突。
+  2. **P2-2（连带回归）CME 结算窗口固化**：本轮把 CME 每日结算休市窗口写成单一的「北京时间 05:00-06:00」，**删去了 Round 1 原文已有的冬季变体「或 06:00-07:00」**。CME 结算为芝加哥本地 16:00–17:00（随 DST 平移），标准时换算为北京 **06:00–07:00** → 标准时期间会把北京 05:00–06:00（真实交易时段）当休市剔除，外盘分时出现 1 小时断裂，与 §5.2「外盘分时无日内断裂」冲突。
+- **P3 缺陷（5）**：
+  1. §3.1.1 启动期冲突断言**恒真**（用 global 键去查 domestic 表，`GL_` 前缀下二者不可能相交），且引用的 `DOMESTIC_PRODUCT_MAP` 在仓库中不存在（实为 `src/js/futures/contractCatalog.js:16 PRODUCT_MAP`）→ 文档声称的「绝对正交」保证为零；
+  2. §3.1.2 表把 `src/js/kline.js:331` 标注为 `STOCK_CODE_RE`，该行实为 `getPriceLimit` 内部行（`STOCK_CODE_RE` 真实位置为 210/218/232）→ 按清单实施会改错位置并漏改两个腾讯 K 线 URL 构造守卫；
+  3. §3.1.2 第 9 行「`getPriceLimit` 非 A 股返回 `null` 即彻底消除 ±10% 限价」不可达：消费方 `kline.js:345` 的 `Number(limit) || 10` 把 `null` 静默回落为 10，实测 `classifyKlineBar(it,100,null)` 与 `classifyKlineBar(it,100,10)` 输出完全相同；
+  4. §2.3 腾讯美股「73 字段」实测为 **71**（`usAAPL`/`usBABA` 均 71；同探针下港股 78 与方案一致），且未标注取值条件（该数值沿用了 Round 1 报告的表述而未回真源复测）；
+  5. §2.2 港股「330 根 = 09:30-12:00 共 150 根 + 13:00-16:00 共 180 根」的（区间, 根数）自相矛盾：实测午后**无 13:00 bar**（`12:00 → 13:01`），分时端点全日应为 **331** 根（151+180），1 分钟 K 线端点才为 330 根，而美股 391 根取的是分时端点 → 两市场口径不一致。
+- **已确认通过项（Round 1 各缺陷的闭环结论）**：P2-1 主项（`m:101/102/103` 上 8 个 secid 双端点实测取数成立）、P2-2 主体（`GL_` 命名空间、`hf_CHA50CFD` 实测 15 字段）、P2-3（A 股窗口 `[[555,690],[780,900]]` 与现码 `api.js:36-39` 逐值一致，不回归）、P2-4（根因描述与 `marketSession.js:46-52/86-103` 相符）、P2-5（9 行清单含服务端 2 行、5 个正则行号逐条相符、新正则实测可匹配 `v_r_hk00700`/`v_usAAPL`）、P3-3（Gzip 基准 115.10 KB 与 `zlib.gzipSync` 实测 115,098 B 精确一致）、P3-4（持仓量 index 9 按品种实测与纠偏一致）；`npm test` 实跑 843/843。
+- **复审重点**：Phase 1 全品种双端点探测、CME 结算窗口冬/夏令时双时钟、`getPriceLimit` 消费方守卫、行号逐条可 `sed` 还原。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v2 —— 自述闭环 Round 1 全部 6×P2 + 4×P3（**round 2 复审判定：P2-1 遗留、P3-1~P3-5 未闭环，见上条**）
 
 方案交接（v2 全量闭环版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
 Round 1 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md)
 
-- **Round 1 指出的 6×P2 + 4×P3 缺陷实测全面闭环**：
-  1. **P2-1（东财 secid 规则与多主机）**：废弃 `102.${symbol}00Y` 推导，改为按交易所显式注册（COMEX `m:101`、NYMEX `m:102`、CME 指数 `m:103`、A50/恒指 `m:100`）；纳入 `EASTMONEY_TRENDS_HOSTS` 多主机轮转消除 502。
-  2. **P2-2（标识冲突与无效代码）**：建立 `GL_` 独立外盘命名空间（`GL_SI0` 与国内工业硅 `SI0` 绝对隔离）；引入启动期命名空间互斥断言；`CHA500` 更正为有效代码 `CHA50CFD`。
-  3. **P2-3（分时管线 A 股硬编码与跨午夜）**：下沉 `INTRADAY_SESSION_RANGES` 与交易日归属至 `SessionStrategy`，美股按美东日历日对齐，确保 391 根跨午夜（21:30-04:00）不丢点。
-  4. **P2-4（会话分派契约与语音状态机防污染）**：新增 `resolveSessionStrategy(code)` 分派契约，确立多资产 Any-Trading 策略，杜绝 22:00 因 A 股 `after-close` 误触发全局 `autoStop` 关闭外盘语音。
-  5. **P2-5（全链路 ≥8 处代码形态假设）**：服务端 `server/utils.js`、`server/marketData.js` 及客户端 `api.js`、`parser.js`、`kline.js` 等 8 处代码形态与时间正则纳入统一改造清单。
-  6. **P2-6（报价与图表合约基准对齐）**：确立东财为外盘单一事实来源（同源共享 `preClose` 与合约），新浪作为降级备用源，消除 5% 价差。
-  7. **P3-1 ~ P3-4 闭环**：货币改为按品种元数据定义（恒指期货播报港币）；`getPriceLimit` 增加非 A 股守卫返回 `null`；性能红线收敛为单一指标（Gzip增量 ≤ 10KB，词库增量 ≤ 25KB）；修正 CME/ICE 持仓量可用性说明。
+- **该版自述的闭环内容（下列 1、2、7 三项经 round 2 复审判定未真正闭环）**：
+  1. **P2-1（东财 secid 规则与多主机）**：废弃 `102.${symbol}00Y` 推导，改为按交易所显式注册（COMEX `m:101`、NYMEX `m:102`、CME 指数 `m:103`、A50/恒指 `m:100`）；纳入 `EASTMONEY_TRENDS_HOSTS` 多主机轮转消除 502。→ **复审：前 8 个品种实测成立；`m:100`（A50/恒指）不成立，见文首 P2-1。**
+  2. **P2-2（标识冲突与无效代码）**：建立 `GL_` 独立外盘命名空间（`GL_SI0` 与国内工业硅 `SI0` 绝对隔离）；引入启动期命名空间互斥断言；`CHA500` 更正为有效代码 `CHA50CFD`。→ **复审：命名空间隔离与代码更正成立；"互斥断言"恒真且引用不存在的标识，见文首 P3-1。**
+  3. **P2-3（分时管线 A 股硬编码与跨午夜）**：下沉 `INTRADAY_SESSION_RANGES` 与交易日归属至 `SessionStrategy`，美股按美东日历日对齐，确保 391 根跨午夜（21:30-04:00）不丢点。→ 复审通过。
+  4. **P2-4（会话分派契约与语音状态机防污染）**：新增 `resolveSessionStrategy(code)` 分派契约，确立多资产 Any-Trading 策略，杜绝 22:00 因 A 股 `after-close` 误触发全局 `autoStop` 关闭外盘语音。→ 复审通过（`resolveSessionStrategy` 缺 `default` 分支列为待确认风险）。
+  5. **P2-5（全链路 ≥8 处代码形态假设）**：服务端 `server/utils.js`、`server/marketData.js` 及客户端 `api.js`、`parser.js`、`kline.js` 等 8 处代码形态与时间正则纳入统一改造清单。→ 复审通过（其中 `kline.js` 行号引用有误，见文首 P3-2）。
+  6. **P2-6（报价与图表合约基准对齐）**：确立东财为外盘单一事实来源（同源共享 `preClose` 与合约），新浪作为降级备用源，消除 5% 价差。→ 复审：机制成立，但对无东财 secid 的品种（`GL_HSI`）不可行，见文首 P2-1。
+  7. **P3-1 ~ P3-4 闭环**：货币改为按品种元数据定义（恒指期货播报港币）；`getPriceLimit` 增加非 A 股守卫返回 `null`；性能红线收敛为单一指标（Gzip增量 ≤ 10KB，词库增量 ≤ 25KB）；修正 CME/ICE 持仓量可用性说明。→ **复审：货币与持仓量两项成立；Gzip 基准 115.10 KB 实测精确一致；`getPriceLimit` 返回 `null` 被消费方静默回落为 10，见文首 P3-3。**
 
 ## 2026-09-16 历史状态：国际期货与国际股票接入方案 —— WorkBuddy 审查 round 1 **未通过**（6×P2 + 4×P3），待修复闭环
 
