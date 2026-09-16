@@ -1,6 +1,21 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 v3 —— WorkBuddy 审查 round 3 **未通过**（1×P2 + 3×P3），待修复闭环
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 v4 —— 闭环 Round 3 全部缺陷（1×P2 + 3×P3），发起 WorkBuddy 审查 round 4
+
+方案交接（v4 全量闭环版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+Round 3 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round3-handoff.md)
+Round 2 审查报告：[`docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md)
+Round 1 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md)
+
+- **闭环内容（Round 3 缺陷闭环）**：
+  1. **P2-1（东财恒指期货 m:134 真源对齐与单源降级消除）**：根据真源实测，东财 `m:134` 港/亚洲指数期货市场（112 只）实收录恒生指数期货主力合约 `134.HSI_M` 与前月合约 `134.HSIU6`；三端点实测完全可用（`qt/stock/get` `rc=0`、`f58=恒生指数期货主力`、`f60=24676`、`trends2` n=914、`kline(klt=1)` n=913），且新浪 `hf_HSI` 字段 7 昨结 24676.000 与东财 `f60` 完全同源一致！在方案中将 `GL_HSI` 修正为以东财 `134.HSI_M` 为第一源、新浪 `hf_HSI` 为全量备源，彻底删除单源降级与无历史分时假定，恢复 Phase 1 全部 10 个品种三端点完备支持；
+  2. **P3-1（正交隔离断言改为仓库既有可用导出并规范新 API）**：启动期正交隔离断言改为完全基于仓库现有导出模块（`src/js/futures/instrument.js` 的 `parseFutureInput`、`isFutureCode` 与 `src/js/parser.js` 的 `inferMarket`），节点实测 100% PASS；同时在 §3.1.2 清单中显式规范 `inferAssetType(code): string` 的契约签名、全值域分发（含 `GL_` 前缀与国内期货规则）与未知输入回退规则；
+  3. **P3-2（消费方行号纠偏为 347）**：纠正 §3.1.2 表行 9 消费方行号为 `src/js/kline.js:326-341` 与消费方 `:347, 360-367`，精确锚定 `classifyKlineBar` 中的 `const lim = Number(limit) || 10;`（真实行号 347），杜绝漏改回退点；
+  4. **P3-3（美股字段数与港股时点表述完善）**：完善 §2.3 美股字段数表述为「基准 71 字段（非交易时段实测），上游偶发追加 2 个尾部空字段使总数达 73 字段；解析器使用下限守卫 fields.length >= 35 或 >= 71，不得以总数做等值断言」，并在 §2.2 补注港股 78 字段的时点验证条件；
+  5. **主机与风险说明**：在 §2.1 补充说明 `push2delay.eastmoney.com` 与 `push2his.eastmoney.com` 实测均可稳定拉取 `m:134` 与 `m:100-104` 的 `trends2` 与 `kline` 数据。
+- **验证结论**：本地门禁全部通过（`npm run lint` 0 错误，`npm test` 843/843 全部通过，`npm run build` 成功）；向 WorkBuddy 发起 Round 4 审查。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v3 —— WorkBuddy 审查 round 3 **未通过**（1×P2 + 3×P3），待修复闭环
 
 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round3-handoff.md)（被审 `8a97cca`，基准 `45593a5`，范围 5 文件 / +659 −2，纯文档；本轮修复增量 `6b1b9b2..8a97cca` = 3 文件 / +134 −101）
 被审方案（v3，round 3 被审版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
