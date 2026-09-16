@@ -1,6 +1,18 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 v3 —— 闭环 Round 2 全部缺陷（2×P2 + 5×P3），发起 WorkBuddy 审查 round 3
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 v3 —— WorkBuddy 审查 round 3 **未通过**（1×P2 + 3×P3），待修复闭环
+
+审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round3-handoff.md)（被审 `8a97cca`，基准 `45593a5`，范围 5 文件 / +659 −2，纯文档；本轮修复增量 `6b1b9b2..8a97cca` = 3 文件 / +134 −101）
+被审方案（v3，round 3 被审版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+
+- **未通过结论（1×P2 + 3×P3）**：
+  1. **P2-1 `GL_HSI`「东财无恒指期货合约」被真源证伪**：东财 `m:134` 实收录恒指期货（`total=112`，含 `134.HSI_M|恒生指数期货主力`、`134.HSIU6|恒生指数期货2609`、小型恒指/H股指数期货等），`134.HSI_M` 三端点取数成立（`qt rc=0`、`f60=24676`、`trends2 n=914`、`kline(klt=1) n=913`，两次采样一致），且其 `f60` 与新浪 `hf_HSI` 昨结 24676.000 同源；反例可判别（`134.HSI00Y`/`134.MHI_M` 为 `rc=100 data:null`）。方案把 Round 2「不得在扫描未完成时断言全仓不存在」的负向结论作用域裁剪为 `m:100–124` 后升格为架构事实，据此写死的「`GL_HSI` 纯新浪单源 + 图表区无历史分时」降级契约（§2.1 `:57`、§3.1.1 `:102`、§3.4.2 `:207-209`）与 §5 `:260` 验收断言均不成立。
+  2. **P3-1**：本轮新增的解析层正交断言仍引用仓库不存在的标识 `inferAssetType`（`§3.1.1 :108` 静态 `import` 实测 `SyntaxError: does not provide an export named 'inferAssetType'`；`parser.js` 实际导出为 `inferMarket/normalizeCode/parseFutureInput` 等），且方案全文（含 §3.1.2 九处清单）未定义该 API；断言另一半（`parseFutureInput('SI0')` → `gfex/工业硅连续`）已实测成立。
+  3. **P3-2**：§3.1.2 行 9 新增的消费方行号 `kline.js:345` 与声称逻辑不符——`345` 是 `const pc = Number(prevClose);`，真实回退点 `const lim = Number(limit) || 10;` 在 **347**；按 `345` 实施会漏改回退点，令 P3-3 的修复再次落空。
+  4. **P3-3**：§2.3 美股「实测 71 字段（非交易时段）」不可复现——同处于非交易时段连续三轮采样 `usAAPL=73/73/71`、`usNVDA=73/71/73`（差异为上游偶发追加的 2 个尾部空字段），一次探测得 73；不得以字段总数作定值断言。
+- **本轮通过项**：`GL_A50` → `104.CN00Y` 与其余 8 个 secid 双端点实测成立；CME 结算窗口夏令时侧真源验证（首根 `06:00`、`05:00–05:59` 零 bar）与 CST 窗口算术自洽；`kline.js` `STOCK_CODE_RE` 210/218/232 校正正确；港股 331/无 13:00、美股 391/390 端点口径与 `m:100–104` 规模（63/104/117/178/33）均逐条复现；§3.4 合约锚点成立（新浪 `hf_CHA50CFD` 昨结 14271.000 = 东财 `104.CN00Y f60` 142710）；§3.2.2 `default` 兜底已补；本轮 diff 全为文档，未触碰产品代码与测试。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v3 —— 闭环 Round 2 全部缺陷（2×P2 + 5×P3），发起 WorkBuddy 审查 round 3
 
 方案交接（v3 全量闭环版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
 Round 2 审查报告：[`docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md)
