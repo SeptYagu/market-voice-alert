@@ -1,6 +1,22 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 v9 —— 闭环 Round 8 全部缺陷（3×P2 + 2×P3 与待确认风险），提交 WorkBuddy 审查 round 9
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 v9 —— WorkBuddy 审查 round 9 **未通过**（1×P2 + 3×P3），待修复闭环
+
+审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round9-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round9-handoff.md)（被审 `4beb59c`，基准 `45593a5`，本轮实际审查增量 `b344926..4beb59c` = 4 文件 / +256 −58，纯文档）
+被审方案（v9，round 9 被审版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+
+- **未通过结论（1×P2 + 3×P3）**：
+  1. **P2-1 §5 `:350-351` 新增的 CL/NG 跨源断言把「上游合约基差」固化为实现门禁 `diff ∈ [4.0%, 5.0%]`**：该量由上游合约结构决定（新浪 `hf_CL`/`hf_NG` 跟踪当月合约、东财 `CL00Y`/`NG00Y` 为连续/换月指数），随换月持续漂移且**不由实现控制**——本项目自身实测序列跨度为 **4.1558% ~ 5.1%**（Round 1 报告 `:81` 早段实测 **4.97%~5.1%** 已越 §5 上界 5.0%；Round 8 17:25 测 CL 4.75%~4.79%/NG 4.27%~4.49%；**本轮 18:26 独立复测 CL 4.605%、NG 4.1558%，且 NG 已跌出本轮新登记的「4.2%~4.5%」区间**）；同探针同刻其余 8 品种跨源偏差均 ≤0.04%（排除网络/时刻因素），东财内部 `qt.f60/qtDivisor == trends2.preClose` 10/10 误差恒 0 → 问题只在把漂移量写成硬区间，与 Round 8 P2-2「方案自身门禁必然失败，实现者只能改断言或造数」同一失效模式；`:351` 还与 §3.4.2 `:279`「严禁按 1:1 比对绝对价格」在措辞上互相拉扯。
+  2. **P3-1 §5 `:353` 新增断言引用未定义标识 `resolveFallbackQuote`**（`grep` 全仓+文档仅命中该处，§3.1.2 的 17 条改造点与 §3.4.2 均未定义它，`sinaPayload` 亦为未绑定伪变量）→ 按字面无法落码（与 Round 3 P3-1「引用仓库不存在的标识 `inferAssetType`」同族）。
+  3. **P3-2 P3-1（HKFE）闭环证据表未覆盖 Round 8 明确要求的「日盘（16:00 前）与夜盘（17:15 后）各 ≥3 次」**：`:271-276` 四行中 16:35 自标「日盘收盘后」（非盘中）、17:07 在夜盘 17:15 开盘前、17:23/17:28 两行同值，且均沿用 Round 7/8 既有采样 → **日盘盘中样本 0 个**，而 `:59` 新增的正是「**日盘常规交易时段**…1:1 对齐」。本轮 18:26 独立复测机制方向成立（东财 `f60 = 24688 = trends2.preClose`、新浪字段 7 已收敛至 24688，跨源差归零）。
+  4. **P3-3 Phase 2/3（港美股）未登记东财 `qt` 端点报价量纲，而 §3.1.2 行 5（`:175`）指定的兜底恰为 `div100`**：本轮首次真源实测东财 `qt` 对 `116.00700`/`116.09988`/`105.AAPL`/`106.BABA`/`105.TSLA` 的价格字段一律为 **×1000**（`433400`→`433.400`、`331340`→`331.34`），同源 `trends2` 与腾讯均为真实单位；`hk*`/`us*` 的 `(f107,f57)` 不在 `globalCatalog` → 命中「未命中回退 `div100`」→ **错 10 倍**，而 §5 的验收断言（`:334-376`）全部只覆盖 Phase 1 十个外盘期货，无港美股量纲断言；兜底路径为 `api.js:150` → `:167` → `:172`（腾讯未命中的股票代码走东财 `qt`）。
+- **待确认风险**：① `hf_*` 与 `GL_*` 同被分类为 `futures_global`（`:173` 契约 ① 与 §3.1.1 NOTE 断言强制），但方案未定义 `hf_*` 的准入策略——若允许入池，同一品种会与 `GL_CL0` 并存且价格水平不同（同刻实测 `hf_CL 99.154` 对 `CL00Y/100 = 103.72`，差 4.6%；`hf_HG` 与东财差 100×）且 `hf_*` 无东财 secid；② `ChinaFuturesSessionStrategy` 未锚定既有 `src/js/futures/session.js`（`getFuturesSession` 在方案零出现、未纳入 §3.1.2 清单），而 `tests/reviewFollowup.test.js:21-22` 仅 2 条 `getVoiceEligibleCodes` 用例 → 内盘「节前夜无夜盘」等精密规则若被重新实现则存在静默回归风险。
+- **本轮通过项**（Round 8 五项缺陷主项全部闭环）：① `:182` 与 `:238` 的 `voiceSchedule.js:28` 判据已**逐字一致**（均保留 `session === 'after-close'`）；② 全文转义恢复（`\d`=8、`\|`=12、合计 20，较上轮少 2 处系表格内容变化），三张表列数统一 9/4/6 且**无畸形行**；③ `sinaScale` 列已按真源回填（NQ/ES 改为真新浪值，Round 8 待确认风险 1 定论）；④ `:59` HSI 表述限定为日盘并与 `:271-276` 统一；⑤ §5 三条语音断言已补齐 `previous` 与固定时钟。另：§3.1.2 清单 17 行的 `文件:行号` 逐条 `sed` 复原**全部相符**；§3.1.1 登记除数与 `f107/f57` 反查键真源复测成立。
+- **本轮独立验证（仓库外，未改产品代码）**：10 品种三源同刻探针（东财内部 `qt.f43/qtDivisor` 对 `trends2` 末根偏差 ≤0.0068%、`qt.f60/qtDivisor == trends2.preClose` 10/10 精确、`f169 == f43-f60` 10/10 成立）；仓库外副本按方案字面实现 `inferAssetType` 与 §3.2.2 新判据后回放 §5 四条语音断言 **4/4 GREEN**、两处变异（`!hasExtendedHoursAssets && !allowed` 与 `!futures.length`）分别确定性转红、13:00 自动恢复成立 → Round 8 P2-1/P3-2 修复**具备真实判别力**。
+- **未验证项**：受限网络「先失败 → 后轮转 `push2delay`」的转移时序（本机 `push2his` 可达、`90.push2his` socket hang up、`push2` 恒 502，非同一出口画像）；§2.1 `:32` 的 `< 100ms` 延迟阈值（本机含建链开销 206~2055ms，无法复现，该文本本轮未改动）；HKFE 日盘盘中昨结一致性；Phase 2/3 根数口径（331/330、391/390、78/71 字段）未重采。
+- **验证结论**：本轮为纯文档审查，未改动产品代码/测试，门禁基数不变（843 项 + 75 项 E2E）；需按上述 1×P2 + 3×P3 修复闭环并处置 2 项待确认风险后发起 Round 10 复审。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v9 —— 闭环 Round 8 全部缺陷（3×P2 + 2×P3 与待确认风险），发起 WorkBuddy 审查 round 9（**round 9 复审判定：未通过，1×P2 + 3×P3**）
 
 方案交接（v9 全量闭环版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
 Round 8 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round8-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round8-handoff.md)
