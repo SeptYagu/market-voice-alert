@@ -1,6 +1,20 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 v12 —— 闭环 5 大工程落地盲点（美股特殊代码、探测双层缓存、国内期货分时区间导出、出网代理快速超时与换月自适应解耦），方案最终定稿，交付就绪直接实施（纯文档阶段）
+## 2026-09-16 当前状态：Phase 1 国际期货与外盘基础落地代码（`4373343`）—— 独立审查 Round 1 未通过（2×P1 + 3×P2 + 5×P3）
+
+审查报告：[`docs/handoff/2026-09-16-global-futures-phase1-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-16-global-futures-phase1-workbuddy-code-review-round1-handoff.md)
+被审提交：`4373343`（基准 `adf057f`，18 文件 / +1492 −150）；门禁实跑：`lint` 0 问题、`npm test` 858/858、`npm run build` gzip 119.53 KB（≤125.10 KB）。
+
+- **P1-1（阻断）**：`src/js/api.js:99-105` `splitCodes` 仍只认 `STOCK_RE`/`FUTURE_RE`，`GL_*`/`hk*`/`us*` 三个资产族**既不入 stocks 也不入 futures** → `fetchQuotes` 的 `tasks` 为空，实测 `fetchQuotes(['GL_CL0'])` 网络请求数 **0**、`quotes=[]`、`failedCodes=['GL_CL0']`（`hk00700`/`usAAPL` 同）。计划 §3.1.2 第 10 行要求本行改造为资产类型分发器，本轮只改了 `buildTencentUrl` 的入参正则（错层修复）。
+- **P1-2（阻断）**：`src/js/parser.js:229` 的市场号取自 `f107 ?? f116`，而生产 `EASTMONEY_FIELDS`（`src/js/api.js:34`）**不含 `f107`**；真源实测 `f107` 才是市场号回显，`f116` 是**总市值**（外盘恒 0、腾讯控股 3.94e12）→ 注册表反查与港美股分支**恒不命中**，全部落入 A 股兜底：代码身份退化为 `szcl00y`/`szcn00y`/`szhsi_m`/`szaapl`…（被 `monitorController.js:44` 门禁丢弃），价格按 `div100` 错 10~100×。用真实 payload 复现 **8/8 FAIL**。
+- **P2-1**：服务端共享缓存分时未同步策略化，`server/intradayService.js:15-18` 仍用 A 股窗口 → 实跑 `GL_CL0` 分时仅 **257 根**（真实 `trends2` 1375 根，丢弃 81%），跨午夜日期返回 **0 根且 `ok:true`**。
+- **P2-2**：§3.3.2 的跨午夜交易日对齐未实现，`api.js:283`/`parser.js:489` 仍按北京日历日切分（实测 `date=09-16→1080 根`、`date=09-17→295 根`），`getTradingDay` 无生产消费点。
+- **P2-3**：`tests/globalFutures.test.js` 的 `parseEastmoney` 夹具把市场号注入 `f116`（生产从不请求），与实现共享同一错误假设 → 缺陷存续时测试全绿。
+- **P3**：① 报价未写入 `priceDecimals`/`currency`，TTS/表格/导出精度与注册表不符（`GL_HG0` 播 6.44 而非 6.4400）；② 美股 `US_MARKET_MAP` 无探测、`localStorage` 缓存键**无写入点**，未收录符号恒回落 `105`（`usBA → 105.BA → rc:100`，`106.BA` 才正确）；③ `parseSinaGlobalFuture` 的 `quoteDate` 为 10 位带横线（全仓 8 位契约），`kline.js:461` 长度守卫使追加分支成死代码；④ `getFuturesSessionRanges` 对国内期货不可达（`fetchIntraday` 首行即转 `fetchFuturesIntraday`），唯一消费方是测试，`t.true(length>0)` 为空验收；⑤ `tests/globalFutures.test.js:396-407` 的 `hf_` 不相交断言恒真（索引内 `hf_` 条目数实测 0），且 §5 的 7 项验收断言（`transitionNotice===null`、16:00 混合自选、冬夏窗口、代理轮转、主备跳变、15 字段逐位、对象同一性）缺项。
+- **待确认风险**：`server/proxyService.js:63-72` 对 `status>=500` 的响应未消费响应体（受限网络下的常态路径），连接释放情况未做压力实测。
+- **复审验收**：见报告 §四（7 条，含"真实 payload 全绿 + 字段表含 `f107` 断言 + 新增用例变异必红"）。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v12 —— 闭环 5 大工程落地盲点（美股特殊代码、探测双层缓存、国内期货分时区间导出、出网代理快速超时与换月自适应解耦），方案最终定稿，交付就绪直接实施（纯文档阶段）
 
 方案交付（v12 闭环 5 大工程盲点定稿版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
 Round 10 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round10-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round10-handoff.md)
