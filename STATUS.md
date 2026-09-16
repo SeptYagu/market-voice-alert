@@ -1,6 +1,19 @@
 # STATUS.md - 项目状态
 
-## 2026-09-15 当前状态：停播提示后补播「最后一轮选中字段」—— 已交付
+## 2026-09-16 当前状态：图表时间轴中国习惯格式化与成交量红绿规则修复 —— 准备提审
+
+交接文档：[`docs/handoff/2026-09-16-chart-date-format-and-volume-color-handoff.md`](docs/handoff/2026-09-16-chart-date-format-and-volume-color-handoff.md)
+
+- **缺陷 1（日期格式与多余分钟）**：
+  - 原轻量图表时间轴坐标十字线默认西式日-月-年 `11 9月 '26 00:00`，日 K 线泄漏无意义 `00:00`。
+  - 修复：`_timeScaleOptions` 中 `timeVisible` 严格绑定 `isMinute`（日周月 K 线为 false）；`buildChartOptions` 增加 `localization: { locale: 'zh-CN', dateFormat: 'yyyy-MM-dd', timeFormatter }`；`formatChartTime` 扩展对 BusinessDay 对象与时间戳支持，统一输出 `YYYY-MM-DD`（分钟线输出 `YYYY-MM-DD HH:mm`）。
+- **缺陷 2（成交量颜色误判为绿柱）**：
+  - 原 `formatVolumeBars` 仅按 `close > open` 单一判据，导致高开低走收涨的假阴真阳（如新农开发 2026-09-11 见顶日，昨收 9.64、开盘 10.38、收盘 9.72，全天收涨 +0.83%）和一字涨停被误染为绿柱；且 `applyLiveTickToKlineChart` 传入单元素数组丢失昨收上下文。
+  - 修复：导出 `isVolumeBarUp(it, prevClose)`，收盘高于开盘或收盘高于昨收（高开低走假阴线收涨、一字涨停）均判定为红柱；`applyLiveTickToKlineChart` 补全 `prevClose` 上下文。
+- **验证**：新增 `tests/kline.test.js`（9.11 见顶日样本、一字涨跌停、单项 Tick）与 `tests/chart.test.js`（localization 中文格式化与分钟时间轴开关）。
+- **门禁实跑**：`npm run lint` **0 错误 0 警告** → `npm test` **841/841 全部通过** → `npx playwright test e2e/chart.spec.js` **12/12 全部通过** → `npm run build` 成功。
+
+## 2026-09-15 历史状态：停播提示后补播「最后一轮选中字段」—— 已交付
 
 交接文档：[`docs/handoff/2026-09-15-close-snapshot-handoff.md`](docs/handoff/2026-09-15-close-snapshot-handoff.md)
 

@@ -162,15 +162,37 @@ export function calcMA(items, n) {
 const DEFAULT_UP_COLOR = '#E74C3C';
 const DEFAULT_DOWN_COLOR = '#27AE60';
 
+export function isVolumeBarUp(it, prevClose) {
+  if (!it) return false;
+  const close = Number(it.close);
+  const open = Number(it.open);
+  const pc = Number(prevClose);
+  if (!Number.isFinite(close)) return false;
+
+  // 1. 收盘高于开盘（阳线）-> 红色
+  if (Number.isFinite(open) && close > open) return true;
+
+  // 2. 收盘高于昨收（包含高开低走假阴线收涨、一字涨停）-> 红色（如 9.11 新农开发）
+  if (Number.isFinite(pc) && close > pc) return true;
+
+  // 其余情况（收跌、平盘、常规收阴等）-> 绿色
+  return false;
+}
+
 export function formatVolumeBars(items, opts = {}) {
   if (!Array.isArray(items) || items.length === 0) return [];
   const up = opts.up || DEFAULT_UP_COLOR;
   const down = opts.down || DEFAULT_DOWN_COLOR;
-  return items.map((it) => ({
-    time: it.time,
-    value: Number(it.volume) || 0,
-    color: it.close > it.open ? up : down
-  }));
+  return items.map((it, i) => {
+    const prevClose = i > 0
+      ? items[i - 1].close
+      : (opts.prevClose !== undefined ? opts.prevClose : (it.prevClose !== undefined ? it.prevClose : null));
+    return {
+      time: it.time,
+      value: Number(it.volume) || 0,
+      color: isVolumeBarUp(it, prevClose) ? up : down
+    };
+  });
 }
 
 const TENCENT_PERIOD_TYPE = Object.freeze({

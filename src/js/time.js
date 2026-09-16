@@ -135,7 +135,11 @@ export function chartSecondsToTime(seconds) {
 }
 
 export function formatChartTime(time, period = '1d') {
+  if (time === null || time === undefined || time === '') return '';
   if (typeof time === 'string') return time;
+  if (typeof time === 'object' && time.year && time.month && time.day) {
+    return `${time.year}-${_pad2(time.month)}-${_pad2(time.day)}`;
+  }
   const date = chartSecondsToDate(time);
   if (!date) return '';
   if (['1m', '5m', '15m', '30m', '60m'].includes(period)) {

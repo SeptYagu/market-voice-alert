@@ -125,9 +125,11 @@ export function applyLiveTickToKlineChart(ctl, inst, quoteOrPrice) {
   if (updated === inst.klineData.items) return;
   inst.klineData = { ...inst.klineData, items: updated };
   const last = updated[updated.length - 1];
-  const formatted = formatCandleColors([last], inst.klineData.code, inst.klineData.name)[0];
-  if (formatted) ctl.updateKline(formatted);
-  const volBar = formatVolumeBars([last])[0];
+  const prevClose = updated.length >= 2 ? updated[updated.length - 2].close : null;
+  const formatted = formatCandleColors(updated.slice(-2), inst.klineData.code, inst.klineData.name);
+  const lastCandle = formatted[formatted.length - 1];
+  if (lastCandle) ctl.updateKline(lastCandle);
+  const volBar = formatVolumeBars([last], { prevClose })[0];
   if (volBar) ctl.updateVolume(volBar);
   for (let i = 0; i < MA_PERIODS.length; i++) {
     const n = MA_PERIODS[i];

@@ -50,6 +50,20 @@ QUnit.module('chart.buildChartOptions', () => {
     const light = buildChartOptions({ theme: 'light' });
     t.notEqual(dark.layout.textColor, light.layout.textColor);
   });
+  QUnit.test('configures localization with zh-CN, yyyy-MM-dd, and Chinese timeFormatter', (t) => {
+    const dayOpts = buildChartOptions({ period: '1d' });
+    t.ok(dayOpts.localization, 'localization present');
+    t.equal(dayOpts.localization.locale, 'zh-CN');
+    t.equal(dayOpts.localization.dateFormat, 'yyyy-MM-dd');
+    t.equal(typeof dayOpts.localization.timeFormatter, 'function');
+    t.equal(dayOpts.timeScale.timeVisible, false, '1d period does not display minutes');
+    // Formats day time in Chinese YYYY-MM-DD order without 00:00
+    t.equal(dayOpts.localization.timeFormatter('2026-09-11'), '2026-09-11');
+    t.equal(dayOpts.localization.timeFormatter({ year: 2026, month: 9, day: 11 }), '2026-09-11');
+
+    const minOpts = buildChartOptions({ period: '1m' });
+    t.equal(minOpts.timeScale.timeVisible, true, 'minute period displays minutes');
+  });
 });
 
 QUnit.module('chart.MA_COLORS', () => {

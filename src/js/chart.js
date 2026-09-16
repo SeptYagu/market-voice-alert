@@ -7,7 +7,7 @@ import {
 import {
   chartSecondsToDate,
   chartSecondsToTime,
-  chartTimeToDate,
+  formatChartTime,
   parseBeijingDateTimeToChartSeconds
 } from './time.js';
 
@@ -97,7 +97,7 @@ function _timeScaleOptions(c, period = '1d') {
   const isMinute = ['1m', '5m', '15m', '30m', '60m'].includes(period);
   return {
     borderColor: c.border,
-    timeVisible: true,
+    timeVisible: isMinute,
     secondsVisible: false,
     tickMarkFormatter: (time) => {
       if (typeof time === 'string') return time;
@@ -135,7 +135,7 @@ function _intradayChartInteractionOptions() {
   };
 }
 
-export function buildChartOptions({ width, height, theme, period } = {}) {
+export function buildChartOptions({ width, height, theme, period = '1d' } = {}) {
   const c = getChartThemeColors(theme);
   return {
     width: width || 800,
@@ -144,6 +144,11 @@ export function buildChartOptions({ width, height, theme, period } = {}) {
       background: { type: ColorType.Solid, color: c.background },
       textColor: c.text,
       attributionLogo: false
+    },
+    localization: {
+      locale: 'zh-CN',
+      dateFormat: 'yyyy-MM-dd',
+      timeFormatter: (time) => formatChartTime(time, period)
     },
     grid: {
       vertLines: { color: c.grid },
@@ -187,11 +192,8 @@ function _timeKey(time) {
   return time === null || time === undefined ? '' : String(time);
 }
 
-function _detailTime(time) {
-  if (typeof time === 'string') return time;
-  const date = chartTimeToDate(time);
-  const hhmm = chartSecondsToTime(time);
-  return [date, hhmm].filter(Boolean).join(' ');
+function _detailTime(time, period = '1d') {
+  return formatChartTime(time, period);
 }
 
 function _detailNumber(value, digits = 2) {
@@ -256,7 +258,7 @@ export function createKlineChart(container, opts = {}) {
       if (Number.isFinite(value)) maParts.push(`MA${period} ${_detailNumber(value)}`);
     }
     const mainText = [
-      _detailTime(time),
+      _detailTime(time, currentPeriod),
       `开 ${_detailNumber(bar.open)}`,
       `高 ${_detailNumber(bar.high)}`,
       `低 ${_detailNumber(bar.low)}`,
@@ -410,7 +412,12 @@ export function createKlineChart(container, opts = {}) {
 
   function setPeriod(period) {
     currentPeriod = period || currentPeriod;
-    chart.applyOptions({ timeScale: _timeScaleOptions(getChartThemeColors(currentTheme), currentPeriod) });
+    chart.applyOptions({
+      timeScale: _timeScaleOptions(getChartThemeColors(currentTheme), currentPeriod),
+      localization: {
+        timeFormatter: (time) => formatChartTime(time, currentPeriod)
+      }
+    });
   }
 
   function onClick(fn) {

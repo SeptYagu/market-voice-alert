@@ -11,6 +11,7 @@ import {
   parseTencentKlineAssignment,
   calcMA,
   formatVolumeBars,
+  isVolumeBarUp,
   formatCandleColors,
   periodToKlt,
   getPriceLimit,
@@ -275,6 +276,32 @@ QUnit.module('kline.formatVolumeBars', () => {
   QUnit.test('returns [] for empty/invalid input', (t) => {
     t.deepEqual(formatVolumeBars([]), []);
     t.deepEqual(formatVolumeBars(null), []);
+  });
+  QUnit.test('colors fake-yin positive day (close < open but close > prevClose, e.g. 9.11 新农开发) as red', (t) => {
+    // 2026-09-10 close: 9.64; 2026-09-11 open: 10.38, close: 9.72 (close > prevClose, +0.83%)
+    const items = [
+      { time: '2026-09-10', open: 9.64, close: 9.64, high: 9.64, low: 9.47, volume: 400015 },
+      { time: '2026-09-11', open: 10.38, close: 9.72, high: 10.60, low: 9.26, volume: 1362603 }
+    ];
+    const bars = formatVolumeBars(items, { up: '#E74C3C', down: '#27AE60' });
+    t.equal(bars.length, 2);
+    t.equal(bars[0].color, '#E74C3C', 'limit up day is red');
+    t.equal(bars[1].color, '#E74C3C', '9.11 peaking day (high-open low-close but closed up vs prevClose) is red');
+  });
+  QUnit.test('supports opts.prevClose for single-item live update', (t) => {
+    const single = [{ time: '2026-09-11', open: 10.38, close: 9.72, volume: 1362603 }];
+    const bars = formatVolumeBars(single, { prevClose: 9.64, up: '#E74C3C', down: '#27AE60' });
+    t.equal(bars[0].color, '#E74C3C', 'single item formatted with opts.prevClose is red');
+  });
+  QUnit.test('isVolumeBarUp handles yang, fake-yin positive, one-word limit up/down and flat', (t) => {
+    t.equal(isVolumeBarUp({ open: 10, close: 11 }, 9.5), true, 'close > open is true');
+    t.equal(isVolumeBarUp({ open: 10.38, close: 9.72 }, 9.64), true, 'fake yin close > prevClose is true');
+    t.equal(isVolumeBarUp({ open: 9.64, close: 9.64 }, 8.76), true, 'one word limit up close > prevClose is true');
+    t.equal(isVolumeBarUp({ open: 9.0, close: 9.0 }, 10.0), false, 'one word limit down close < prevClose is false');
+    t.equal(isVolumeBarUp({ open: 10, close: 9 }, 10.5), false, 'normal yin is false');
+    t.equal(isVolumeBarUp({ open: 10, close: 10 }, 10), false, 'flat vs prevClose is false');
+    t.equal(isVolumeBarUp(null), false, 'null is false');
+    t.equal(isVolumeBarUp({ close: NaN }), false, 'non-finite close is false');
   });
 });
 
