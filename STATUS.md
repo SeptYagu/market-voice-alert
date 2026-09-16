@@ -1,6 +1,20 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 v5 —— 闭环 Round 4 全部缺陷（3×P2），发起 WorkBuddy 审查 round 5
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 v5 —— WorkBuddy 审查 round 5 **未通过**（3×P2 + 2×P3），待修复闭环
+
+审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round5-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round5-handoff.md)（被审 `cfd243c`，基准 `45593a5`，本轮修复增量 `f637dd9..cfd243c` = 3 文件 / +529 −23，纯文档）
+被审方案（v5，round 5 被审版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+
+- **未通过结论（3×P2 + 2×P3）**：
+  1. **P2-1 方案正文 §1–§3.1.2 被整体重复 4 份，§3.1.2 契约表行被切成 4 段**：`# 国际期货…` H1 出现 4 次（`:1`，及 `:157`/`:313`/`:469` 三行的**行尾拼接**），`## 1.`/`## 2.`/`### 3.1`/`#### 3.1.1`/`#### 3.1.2` 各 4 次；`src/js/parser.js:11-25` 那一行的契约文本被切成 `:157`（①）、`:313`（②③）、`:469`（④）、`:625`（⑤⑥）四段，中间夹 3 整份重复正文（约 465 行 / 全文 60%），`:157`/`:313`/`:469` 三个表行**均未闭合**（行尾直接拼接下一份副本的 H1）→ 交付物核心契约表无法就位阅读、4 份 §2 实测事实并存必致后续漂移。
+  2. **P2-2 A50 10× 单位约定登记在错误边界（源间/备源切换），实测分歧在东财内部端点之间**：`push2delay` 同时刻实测 `104.CN00Y`：`qt/stock/get` `f43=143900`/`f60=142710`，而同源 `trends2` 末根 `14390.0`/`preClose=14271`、`kline(klt=1)` 末根 `14390.0`，新浪 `hf_CHA50CFD` `14392.800`/`14271.000` → 比值 `f43/trends2末根 = 10.000`、`f60/preClose = 10.000`、`trends2末根/sina.f0 = 0.99991`，即 10× 分歧在**东财内部（qt ↔ trends2/kline）**、而 trends2/kline 与新浪同级；方案却登记为「源间(东财:新浪)」系数且只在「备源切换」时应用 → §3.4.1「qt 与 trends2 同源…最新价/涨跌幅/分时末端 **100% 吻合**」对 `GL_A50` 被证伪（143900 vs 14390.0），默认主源路径经 `src/js/parser.js:97-98` 的 `div100` 会输出 `1439.00`/`1427.10`（真值的 1/10，与同源图表差 10 倍），若把 `×0.1` 误用于 `trends2`/`kline` 则图表反向缩小 10 倍，`:762` 验收断言只覆盖备源昨结、三种错位均拦不住。
+  3. **P2-3 Round 4 P2-2 闭环不完整：`push2delay` 未落到浏览器可见的东财出网路径**：§2.1 `:206` 要求"对 `qt/stock/get` 增加 `push2delay` 兜底"，但 §3.1.2 只列 `server/marketData.js:18-22, 160, 194` 与 `klineService.js:95`（服务端 `/api/cache/*` 路径），浏览器侧 `src/js/api.js:52`/`:66`、`src/js/kline.js:73` 经 `server/index.js:376 → proxyService.js:10 → proxyRoutes.js:10`(`push2his`)/`:13`(`push2`) 静态 target 直连；本轮逐主机实测 `push2his`/`90.push2his`/`1.push2.*` 五端点全 `fetch failed`、`push2` 恒 502、**仅 `push2delay` 三端点 `rc=0`**（`m:134` 964/963、`m:104` 1189、`qt` rc=0）→ §5:760「三端点拉取」验收断言在方案自述的受限网络下仍不可满足，§3.4.1「东财第一源」静默退化为新浪单源。
+  4. **P3-1 §3.1.2 契约 ①③④ 丢失 `$` 锚点**（`:157`/`:313`/`:469` 截断点恰好落在锚点处）：按方案文本逐字实现 `inferAssetType` 后，本轮新增的 10 条断言 **9 通过 1 失败**（`inferAssetType('unknown_foo')` 实得 `'stock_us'`、断言要求 `'stock_cn'`）；同 commit 的 `STATUS.md:10` 记录的却是带 `$` 的版本 → 两文件对同一契约记载互斥（Round 4 P2-3 的 `hf_`/`r_hk` 值域**内容层已闭环**，失败仅由锚点丢失引起）。
+  5. **P3-2 §2.1 新增主机/根数断言作用域越界且不可复现**：`:206`「能完整拉取 `m:134`（`trends2` 与 `kline` **938 根**）」实测此时刻为 `trends2` 964 / `kline` 963（Round 3 记 914/913、Round 4 记 935/938），且与同文 `:213` 的「`trends2` n=914，`kline(klt=1)` n=913」互斥；两条端点口径天然相差 1~3 根，写成同值不成立；`:214`「各类网络环境下均能稳定可达」超出实测范围。
+- **本轮通过项**：Round 4 P2-2 的**事实层**逐主机实测成立（`push2his` 族全失败、`push2` 恒 502、仅 `push2delay` 五端点可达且 `m:134`/`m:104` 三端点 `rc=0`）；Round 4 P2-3 的 `hf_`/`r_hk` 值域内容层闭环（探针逐值验证）；源码引用 `marketData.js:14-16/18-22/160/194`、`klineService.js:91-95/95`、`utils.js:76-86` 逐条相符；`134.HSI_M` 1:1 对照（`qt.f43=24701`、`trends2` 末根 `24701`、`f60=preClose=24676`、新浪昨结 `24676.000`）成立；本轮 diff 全为 `.md`，未触碰产品代码与测试。
+- **验证结论**：本轮为纯文档审查，未改动产品代码/测试，门禁基数不变；需按上述 5 项（结构 → 单位契约 → 出网落点 → 锚点 → 数值表述）修复后发起 Round 6 复审。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v5 —— 闭环 Round 4 全部缺陷（3×P2），发起 WorkBuddy 审查 round 5（**round 5 复审判定：未通过，3×P2 + 2×P3**——正文 §1–§3.1.2 重复 4 份致 §3.1.2 契约表被切碎、A50 10× 单位登记在「源间/备源切换」而非东财内部端点、`push2delay` 未落到浏览器侧 `proxyRoutes.js:10,13`、契约 `$` 锚点丢失与自身断言互斥、`m:134` 根数定值不可复现）
 
 方案交接（v5 全量闭环版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
 Round 4 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round4-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round4-handoff.md)
