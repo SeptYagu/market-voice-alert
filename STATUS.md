@@ -1,6 +1,20 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 v4 —— WorkBuddy 审查 round 4 **未通过**（3×P2），待修复闭环
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 v5 —— 闭环 Round 4 全部缺陷（3×P2），发起 WorkBuddy 审查 round 5
+
+方案交接（v5 全量闭环版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+Round 4 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round4-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round4-handoff.md)
+Round 3 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round3-handoff.md)
+Round 2 审查报告：[`docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md)
+Round 1 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md)
+
+- **闭环内容（Round 4 缺陷闭环）**：
+  1. **P2-1（A50 期指 10× 报价单位约定与备源缩放系数）**：登记东财 SGX 市场 104（`104.CN00Y`）以 0.1 点为单位报价的事实（东财 `f60=142710`、`f43=143980`；新浪昨结 `14271.000`、现价 `14400.000`），在 §3.1.1 注册表新增「源间缩放系数」列（`GL_A50` 为 `0.1`，其余均为 `1.0`），在 §3.4.2 明确备源切换时执行 `×0.1` 缩放归一化（`142710 × 0.1 = 14271.000`），并在 §5 增加基准误差为 0 的验收断言，彻底闭环双源基准无缝对接；
+  2. **P2-2（明确仅 push2delay 稳定可达并将之正式纳入轮转）**：纠偏 §2.1 主机段表述，明确记录在受限网络环境下 `push2his` 族存在 `UND_ERR_SOCKET`、`push2` 恒 502，实测仅 `push2delay.eastmoney.com` 稳定可达；在 §2.1 与 §3.1.2 改造清单中明确将 `push2delay.eastmoney.com` 正式追加至 `EASTMONEY_TRENDS_HOSTS`（`server/marketData.js:18-22`）与 `server/klineService.js:95` 的轮转列表，并针对 `qt/stock/get` 增加 `push2delay` 兜底；
+  3. **P2-3（`inferAssetType` 补齐 `hf_` / `r_hk` 契约值域与全值域断言）**：在 §3.1.2 表改造目标中将 `inferAssetType(code)` 契约值域完整扩充：① `GL_` 前缀 或 `^hf_[A-Za-z0-9_]+$`（新浪外盘备源符号） → `'futures_global'`；② `^(?:sh|sz|bj)\d{6}$ 或 6位纯数字` → `'stock_cn'`；③ `^(?:hk|r_hk)\d{5}$` → `'stock_hk'`；④ `^(?:us)?[A-Za-z]+$`（且非国内期货） → `'stock_us'`；⑤ `isFutureCode(code)===true` → `'futures_cn'`；⑥ 其余未知代码统一兜底回退 `'stock_cn'`。在 §3.1.1 规范可执行的全值域覆盖单测清单，断言 `resolveSessionStrategy('hf_CL')` 返回 `globalFuturesStrategy`（22:00 固定时钟下 `autoStop === false`），并在 §5 落地验收断言，彻底消除 A 股误路由隐患。
+- **验证结论**：本地门禁全部通过（`npm run lint` 0 错误，`npm test` 843/843 全部通过，`npm run build` 成功）；向 WorkBuddy 发起 Round 5 审查。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v4 —— WorkBuddy 审查 round 4 **未通过**（3×P2），待修复闭环
 
 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round4-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round4-handoff.md)（被审 `cb49106`，基准 `45593a5`，范围 6 文件 / +839 −2，纯文档；本轮修复增量 `7781fe1..cb49106` = 3 文件 / +46 −20）
 被审方案（v4，round 4 被审版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
