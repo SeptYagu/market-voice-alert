@@ -1,6 +1,22 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：WorkBuddy 审查 round 2 **全面审查通过**（0 缺陷）—— 正式交付
+## 2026-09-16 当前状态：国际期货与国际股票接入可行性调研与架构方案已建立 —— 待审查
+
+方案交接：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+前序审查：[`docs/handoff/2026-09-16-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round2-handoff.md)（全面审查通过交付）
+
+- **方案概述**：响应用户对接入国际主流期货（美原油、COMEX黄金、白银、美铜、纳指/标普期货、A50等）与国际股票（港美股）的诉求，完成技术可行性论证与系统级架构方案设计。
+- **公网数据源现场验证**：
+  1. 外盘期货：新浪 `hf_`（CL/GC/NQ等）延时 <100ms，现价/买卖一/开高低/持仓量字段完备；东财 `102.CL00Y` 470 根分时线结构兼容。
+  2. 港股：腾讯 `r_hk00700` + 东财 `116.00700`（240 根分时线）。
+  3. 美股：腾讯 `usAAPL` + 东财 `105.AAPL`/`106.BABA`（391 根分时线）。
+- **架构设计核心**：
+  1. 资产领域模型扩展：`stock_hk`、`stock_us`、`futures_global`；
+  2. 交易会话策略解耦（Strategy Pattern）：独立 `HkStockSession`、`UsStockSession`（冬夏令时动态换算）、`GlobalFuturesSession`（24h连续+结算停盘判定），严格防止国内 A 股与国内期货既有精密规则回归；
+  3. 图表与 TTS 适配：Unix 时间戳无缝对齐，TTS 货币（元/港币/美元）与中英名称自适应；
+  4. 分阶段演进：Phase 1 外盘主流期货（~30个核心品种） ➔ Phase 2 港股 ➔ Phase 3 美股。
+
+## 2026-09-16 历史状态：WorkBuddy 审查 round 2 **全面审查通过**（0 缺陷）—— 正式交付
 
 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round2-handoff.md)
 交接文档：[`docs/handoff/2026-09-16-chart-date-format-and-volume-color-handoff.md`](docs/handoff/2026-09-16-chart-date-format-and-volume-color-handoff.md)
