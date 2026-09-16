@@ -1,6 +1,24 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：Phase 1 国际期货与外盘基础落地代码（`4373343`）—— 独立审查 Round 1 未通过（2×P1 + 3×P2 + 5×P3）
+## 2026-09-16 当前状态：Phase 1 国际期货与外盘基础落地代码（`9389bcd`）—— 独立审查 Round 2 未通过（2×P2 + 6×P3）
+
+审查报告：[`docs/handoff/2026-09-16-global-futures-phase1-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-16-global-futures-phase1-workbuddy-code-review-round2-handoff.md)
+被审提交：`9389bcd`（基准 `adf057f`，实际审查增量 `4373343..9389bcd` = 12 文件 / +455 −178）；门禁实跑：`lint` 0 问题、`npm test` 863/863、`npm run build` 成功。
+
+- **Round 1 缺陷闭环情况**：P1-1（`splitCodes` 资产族分发）与 P1-2（`parseEastmoney` 取 `f107`）**已实测真闭环**——真实服务端 + 真实 `fetchQuotes` 端到端 9/9 报价 code/type/price/prevClose/decimals/currency 全对，真实 payload 回放 `parseEastmoney` 15/15 PASS；变异测试 M1（`splitCodes` 退化为 2 桶）19/20 转红、M2（去掉 `f107`）19/20 转红。**P2-1/P2-2/P3-1..5 均未闭环**（见下）。
+- **P2-1（阻断）**：`server/intradayService.js:230` 的服务端共享缓存分时仍用日历日切分 —— `filterKlineItemsByDate(klineData.items, common.date)` 未随策略化改造，且 `:159/:181` 对历史日期提前返回，使 `trends2`/腾讯两路根本不参与。实跑（全新缓存根）`GET /api/cache/intraday?code=GL_CL0&date=2026-09-16` 得 **1079 根**，真值 **1381 根**（丢 302 根 = 21.9%），且响应仍标 `archiveComplete: true`（静默残缺，消费方无从察觉）。Round 1 报 257 根是旧缓存残留；本轮用新缓存根复测得真实差距。
+- **P2-2（阻断）**：跨午夜交易日过滤被实现为**旧日历日判据 ∨ 新 `getTradingDay` 判据**的并集，旧行为未被替换。`src/js/parser.js:535-536`（`itemDate !== selectedDate && chartTimeToDate(time) !== selectedDate`）、`src/js/api.js:350-353`、`server/intradayService.js:54-57` 三处同一语义。真实 payload 复现：对 2026-09-16 交易日数据请求 `date='2026-09-17'` → 返回 **301 根**（`getTradingDay` 判定其全部属 09-16，正确值应为 **0**）。
+- **P3-1**：`src/js/parser.js:_resolveRowTradingDay` 硬编码 `if (min < 360)` 作结算断档上界，忽略夏令时（应为 DST 360 / 非 DST 420），冬令时下 05:00–07:00 归属错日。
+- **P3-2**：`src/js/tts.js`、`alert.js`、`monitorTableView.js`、`batchExportService.js` 的小数位消费仅白名单 `{3,4}`，`GL_GC0`/`GL_A50`/`GL_YM0`/`GL_HSI` 精度与注册表不符（同 P3 族，Round 1 的同项未全闭）。
+- **P3-3**：`src/js/parser.js:146` 仍 `known || '105'`，未收录美股符号静默落 105（实测 `usBA → 105.BA → rc:100 data:null`，`106.BA` 才有 `f58='波音'`）。
+- **P3-4**：`src/js/parser.js:396` `quoteDate: date ? date.replace(/-/g,'') : ''` 的 8 位契约已改对，但无任何断言守护（变异 M5 转 10 位后 20/20 仍绿）。
+- **P3-5**：`getFuturesSessionRanges` 对国内期货仍不可达（`fetchIntraday` 首行即转 `fetchFuturesIntraday`），唯一消费方是测试，`t.true(length > 0)` 为空验收（变异 M6 撤销服务端策略接线后 20/20 仍绿）。
+- **P3-6**：`tests/globalFutures.test.js` 的 `^hf_` 不相交断言恒真（索引内 `hf_` 条目实测 0）；§5 验收矩阵 ③⑤⑦ 项仍缺断言。
+- **变异测试盲区（本轮新增证伪手法）**：M3（去掉 `priceDecimals` 生产）、M4（回退跨午夜归属）、M5（`quoteDate` 改 10 位）、M6（撤销服务端策略接线）四项变异后 `tests/globalFutures.test.js` 均 **20/20 全绿** → 新增用例对上述实现零判别力。
+- **待确认风险**：① A50 夜盘 05:15 收盘未能采样证实（`trends2` 多日与 `kline` beg/end 均只返回最近交易日）；② 港股/美股腾讯路径报价实测**不带** `priceDecimals`（东财兜底路径带），精度消费点存在双轨；③ 受限网络下代理轮转与主备跳变未做压力实测；④ `quoteDate` 契约的跨模块一致性未做全仓核对。
+- **复审验收**：见报告 §四（9 条，含"历史日期分时根数与真值一致 + 归档标记不得为真 + 新增用例变异必红"）。
+
+## 2026-09-16 历史状态：Phase 1 国际期货与外盘基础落地代码（`4373343`）—— 独立审查 Round 1 未通过（2×P1 + 3×P2 + 5×P3）
 
 审查报告：[`docs/handoff/2026-09-16-global-futures-phase1-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-16-global-futures-phase1-workbuddy-code-review-round1-handoff.md)
 被审提交：`4373343`（基准 `adf057f`，18 文件 / +1492 −150）；门禁实跑：`lint` 0 问题、`npm test` 858/858、`npm run build` gzip 119.53 KB（≤125.10 KB）。
