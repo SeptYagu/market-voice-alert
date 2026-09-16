@@ -1,6 +1,24 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 v6 —— WorkBuddy 审查 round 6 **未通过**（2×P2 + 1×P3），待修复闭环
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 v7 —— 闭环 Round 6 全部缺陷（2×P2 + 1×P3 与待确认风险），发起 WorkBuddy 审查 round 7
+
+方案交接（v7 全量闭环版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+Round 6 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round6-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round6-handoff.md)
+Round 5 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round5-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round5-handoff.md)
+Round 4 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round4-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round4-handoff.md)
+Round 3 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round3-handoff.md)
+Round 2 审查报告：[`docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md)
+Round 1 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md)
+
+- **闭环内容（Round 6 缺陷闭环）**：
+  1. **P2-1（A50 端点报价单位全价格字段归一化）**：在 §3.1.2 改造清单中扩充 `parseEastmoney` 的归一化范围，明确不仅覆盖 `f43/f60/f169`，而是将 A50（`104.CN00Y`）全部价格字段（`f43`最新、`f44`最高、`f45`最低、`f46`今开、`f60`昨结、`f169`涨跌额）统一以 `÷10` 取代 A 股 `div100` 归一化为点数，保证 `open/high/low` 处于真实量纲，彻底消除 `openChangePercent` 畸变为 `-90%` 的缺陷；在 §5 补入全字段同级一致性断言（`open == sina.field8`、`high == sina.field4`、`low == sina.field5` 且 `openChangePercent` 绝对值 < 1%）；
+  2. **P2-2（`parseEastmoney` 反向规范代码身份推导 `GL_*`）**：在 §3.1.2 改造清单中显式纳入 `src/js/parser.js:106-107`，明确东财行情解析输出 `code` 必须根据 `(d.f107, d.f57)` 反查 `globalCatalog` 注册表输出规范内部统一代码 `GL_*`（如 `GL_A50`、`GL_HSI`）并将 `type` 标为 `'futures_global'`，严禁回退至 `('sz') + f57` 兜底导致 `szcn00y`/`szhsi_m` 在 `monitorController.js:44` 门禁被整段丢弃；在 §5 补齐代码身份与类型断言；
+  3. **P3-1（纠偏 §2.1 新浪字段 2/3 标签与示例值）**：将 §2.1 字段 2/3 标签精确回改修正为「`2`: 买一价（99.940）」「`3`: 卖一价（99.960）」，与真实响应 payload 与真源采样完全一致；
+  4. **待确认风险处置（代理出网轮转与重试闭环）**：在 §2.1 与 §3.1.2 中显式将 `server/proxyService.js:10, 31` 与 `resolveProxyTarget` 纳入清单，完善多主机轮转与目标失败重试机制，避免仅改常量而未改出网调用循环；
+  5. **非阻塞细节校准**：将 §1.1 第 2 项引用纠偏为 `§3.2 与 §12.1`，与技术方案原文件精确对应。
+- **验证结论**：本地门禁全部通过（`npm run lint` 0 错误，`npm test` 843/843 全部通过，`npm run build` 成功）；向 WorkBuddy 发起 Round 7 审查。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v6 —— WorkBuddy 审查 round 6 **未通过**（2×P2 + 1×P3），待修复闭环
 
 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round6-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round6-handoff.md)（被审 `823f3df`，基准 `45593a5`，本轮修复增量 `bb2e47d..823f3df` = 3 文件 / +71 −507，纯文档）
 被审方案（v6，round 6 被审版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
