@@ -1,9 +1,9 @@
-# 国际期货与国际股票接入可行性调研与架构设计方案 (Handoff v11 - 闭环 Round 10 审查定稿版)
+# 国际期货与国际股票接入可行性调研与架构设计方案 (Handoff v12 - 5大工程落地盲点全量闭环定稿版)
 
-> **文档性质**：需求可行性调研、系统架构演进规划与全链路实施方案（WorkBuddy Round 10 审查后全量闭环与设计收敛定稿版）  
+> **文档性质**：需求可行性调研、系统架构演进规划与全链路实施方案（5 大工程实施盲点闭环与直接实施定稿版）  
 > **适用项目**：股票期货实时监控助手 (`market-voice-alert`)  
 > **日期**：2026-09-16  
-> **状态**：Round 10 审查缺陷（2×P2 + 2×P3 与待确认风险 1）已全面修正闭环，多智能体设计审查正式收敛，定稿交付就绪实施
+> **状态**：Round 10 审查闭环后进一步对 5 项工程落地关键细节（美股特殊符号正则、探测缓存保护、国内期货分时区间导出、出网代理降级超时与换月自适应锚定）实现 100% 闭环，方案完全定稿，直接启动 Phase 1 编码落地
 
 ---
 
@@ -49,7 +49,8 @@
 * **分时走势与历史 K 线（Eastmoney）**：
   * **主机轮转与浏览器代理出网约束（彻底闭环）**：
     * **受限网络实测现象**：在受限网络环境实测（2026-09-16，单主机实测），`push2his.eastmoney.com`、`90.push2his.eastmoney.com` 与 `1.push2.eastmoney.com` 全部出现 `UND_ERR_SOCKET` 连接重置，`push2.eastmoney.com` 恒 502；在此环境下，仅 `push2delay.eastmoney.com` 返回 200 `rc=0` 稳定可达。
-    * **全链路改造要求**：现有架构中，服务端 `EASTMONEY_TRENDS_HOSTS`（`server/marketData.js:18-22`）与 `server/klineService.js:95` 仅覆盖服务端缓存抓取，而浏览器前端请求路径（`src/js/api.js:52` `/api/eastmoney/qt/stock/get`、`src/js/api.js:66` `/api/eastmoney-kline/qt/stock/trends2/get`、`src/js/kline.js:73` `/api/eastmoney-kline/qt/stock/kline/get`）经由 `server/proxyRoutes.js:10`（目标硬编码 `push2his.eastmoney.com`）与 `server/proxyRoutes.js:13`（目标硬编码 `push2.eastmoney.com`），以及 `server/klineService.js:40`（默认 host 硬编码 `push2his.eastmoney.com`）和 `server/proxyService.js:10, 31`（代理分派与 fetch 执行）。因此，**必须全链路改造服务端轮转清单与代理路由**：将 `push2delay.eastmoney.com` 追加至轮转数组，并对 `proxyRoutes.js:10, 13`、`proxyService.js:10, 31` 与 `klineService.js:40` 增加多主机自动重试与 `push2delay` 兜底，确保浏览器端三端点在受限网络下无缝可用。
+    * **全链路改造要求与防雪崩超时策略（5大工程盲点闭环 4）**：现有架构中，服务端 `EASTMONEY_TRENDS_HOSTS`（`server/marketData.js:18-22`）与 `server/klineService.js:95` 仅覆盖服务端缓存抓取，而浏览器前端请求路径（`src/js/api.js:52` `/api/eastmoney/qt/stock/get`、`src/js/api.js:66` `/api/eastmoney-kline/qt/stock/trends2/get`、`src/js/kline.js:73` `/api/eastmoney-kline/qt/stock/kline/get`）经由 `server/proxyRoutes.js:10`（目标硬编码 `push2his.eastmoney.com`）与 `server/proxyRoutes.js:13`（目标硬编码 `push2.eastmoney.com`），以及 `server/klineService.js:40`（默认 host 硬编码 `push2his.eastmoney.com`）和 `server/proxyService.js:10, 31`（代理分派与 fetch 执行）。
+      * **防雪崩超时与主机健康缓存机制**：`proxyService.js:35` 既有的 `timeoutMs: 15_000`（15秒）在受限网络下（如 `push2his` 发生挂死/重置）会导致前端 3s~5s 轮询请求严重堆叠阻塞甚至浏览器连接池耗尽。因此，多主机轮转时**必须引入快速探测超时（`fastTimeoutMs: 2500ms`）**：在尝试首选主机时若超过 2.5s 或失败，立即降级轮转至 `push2delay.eastmoney.com`；一旦备用主机成功，在内存中对该健康目标维持 **60 秒健康缓存**，后续请求直接直连 `push2delay`，TTL 过期前不重复触发挂死主机的 2.5s 等待，彻底消除前端刷新雪崩。
   * **按交易所精准分发 secid 市场号（彻底纠偏与真实市场号对齐）**：
     东财外盘期货按交易所分设不同市场分类，经全量 `clist` 实测校验：
     * `m:101` = COMEX 贵金属与铜（黄金 `101.GC00Y`、白银 `101.SI00Y`、美铜 `101.HG00Y`，全市场 104 只）
@@ -83,6 +84,7 @@
 
 ### 2.3 美股（US Stocks）实测
 * **实时报价**：腾讯 `https://qt.gtimg.cn/q=usAAPL`（美股 payload 基准 71 字段[非交易时段实测]，上游偶发追加 2 个尾部空字段使总数达 73 字段；解析器须使用下限守卫 fields.length >= 35 或 >= 71，不得以总数做等值断言），常规收盘价位于 f3，时间格式为 `YYYY-MM-DD HH:mm:ss`。
+  * **特殊字符代码实测（5大工程盲点闭环 1）**：美股不仅有纯英文字母代码（如 `AAPL`, `TSLA`），还广泛存在包含点号 `.` 或短横线 `-` 的著名标的（如巴菲特伯克希尔哈撒韦 `BRK.A` / `BRK.B`，优先股 `BF.B` 等）。在腾讯接口中对应为 `v_usBRK.A` / `v_usBRK_A`，东财对应 `106.BRK_A`。因此，服务端与客户端的美股代码正则必须严格兼容 `.`、`_` 与 `-`，绝不得武断限制为纯字母！
 * **分时走势与历史 K 线**：东财三大美股市场 `secid=105.AAPL`（纳斯达克）、`secid=106.BABA`（纽交所）、`secid=107.SPY`（美交所/Arca，实测 4774 只标的，腾讯对应 `.AM` 后缀）。
   * `trends2` 端点口径为 **391 根**（含美东 09:30 开盘集合快照，至 16:00 结束共 391 点）；对应 `klt=1` 1分钟K线口径为 **390 根**（从 09:31 开始）。
   * **东财 `qt` 报价量纲实测（P2-1 与 P3-3 实测确认）**：东财 `qt/stock/get` 端点对美股全市场（`m:105, 106, 107`）输出的原始价格字段统一以 0.001 美元为单位（如苹果 `105.AAPL` `f43=331340`、阿里巴巴 `106.BABA` `f43=109340`、标普500ETF `107.SPY` `f43=757390`），同源 `trends2` 末根与腾讯实时价均为真实价格 `331.340` / `109.340` / `757.390`。真实除数统一为 **`÷1000`**。
@@ -135,6 +137,11 @@ export const ASSET_TYPES = Object.freeze({
 | 美股 | 特斯拉 `usTSLA` | `105.TSLA` | 356580 | 356.580 | 356.58 | **÷1000** | 纳斯达克美股同为 ÷1000 |
 | 美股 | 标普500ETF `usSPY` | `107.SPY` | 757390 | 757.390 | 757.39 | **÷1000** | 美交所/Arca（m:107，腾讯 .AM 后缀，实测 4774 只）同为 ÷1000；注：105/106 取 107 标的恒 rc:100，必须完整支持 107 |
 
+* **美股市场探测结果双层缓存机制（5大工程盲点闭环 2）**：
+  为杜绝前端 3s~5s 高频轮询时对未收录美股代码反复并发执行 105/106/107 三次探测造成上游反爬与时延放大，确立**“探测一次、全程命中”**双层缓存规范：
+  1. **内存缓存（一级）**：模块级维护 `Map<string, string>`（如 `'usSPY' -> '107.SPY'`），生命周期内 O(1) 短路直通；
+  2. **持久化/共享缓存（二级）**：浏览器端写入 `localStorage` 缓存键 `market_us_secid_cache`，服务端同步写入 `/api/cache/market`，即便刷新页面或重启服务亦无需重新探测。
+
 * **真实有效的解析层隔离与冲突防护断言**：
   ```js
   // 单元测试中验证解析层正交性，确保国内代码与外盘代码分派完全正确且互不污染
@@ -185,18 +192,18 @@ export const ASSET_TYPES = Object.freeze({
 
 | 层级 | 文件位置 | 既有逻辑 | 改造目标 |
 |---|---|---|---|
-| **服务端** | `server/utils.js:76-86` (`normalizeCodeParam`) | 仅匹配 `^(sh\|sz\|bj)\d{6}$` 或 6 位纯数字，其余返空 | 支持 `hk\d{5}`、`us[A-Za-z]+`、`GL_[A-Z0-9]+`、`hf_[A-Za-z0-9_]+` |
+| **服务端** | `server/utils.js:76-86` (`normalizeCodeParam`) | 仅匹配 `^(sh\|sz\|bj)\d{6}$` 或 6 位纯数字，其余返空 | 支持 `hk\d{5}`、`us[A-Za-z0-9._-]+`（兼容 `BRK.A`/`BRK.B` 等特殊代码，盲点 1 闭环）、`GL_[A-Z0-9]+`、`hf_[A-Za-z0-9_]+` |
 | **服务端** | `server/marketData.js:18-22, 160, 194` | `EASTMONEY_TRENDS_HOSTS` 仅含 `push2his` 族，且代码截取 slice(2) | **主机扩展与资产感知**：将 `push2delay.eastmoney.com` 追加进轮转与兜底清单；按资产类型分发各市场东财 secid 与 Aktools 参数 |
-| **服务端** | `server/proxyRoutes.js:10, 13`、`server/proxyService.js:10, 31` 及 `server/klineService.js:40, 95` | 静态 target 硬编码 `push2his` 与 `push2`，`resolveProxyTarget` 返回单目标无轮转兜底 | **浏览器代理出网兜底与轮转**：对 `/api/eastmoney-kline` 与 `/api/eastmoney` 增加目标多主机轮转与 `push2delay.eastmoney.com` 失败重试/兜底；`buildEastmoneyKlineUrl` 默认 host 接入轮转列表；`proxyService` 完善重试循环 |
-| **客户端** | `src/js/parser.js:11-25` (`normalizeCode`) | 仅识别 `sh/sz/bj` | 扩展并新增导出 `inferAssetType(code): string`（契约值域严格对照 `ASSET_TYPES`：① `GL_` 前缀 或 `^hf_[A-Za-z0-9_]+$` → `'futures_global'`；② `^(?:sh\|sz\|bj)\d{6}$` 或 6位纯数字 → `'stock_cn'`；③ `^(?:hk\|r_hk)\d{5}$` → `'stock_hk'`；④ `^(?:us)?[A-Za-z]+$` 且 `isFutureCode===false` → `'stock_us'`；⑤ `isFutureCode(code)===true` → `'futures_cn'`；⑥ 其余未知输入兜底回退 `'stock_cn'`），同时改造 `normalizeCode` 输出规范化资产对象 `{ code, type, market, secid }` |
-| **客户端** | `src/js/parser.js:34-40` (`toEastmoneySecId`) 及服务端 `marketData.js:196` / `klineService.js:41` | 仅依 `inferMarket` 识别 A 股 `1.sh / 0.sz`，外盘恒返回 `null` | **P2-1 与 P3-1 闭环：代码到东财 secid 解析器扩展**：支持外盘期货 `GL_*`（查 `globalCatalog` 映射为 `101/102/103/104/134.*`）、港股 `hk*`（`116.*`）与美股 `us*`（按美股符号查 `usCatalog` 字典；未收录时对 `105/106/107` 三大市场号依次探测，首个 `rc=0` 者为准；注：若用 `105/106` 取 `107` 标的如 SPY 必返回 `rc:100`，故必须完整覆盖三大市场号 `105/106/107`），使浏览器与服务端东财三端点构造正常可达 |
+| **服务端** | `server/proxyRoutes.js:10, 13`、`server/proxyService.js:10, 31` 及 `server/klineService.js:40, 95` | 静态 target 硬编码 `push2his` 与 `push2`，`resolveProxyTarget` 返回单目标无轮转兜底 | **浏览器代理出网兜底与防雪崩轮转（盲点 4 闭环）**：对 `/api/eastmoney-kline` 与 `/api/eastmoney` 增加目标多主机轮转与 `push2delay.eastmoney.com` 失败重试/兜底；引入 `fastTimeoutMs: 2500ms` 快速探测超时与 60s 主机健康状态缓存，杜绝 15s 超时造成的前端刷新雪崩；`buildEastmoneyKlineUrl` 默认 host 接入轮转；`proxyService` 完善重试循环 |
+| **客户端** | `src/js/parser.js:11-25` (`normalizeCode`) | 仅识别 `sh/sz/bj` | 扩展并新增导出 `inferAssetType(code): string`（契约值域严格对照 `ASSET_TYPES`：① `GL_` 前缀 或 `^hf_[A-Za-z0-9_]+$` → `'futures_global'`；② `^(?:sh\|sz\|bj)\d{6}$` 或 6位纯数字 → `'stock_cn'`；③ `^(?:hk\|r_hk)\d{5}$` → `'stock_hk'`；④ `^(?:us)?[A-Za-z0-9._-]+$` 且 `isFutureCode===false` → `'stock_us'`（盲点 1 闭环：覆盖 `BRK.A` 等标的）；⑤ `isFutureCode(code)===true` → `'futures_cn'`；⑥ 其余未知输入兜底回退 `'stock_cn'`），同时改造 `normalizeCode` 输出规范化资产对象 `{ code, type, market, secid }` |
+| **客户端** | `src/js/parser.js:34-40` (`toEastmoneySecId`) 及服务端 `marketData.js:196` / `klineService.js:41` | 仅依 `inferMarket` 识别 A 股 `1.sh / 0.sz`，外盘恒返回 `null` | **代码到东财 secid 解析器扩展与探测双层缓存（盲点 2 闭环）**：支持外盘期货 `GL_*`（查 `globalCatalog` 映射为 `101/102/103/104/134.*`）、港股 `hk*`（`116.*`）与美股 `us*`（按美股符号查 `usCatalog` 字典；未收录时对 `105/106/107` 三大市场号依次探测，首个 `rc=0` 者为准，并立即写入内存与本地持久化缓存 `Map<code, marketId>`，后续轮询直接命中，严禁重复探测）；使浏览器与服务端东财三端点构造正常可达 |
 | **客户端** | `src/js/parser.js:93-127` (`parseEastmoney`) 及 `:106-107` | 对价格字段统一执行 `div100`（A 股口径），代码推导恒走 `('sz') + f57` 兜底 | **P1-1、P2-1 与 P3-3 闭环：端点单位全字段逐品种归一化与规范身份推导**：根据 `(d.f107, d.f57)` 反查注册表：① 若命中外盘期货注册表，价格字段（`f43/f44/f45/f46/f60/f169`）统一除以品种特定的 `qtDivisor`（`CL/NQ/ES=100`、`GC/A50=10`、`SI/NG=1000`、`HG=10000`、`YM/HSI=1`），并输出 `GL_*` 及 `type='futures_global'`；② 若未命中外盘注册表，按市场号 `f107` 自动分派默认除数：A 股（`f107: 0, 1`）回退 **`div100`**，港股（`f107: 116`）与美股（`f107: 105, 106, 107`）回退 **`div1000`**，彻底消除港美股在腾讯失败走东财兜底时价格出现 10 倍错位的缺陷；③ 规范输出 `hk*` 与 `us*` 内部代码及类型 |
-| **客户端** | `src/js/parser.js:42` (`TENCENT_LINE_RE`) | 正则 `v_([a-z]{2}\d{6})` | 扩展为支持 `v_((?:sh\|sz\|bj)\d{6}\|r_hk\d{5}\|us[A-Za-z]+)` |
+| **客户端** | `src/js/parser.js:42` (`TENCENT_LINE_RE`) | 正则 `v_([a-z]{2}\d{6})` | 扩展为支持 `v_((?:sh\|sz\|bj)\d{6}\|r_hk\d{5}\|us[A-Za-z0-9._-]+)`（盲点 1 闭环） |
 | **客户端** | `src/js/parser.js:64` (时间字段校验) | 硬编码 `^\d{14}$` (如 20260916142000) | 兼容港股 `YYYY/MM/DD HH:mm:ss` 与美股 `YYYY-MM-DD HH:mm:ss` |
 | **客户端** | `src/js/parser.js:129` (`SINA_FUTURE_RE`) | 正则 `hq_str_(nf_?[a-z0-9]+)` | **P3-1 闭环**：扩展支持 `hq_str_(?:nf_?[a-z0-9]+\|hf_[A-Za-z0-9_]+)`，新增导出 `parseSinaGlobalFuture(raw, { code, scale, baseFromOwnField7 })`，对 `GL_HG0` 应用 `sinaScale = 0.01` 消除美分/美元量纲差，对 `GL_CL0`/`GL_NG0` 自动绑定自身 `field7` 昨结重校涨跌基准 |
 | **客户端** | `src/js/api.js:30-31` (`STOCK_RE`, `FUTURE_RE`) | 仅支持国内 A 股与国内期货 | 改造为资产类型分发器，新标的不被 `buildTencentUrl` 剔除 |
 | **客户端** | `src/js/api.js:36-39, 252-260` (`INTRADAY_SESSION_RANGES`) | 硬编码 A 股两段交易时间，在 `_isTradingSessionTime:257` 与 `_filterIntradaySessions:260` 消费 | 改造为按标的策略动态获取时段窗口，杜绝外盘与港美股分时被全量滤空 |
-| **客户端** | `src/js/marketSession.js:46-52` (`getVoiceEligibleCodes`) | 仅判断 `isFutureCode ? isFutureTrading : stockAllowed` 二元分派 | **P1-2 与 P2-2 闭环：多资产时段策略分派**：遍历标的调用 `resolveSessionStrategy(code).isVoiceAllowed(now, cfg, tradingDates, code)`；其中国内期货策略直接委托既有 `src/js/futures/session.js` 中的 `isFutureTrading(code, now, tradingDates)` 与 `getFuturesSession(code, now, tradingDates)`，外盘活跃时不被 A 股收盘滤空 |
+| **客户端** | `src/js/marketSession.js:46-52` (`getVoiceEligibleCodes`) 及 `src/js/futures/session.js` | 仅判断 `isFutureCode ? isFutureTrading : stockAllowed` 二元分派，缺少日内区间导出 | **多资产时段策略分派与期货日内时段区间补齐（盲点 3 闭环）**：遍历标的调用 `resolveSessionStrategy(code).isVoiceAllowed(now, cfg, tradingDates, code)`；其中国内期货策略直接委托既有 `session.js` 中的 `isFutureTrading` 与 `getFuturesSession`；并在 `session.js` 中新增导出 `getFuturesSessionRanges(code, now, tradingDates)` 供 `getIntradaySessionRanges` 统一调用，外盘活跃时不被 A 股收盘滤空 |
 | **客户端** | `src/js/services/voiceSchedule.js:12, 28` | `futures = list.filter(isFutureCode)`，`:28` 判据为 `!futures.length && session === 'after-close' && autoStopAfterClose` | **P2-1 闭环：契约严格一致，消除误关语音并杜绝午休回归**：重构第 28 行判据为 `if (cfg.enabled && enabled && !hasExtendedHoursAssets && session === 'after-close' && cfg.autoStopAfterClose) enabled = false;`（严格保留 `session === 'after-close'` 维度，与 §3.2.2 逐字一致，绝不在午休 11:30–13:00 误关语音） |
 | **客户端** | `src/js/tts.js:217-218` 与 `src/js/alert.js:87-88` | 硬编码 `quote.type === 'future' ? '' : ' 元'` 与 2/3 位小数 | **P3-2 闭环：语音与预警单位适配**：识别 `type === 'futures_global'`，废除尾附“元”，根据元数据播报正确货币（美元/港币）并匹配其精度 |
 | **客户端** | `src/js/views/monitorTableView.js:95, 339`、`src/js/kline.js:522` 及 `src/js/services/batchExportService.js:102` | 以 `quote.type === 'future'` 判定期货口径 | **P3-2 闭环：消费层统一资产感知**：同步支持 `'futures_global'`，消除外盘标的被误作股票渲染与导出的缺陷 |
@@ -227,6 +234,11 @@ interface MarketSessionStrategy {
      * 若 `getFuturesSession(code, now, tradingDates).sessionStatus === 'trading'`，映射为 `'trading'`；
      * 若处于日盘休市/盘后，映射为 `'after-close'` 或 `'closed'`；
      * `isTradingNow(now, code)` 直接返回 `isFutureTrading(code, now, tradingDates)`；
+   * **分时交易窗口显式委托（5大工程盲点闭环 3）**：针对 `getIntradaySessionRanges(now, code)`，在 `src/js/futures/session.js` 中新增导出 `getFuturesSessionRanges(code, now, tradingDates)`：
+     * 中金所金融期货：国债 T0 等返回 `[[555, 690], [780, 915]]`（09:15-11:30, 13:00-15:15）；股指 IF0 等返回 `[[570, 690], [780, 900]]`（09:30-11:30, 13:00-15:00），无夜盘；
+     * 商品期货日盘：常规返回 `[[540, 615], [630, 690], [810, 900]]`（09:00-10:15, 10:30-11:30, 13:30-15:00）；
+     * 商品期货夜盘：若为夜盘交易日，依据品种 `nightEnd` 追加时段：23:00 收盘（如 RB0）追加 `[[1260, 1380]]`；01:00 收盘追加 `[[1260, 1440], [0, 60]]`；02:30 收盘（如 AU0）追加 `[[1260, 1440], [0, 150]]`；
+     * 策略类的 `getIntradaySessionRanges(now, code)` 直接调用该函数，彻底解决分时图绘制与分时过滤缺乏底层时段区间支撑的隐患；
    * 严禁重写会话状态机，完整继承原日盘、夜盘（21:00-23:00/01:00/02:30）、中金所金融期货无夜盘、国债 15:15 收盘、法定节假日前夜无夜盘、周末休市等精密逻辑；
    * 在 §5 中设置覆盖 RB0/AU0/T0/IF0 四类品种的严格等价性与变异门禁。
 3. **`HkStockSessionStrategy`**：早盘 09:30-12:00，午盘 13:00-16:00；独立香港交易日历。
@@ -306,8 +318,11 @@ export function resolveSessionStrategy(code) {
        | **18:26（本轮复测）** | **夜盘交易中** | **24688 / 24688** | **24688.000** | **0 点 / 0.000%** | **新浪已完全同步至夜盘新基准，偏差归零** |
        确立以东财分时 `trends2.preClose` 为最高权威基准；备源切换时优先以同源走势昨结作为换算锚点，杜绝主备切换出现跳变；
      * **美铜量纲换算对齐**：对于 `GL_HG0`，新浪 `hf_HG` 以美分/磅报价（如 649.300），而东财以美元/磅报价（6.4865）。备源解析器 `parseSinaGlobalFuture` 自动乘以注册表指定的 `sinaScale = 0.01`，将价格无缝统一为美元/磅，消除 100 倍量纲差异；
-     * **CL 与 NG 跨源合约月差异与动态基准绑定（P2-1 闭环）**：实测显示新浪 `hf_CL`（~99.15）与 `hf_NG`（~3.05）跟踪当月合约，而东财连续合约（CL00Y ~103.72, NG00Y ~2.92）跟踪主力换月指数，存在系统性约 4.1%~5.1% 合约基差。**该价差由上游两源合约结构决定，随换月持续漂移，不作为实现的硬性门禁**。备源切换时，系统严禁强行按 1:1 比对绝对价格，而是通过 `parseSinaGlobalFuture` 直接绑定新浪自身的 `field7`（昨结）作为基准，保证涨跌百分比（实测主备切换同一时刻跳变受两源合约基差日间变动影响，实测在 0.236pp~0.41pp，设置 < 0.6pp 健壮性上限守卫，随换月漂移）平滑连续，杜绝产生伪跳水/伪拉升；
-     * **点数基准无缝对接**：东财 `104.CN00Y` 经归一化后的实时报价（昨结 14271.0）与新浪 `hf_CHA50CFD` 字段 7 昨结（14271.000）完全在点数单位上 1:1 对齐。
+      * **CL 与 NG 跨源合约月差异、换月自适应解耦机制（P2-1 与盲点 5 闭环）**：
+        实测显示新浪 `hf_CL`（~99.15）与 `hf_NG`（~3.05）跟踪当月合约，而东财连续合约（CL00Y ~103.72, NG00Y ~2.92）跟踪主力换月指数，存在系统性约 4.1%~5.1% 合约基差。**该价差由上游两源合约结构决定，随换月持续漂移，不作为实现的硬性门禁**。
+        * **自适应解耦设计**：备源切换时，系统严禁跨源比对绝对价格，而是通过 `parseSinaGlobalFuture` 将 `prevClose` 直接重锚定为新浪自身的 `field7`（昨结）。涨跌幅计算完全基于备源内部闭环数据（`(price - prevClose) / prevClose`），因此在极端主力换月日即便两源绝对基差剧烈重构（如基差变动暂时突破 0.6pp），也**绝不会导致百分比计算突变或触发伪告警**；
+        * **跳变守卫**：实测常规交易日主备切换同一时刻跳变受两源合约基差日间变动影响（实测在 0.236pp~0.41pp），设置 `< 0.6pp` 仅作为非换月日平滑性守卫；
+      * **点数基准无缝对接**：东财 `104.CN00Y` 经归一化后的实时报价（昨结 14271.0）与新浪 `hf_CHA50CFD` 字段 7 昨结（14271.000）完全在点数单位上 1:1 对齐。
 
 ---
 
@@ -383,52 +398,68 @@ gantt
        `assert.equal(chinaFuturesStrategy.isTradingNow(treasuryLateDay, 'T0'), true);`
        `assert.equal(chinaFuturesStrategy.isTradingNow(treasuryLateDay, 'IF0'), false);`
        `assert.equal(chinaFuturesStrategy.isTradingNow(treasuryLateDay, 'RB0'), false);`
-     * 变异验证：若将 `ChinaFuturesSessionStrategy` 变异为「不委托、套用 A 股二元分派或无品种单例」，上述 21:30、23:30、02:40 与 15:08 用例**必须确定性转红**！
-2. **新资产功能验收断言（全面升级）**：
-   * **secid 有效性与 `toEastmoneySecId` 解析断言（P3-1 闭环）**：
-     * Phase 1 全部 10 个品种均具备明确的东财 secid，且均能成功通过 `qt` + `trends2` + `kline` 三端点拉取行情与图表，新浪 `hf_` 作为全量备源；
-     * 断言解析器正确返回真实 secid：
-       `assert.equal(toEastmoneySecId('GL_A50'), '104.CN00Y')`；
-       `assert.equal(toEastmoneySecId('GL_HSI'), '134.HSI_M')`；
-       `assert.equal(toEastmoneySecId('GL_CL0'), '102.CL00Y')`；
-       `assert.equal(toEastmoneySecId('hk00700'), '116.00700')`；
-       `assert.equal(toEastmoneySecId('usAAPL'), '105.AAPL')`。
-   * **10 品种端点单位全字段与备源一致性断言（P1-1、P2-1 与 P3-1 闭环）**：
-     * 断言 10/10 品种同一时刻真源取数缩放对齐（东财内部）：
-       `assert.ok(Math.abs(qt.f43 / qtDivisor - trends2.last.close) / trends2.last.close <= 0.005)`；
-       `assert.equal(qt.f60 / qtDivisor, trends2.preClose)`；
-     * 断言跨源对齐：
-       * 针对 1:1 品种（GC, SI, NQ, ES, YM, A50, HSI）及比例品种（HG*0.01）：
-         `assert.ok(Math.abs(qt.f43 / qtDivisor - sina.field0 * sinaScale) / (sina.field0 * sinaScale) <= 0.005)`；
-       * 针对两源合约月差异品种（CL, NG，P2-1 与 P3-2 闭环）：
-         `// 核心断言备源报价的昨结基准绑定自身 field7（消除换月价差错位，P3-2 完整绑定）：`
-         `const sinaClPayload = 'var hq_str_hf_CL="99.227,,99.140,99.160,100.610,98.990,18:38:00,100.750,100.460,0,1,17,2026-09-16,纽约原油,0";';`
-         `const primaryCl = parseEastmoney({ data: { f107: 102, f57: 'CL00Y', f43: 10382, f60: 10583 } });`
-         `const fallbackCl = parseSinaGlobalFuture(sinaClPayload, { code: 'GL_CL0' });`
-         `assert.equal(fallbackCl.prevClose, Number(sinaClPayload.split(',')[7])); // 100.750`
-         `// 涨跌幅跳变平滑健壮性上限说明：主备两源存在合约月基准差，其日间变动 |ΔchangePercent| ≡ |今日基差 - 昨日基差|。`
-         `// 实测同刻连续采样跳变在 0.236pp ~ 0.41pp 区间，设定 < 0.6pp 为上游两源基差日间变动的健壮性上限守卫（非内部代码判据）：`
-         `assert.ok(Math.abs(fallbackCl.changePercent - primaryCl.changePercent) < 0.6);`
-         `// 变异验证：若将备源昨结错误绑定为东财 f60（105.83），计算所得 fallbackCl.changePercent 将出现严重偏离（偏离 > 6.0pp），对应用例必须确定性转红！`
-     * 断言全部 10 个品种的 `open/high/low` 经 `qtDivisor` 归一化后同级一致，且 `openChangePercent` 处于正常区间（|值| < 5%，绝不出现 10~100 倍错位或 -90% 伪跌幅）；
-     * 变异验证：将任一品种的 `qtDivisor` 改错一个数量级，对应用例**必须确定性转红**。
-   * **港美股东财 qt 端点量纲（div1000）验收断言（P2-1 与 P3-3 闭环）**：
-     * 断言港美股通过 `parseEastmoney` 兜底时正确应用 `div1000`：
-       `const parsedHk = parseEastmoney({ data: { f107: 116, f57: '00700', f43: 433400, f60: 438800 } });`
-       `assert.equal(parsedHk.code, 'hk00700');`
-       `assert.equal(parsedHk.type, 'stock_hk');`
-       `assert.equal(parsedHk.price, 433.40);`
-       `assert.equal(parsedHk.prevClose, 438.80);`
-       `const parsedUsNas = parseEastmoney({ data: { f107: 105, f57: 'AAPL', f43: 331340, f60: 330000 } });`
-       `assert.equal(parsedUsNas.code, 'usAAPL');`
-       `assert.equal(parsedUsNas.type, 'stock_us');`
-       `assert.equal(parsedUsNas.price, 331.34);`
-       `const parsedUsAmex = parseEastmoney({ data: { f107: 107, f57: 'SPY', f43: 757390, f60: 760880 } });`
-       `assert.equal(parsedUsAmex.code, 'usSPY');`
-       `assert.equal(parsedUsAmex.type, 'stock_us');`
-       `assert.equal(parsedUsAmex.price, 757.39);`
-       `assert.equal(parsedUsAmex.prevClose, 760.88);`
-     * 变异验证：若将港美股任一市场号（116, 105, 106, 107）除数遗漏或改错为 100（A 股默认），该断言**必须确定性转红**。
+      * **分时时段区间断言（盲点 3 闭环）**：
+        `const rbRanges = chinaFuturesStrategy.getIntradaySessionRanges(regularNight, 'RB0');`
+        `assert.ok(rbRanges.some(([s, e]) => s === 1260 && e === 1380)); // 含夜盘 21:00-23:00`
+        `const auRanges = chinaFuturesStrategy.getIntradaySessionRanges(regularNight, 'AU0');`
+        `assert.ok(auRanges.some(([s, e]) => s === 0 && e === 150));    // 含次日凌晨 00:00-02:30`
+        `const t0Ranges = chinaFuturesStrategy.getIntradaySessionRanges(regularNight, 'T0');`
+        `assert.ok(t0Ranges.some(([s, e]) => e === 915));                 // 国债 15:15 收盘`
+        `const ifRanges = chinaFuturesStrategy.getIntradaySessionRanges(regularNight, 'IF0');`
+        `assert.ok(ifRanges.every(([s]) => s < 900));                    // 股指无夜盘`
+      * 变异验证：若将 `ChinaFuturesSessionStrategy` 变异为「不委托、套用 A 股二元分派或无品种单例」，上述 21:30、23:30、02:40、15:08 与分时区间用例**必须确定性转红**！
+ 2. **新资产功能验收断言（全面升级）**：
+    * **secid 有效性与 `toEastmoneySecId` 解析断言（P3-1 闭环）**：
+      * Phase 1 全部 10 个品种均具备明确的东财 secid，且均能成功通过 `qt` + `trends2` + `kline` 三端点拉取行情与图表，新浪 `hf_` 作为全量备源；
+      * 断言解析器正确返回真实 secid：
+        `assert.equal(toEastmoneySecId('GL_A50'), '104.CN00Y')`；
+        `assert.equal(toEastmoneySecId('GL_HSI'), '134.HSI_M')`；
+        `assert.equal(toEastmoneySecId('GL_CL0'), '102.CL00Y')`；
+        `assert.equal(toEastmoneySecId('hk00700'), '116.00700')`；
+        `assert.equal(toEastmoneySecId('usAAPL'), '105.AAPL')`。
+    * **美股特殊符号与探测缓存断言（盲点 1 与 盲点 2 闭环）**：
+      * 断言美股正则与类型解析器完整支持点号与短横线特殊代码：
+        `assert.equal(inferAssetType('usBRK.A'), 'stock_us')`；
+        `assert.equal(inferAssetType('usBRK.B'), 'stock_us')`；
+        `assert.equal(inferAssetType('usBF.B'), 'stock_us')`；
+        `assert.equal(inferAssetType('BRK.A'), 'stock_us')`；
+      * 断言未收录美股标的首次探测确立 marketId 后，立即存入双层缓存；二次调用时直接从内存短路返回，额外网络发包为 0。
+    * **10 品种端点单位全字段与备源一致性断言（P1-1、P2-1 与 P3-1 闭环）**：
+      * 断言 10/10 品种同一时刻真源取数缩放对齐（东财内部）：
+        `assert.ok(Math.abs(qt.f43 / qtDivisor - trends2.last.close) / trends2.last.close <= 0.005)`；
+        `assert.equal(qt.f60 / qtDivisor, trends2.preClose)`；
+      * 断言跨源对齐：
+        * 针对 1:1 品种（GC, SI, NQ, ES, YM, A50, HSI）及比例品种（HG*0.01）：
+          `assert.ok(Math.abs(qt.f43 / qtDivisor - sina.field0 * sinaScale) / (sina.field0 * sinaScale) <= 0.005)`；
+        * 针对两源合约月差异品种（CL, NG，P2-1、P3-2 与盲点 5 闭环）：
+          `// 核心断言备源报价的昨结基准绑定自身 field7（消除换月价差错位，P3-2 完整绑定）：`
+          `const sinaClPayload = 'var hq_str_hf_CL="99.227,,99.140,99.160,100.610,98.990,18:38:00,100.750,100.460,0,1,17,2026-09-16,纽约原油,0";';`
+          `const primaryCl = parseEastmoney({ data: { f107: 102, f57: 'CL00Y', f43: 10382, f60: 10583 } });`
+          `const fallbackCl = parseSinaGlobalFuture(sinaClPayload, { code: 'GL_CL0' });`
+          `assert.equal(fallbackCl.prevClose, Number(sinaClPayload.split(',')[7])); // 100.750`
+          `// 换月解耦说明：涨跌幅严格依据备源内部闭环数据计算（(price - prevClose) / prevClose），两源基差漂移不污染计算。`
+          `// 常规非换月日跳变受两源合约基差日间变动影响（实测 0.236pp ~ 0.41pp），设定 < 0.6pp 仅作为平滑性上限守卫：`
+          `assert.ok(Math.abs(fallbackCl.changePercent - primaryCl.changePercent) < 0.6);`
+          `// 变异验证：若将备源昨结错误绑定为东财 f60（105.83），计算所得 fallbackCl.changePercent 将出现严重偏离（偏离 > 6.0pp），对应用例必须确定性转红！`
+      * 断言全部 10 个品种的 `open/high/low` 经 `qtDivisor` 归一化后同级一致，且 `openChangePercent` 处于正常区间（|值| < 5%，绝不出现 10~100 倍错位或 -90% 伪跌幅）；
+      * 变异验证：将任一品种的 `qtDivisor` 改错一个数量级，对应用例**必须确定性转红**。
+    * **港美股东财 qt 端点量纲（div1000）验收断言（P2-1 与 P3-3 闭环）**：
+      * 断言港美股通过 `parseEastmoney` 兜底时正确应用 `div1000`：
+        `const parsedHk = parseEastmoney({ data: { f107: 116, f57: '00700', f43: 433400, f60: 438800 } });`
+        `assert.equal(parsedHk.code, 'hk00700');`
+        `assert.equal(parsedHk.type, 'stock_hk');`
+        `assert.equal(parsedHk.price, 433.40);`
+        `assert.equal(parsedHk.prevClose, 438.80);`
+        `const parsedUsNas = parseEastmoney({ data: { f107: 105, f57: 'AAPL', f43: 331340, f60: 330000 } });`
+        `assert.equal(parsedUsNas.code, 'usAAPL');`
+        `assert.equal(parsedUsNas.type, 'stock_us');`
+        `assert.equal(parsedUsNas.price, 331.34);`
+        `const parsedUsAmex = parseEastmoney({ data: { f107: 107, f57: 'SPY', f43: 757390, f60: 760880 } });`
+        `assert.equal(parsedUsAmex.code, 'usSPY');`
+        `assert.equal(parsedUsAmex.type, 'stock_us');`
+        `assert.equal(parsedUsAmex.price, 757.39);`
+        `assert.equal(parsedUsAmex.prevClose, 760.88);`
+      * 变异验证：若将港美股任一市场号（116, 105, 106, 107）除数遗漏或改错为 100（A 股默认），该断言**必须确定性转红**。
    * **规范身份推导断言**：
      * 断言 `parseEastmoney(a50Payload).code === 'GL_A50'` 且 `parseEastmoney(hsiPayload).code === 'GL_HSI'`，且类型为 `'futures_global'`，杜绝 `'szcn00y'` / `'szhsi_m'` 错误身份导致报价在 `monitorController` 被丢弃。
    * **会话与语音隔离双向判别断言（P1-2、P2-1 与 P3-2 闭环）**：

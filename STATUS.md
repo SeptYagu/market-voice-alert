@@ -1,6 +1,21 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 v11 —— 全面闭环 Round 10 审查缺陷（2×P2 + 2×P3 与待确认风险），设计审查收敛定稿，交付就绪实施
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 v12 —— 闭环 5 大工程落地盲点（美股特殊代码、探测双层缓存、国内期货分时区间导出、出网代理快速超时与换月自适应解耦），方案最终定稿，交付就绪直接实施（纯文档阶段）
+
+方案交付（v12 闭环 5 大工程盲点定稿版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+Round 10 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round10-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round10-handoff.md)
+Round 9 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round9-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round9-handoff.md)
+
+- **工程落地盲点闭环说明（零代码修改，纯文档与契约加固）**：
+  在 v11 达成架构收敛的基础上，针对实际落码可能遇到的 5 项关键工程细节进行了前置穿透与严密补齐，确保 Phase 1 实施人员无需二次决策或遭遇意外网络风暴/回归：
+  1. **盲点 1（美股带点/横线特殊代码正则与推导支持）**：在 §2.3、§3.1.2（表第 1、4、7 行）及 §5 中扩展美股代码正则为 `^us[A-Za-z0-9._-]+$` 与无前缀美股正则，完整支持伯克希尔（`usBRK.A` / `usBRK.B`）、波士顿啤酒（`BF.B`）等特殊股票代码；
+  2. **盲点 2（东财市场探测双层缓存保护）**：在 §3.1.1.1、§3.1.2（表第 5 行）与 §5 明确探测缓存机制，建立 `Map<string, string>` 内存短路缓存与持久化/服务级缓存，杜绝轮询阶段未收录标的高频探测击穿后端与东财接口；
+  3. **盲点 3（国内期货分时区间导出 getFuturesSessionRanges）**：在 §3.1.2（表第 12 行）与 §3.2.1 明确 `src/js/futures/session.js` 导出 `getFuturesSessionRanges(code, now, tradingDates)`，解决 `getIntradaySessionRanges` 委托无现成导出的落码断层，并在 §5 补齐 `RB0/AU0/T0/IF0` 分时区间用例；
+  4. **盲点 4（出网代理快速超时与主机健康熔断）**：在 §2.1 与 §3.1.2（表第 3 行）明确代理出网探测配置 `fastTimeoutMs: 2500ms` 与 60s 主机健康缓存，防止在 `push2his` 挂起环境下 15s 长超时造成 3s~5s 轮询连接池堆积崩溃；
+  5. **盲点 5（CL/NG 换月基差自适应解耦）**：在 §3.4.2 与 §5 进一步澄清涨跌幅计算完全由数据源内部闭环驱动，主备源合约基差漂移仅作为单测中的非换月波动上限守卫（<0.6pp），杜绝换月时产生伪报警或误判。
+- **约束声明**：本阶段严格遵守用户指令与工作流要求，**未触碰任何产品代码与测试代码**（0 生产代码变更），仅对方案、规范与索引文档进行定稿维护。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 v11 —— 全面闭环 Round 10 审查缺陷（2×P2 + 2×P3 与待确认风险），设计审查收敛定稿，交付就绪实施
 
 方案交付（v11 终审闭环与设计收敛版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
 Round 10 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round10-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round10-handoff.md)
