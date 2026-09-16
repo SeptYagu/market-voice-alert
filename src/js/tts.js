@@ -214,8 +214,18 @@ function _buildSegments(quote) {
   if (!baseName) return null;
 
   // No 「现价」 prefix and no 「%」 suffix: TTS reads % as 「百分之」.
-  const unit = quote.type === 'future' ? '' : ' 元';
-  const decimals = quote.type === 'future' && ((quote.priceTick && quote.priceTick < 0.01) || quote.priceDecimals === 3) ? 3 : 2;
+  const isFuture = quote.type === 'future' || quote.type === 'futures_global';
+  let unit = ' 元';
+  if (isFuture) {
+    unit = '';
+  } else if (quote.type === 'stock_hk' || quote.currency === 'HKD') {
+    unit = ' 港币';
+  } else if (quote.type === 'stock_us' || quote.currency === 'USD') {
+    unit = ' 美元';
+  }
+  const decimals = isFuture && ((quote.priceTick && quote.priceTick < 0.01) || quote.priceDecimals === 3 || quote.priceDecimals === 4)
+    ? (quote.priceDecimals || 3)
+    : 2;
   const priceSeg = `${price.toFixed(decimals)}${unit}`;
 
   const pct = Number(quote.changePercent);

@@ -4,6 +4,11 @@ import { resolveProxyTarget } from './proxyRoutes.js';
 const FORWARDED_RESPONSE_HEADERS = ['content-type', 'cache-control', 'etag', 'last-modified'];
 
 const MAX_PROXY_BODY_BYTES = 10 * 1024 * 1024;
+const FAST_TIMEOUT_MS = 2500;
+const HEALTHY_CACHE_TTL_MS = 60_000;
+
+// Host health cache: routePrefix -> { host: string, expiresAt: number }
+const HEALTHY_HOST_CACHE = new Map();
 
 export async function handleProxyRequest(req, res) {
   const requestUrl = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
@@ -28,13 +33,59 @@ export async function handleProxyRequest(req, res) {
   res.on('close', onClose);
 
   try {
-    const upstream = await fetchWithTimeout(target.url, {
-      method: req.method,
-      headers: target.headers,
-      signal: abort.signal,
-      timeoutMs: 15_000,
-      redirect: 'follow'
-    });
+    const candidateUrls = target.urls && target.urls.length > 0 ? [...target.urls] : [target.url];
+    const cached = HEALTHY_HOST_CACHE.get(target.prefix);
+    if (cached && cached.expiresAt > Date.now()) {
+      candidateUrls.sort((a, b) => {
+        const aMatch = a.includes(cached.host);
+        const bMatch = b.includes(cached.host);
+        if (aMatch && !bMatch) return -1;
+        if (!aMatch && bMatch) return 1;
+        return 0;
+      });
+    }
+
+    let upstream = null;
+    let lastError = null;
+
+    for (let i = 0; i < candidateUrls.length; i++) {
+      if (abort.signal.aborted) break;
+      const currentUrl = candidateUrls[i];
+      const isLast = i === candidateUrls.length - 1;
+      const timeoutMs = isLast ? 15_000 : FAST_TIMEOUT_MS;
+
+      try {
+        const response = await fetchWithTimeout(currentUrl, {
+          method: req.method,
+          headers: target.headers,
+          signal: abort.signal,
+          timeoutMs,
+          redirect: 'follow'
+        });
+        if (response.status < 500) {
+          upstream = response;
+          try {
+            const host = new URL(currentUrl).host;
+            HEALTHY_HOST_CACHE.set(target.prefix, { host, expiresAt: Date.now() + HEALTHY_CACHE_TTL_MS });
+          } catch {
+            // ignore URL parse errors
+          }
+          break;
+        } else {
+          lastError = new Error(`Upstream returned HTTP ${response.status}`);
+        }
+      } catch (err) {
+        if (err && err.name === 'AbortError' && abort.signal.aborted) {
+          throw err;
+        }
+        lastError = err;
+      }
+    }
+
+    if (!upstream) {
+      throw lastError || new Error('All proxy targets failed');
+    }
+
     const headers = {
       'access-control-allow-origin': '*',
       'x-content-type-options': 'nosniff'

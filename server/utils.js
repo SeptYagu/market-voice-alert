@@ -74,7 +74,12 @@ export async function fetchWithTimeout(url, options = {}) {
 
 export function normalizeCodeParam(raw) {
   if (!raw || typeof raw !== 'string') return '';
-  const s = raw.trim().toLowerCase();
+  const trimmed = raw.trim();
+  const s = trimmed.toLowerCase();
+  if (/^gl_[a-z0-9_]+$/i.test(trimmed)) return trimmed.toUpperCase();
+  if (/^hf_[a-z0-9_]+$/i.test(trimmed)) return s;
+  if (/^hk\d{5}$/i.test(trimmed)) return s;
+  if (/^us[a-z0-9._-]+$/i.test(trimmed)) return `us${trimmed.slice(2).toUpperCase()}`;
   if (/^(sh|sz|bj)\d{6}$/.test(s)) return s;
   if (/^\d{6}$/.test(s)) {
     const first = s[0];

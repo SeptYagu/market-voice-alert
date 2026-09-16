@@ -92,7 +92,7 @@ async function fetchKlineNetwork(code, period, signal) {
       // (socket resets, 0/10 in live probes) while the 90.push2his mirror is
       // healthy (9/10). Rotate hosts and only count one failure after a full
       // host round fails, so a single bad round does not trip the breaker.
-      const hosts = ['push2his.eastmoney.com', '90.push2his.eastmoney.com'];
+      const hosts = ['push2his.eastmoney.com', '90.push2his.eastmoney.com', 'push2delay.eastmoney.com'];
       let lastRoundError = null;
       for (const host of hosts) {
         for (let attempt = 0; attempt < 2; attempt++) {

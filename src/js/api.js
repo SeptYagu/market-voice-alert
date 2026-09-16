@@ -6,6 +6,7 @@ import {
   parseEastmoneyTrends,
   calcPercent as _calcPercent
 } from './parser.js';
+import { resolveSessionStrategy } from './marketSession.js';
 import {
   buildKlineUrl,
   buildTencentKlineUrl,
@@ -38,10 +39,22 @@ const INTRADAY_SESSION_RANGES = Object.freeze([
   Object.freeze([13 * 60, 15 * 60])
 ]);
 
+const TENCENT_CODE_RE = /^(?:(?:sh|sz|bj)\d{6}|(?:hk|r_hk)\d{5}|us[a-z0-9._-]+)$/i;
+
 export function buildTencentUrl(codes) {
   const list = (Array.isArray(codes) ? codes : [codes])
-    .filter((c) => typeof c === 'string' && STOCK_RE.test(c))
-    .map((c) => c.toLowerCase());
+    .filter((c) => typeof c === 'string' && TENCENT_CODE_RE.test(c.trim()))
+    .map((c) => {
+      const raw = c.trim();
+      const hkMatch = raw.match(/^(?:hk|r_hk)(\d{5})$/i);
+      if (hkMatch) {
+        return `r_hk${hkMatch[1]}`;
+      }
+      if (/^us/i.test(raw)) {
+        return raw;
+      }
+      return raw.toLowerCase();
+    });
   if (!list.length) return null;
   return `/api/tencent/q=${list.join(',')}`;
 }
@@ -249,22 +262,26 @@ export async function fetchQuotes(codes, opts = {}) {
   };
 }
 
-function _isTradingSessionTime(time) {
+function _isTradingSessionTime(time, code) {
   const hhmm = chartSecondsToTime(time);
   const m = /^(\d{2}):(\d{2})$/.exec(hhmm);
   if (!m) return false;
   const minutes = Number(m[1]) * 60 + Number(m[2]);
-  return INTRADAY_SESSION_RANGES.some(([start, end]) => minutes >= start && minutes <= end);
+  const ranges = code
+    ? resolveSessionStrategy(code).getIntradaySessionRanges(new Date(), code)
+    : INTRADAY_SESSION_RANGES;
+  return ranges.some(([start, end]) => minutes >= start && minutes <= end);
 }
 
-function _filterIntradaySessions(data, selectedDate) {
+function _filterIntradaySessions(data, selectedDate, code) {
   if (!data || !Array.isArray(data.items)) return data;
+  const targetCode = code || data.code;
   return {
     ...data,
     items: data.items.filter((it) => {
       if (!it || !Number.isFinite(Number(it.time))) return false;
       if (selectedDate && chartTimeToDate(it.time) !== selectedDate) return false;
-      return _isTradingSessionTime(it.time);
+      return _isTradingSessionTime(it.time, targetCode);
     })
   };
 }
@@ -344,7 +361,7 @@ export async function fetchIntraday(code, opts = {}) {
   if (allowTick && opts.sharedCache !== true) {
     try {
       const tickData = await fetchAktoolsIntradayTicks(common);
-      const filtered = _filterIntradaySessions(tickData, opts.date);
+      const filtered = _filterIntradaySessions(tickData, opts.date, code);
       if (_hasIntradayItems(filtered)) return filtered;
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;
@@ -355,7 +372,7 @@ export async function fetchIntraday(code, opts = {}) {
   if (opts.sharedCache !== true) {
     try {
       const histData = await fetchAktoolsHistMinute(common);
-      const filtered = _filterIntradaySessions(histData, opts.date);
+      const filtered = _filterIntradaySessions(histData, opts.date, code);
       if (_hasIntradayItems(filtered)) return filtered;
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;
@@ -366,7 +383,7 @@ export async function fetchIntraday(code, opts = {}) {
   if (opts.allowLatestTickSource !== false) {
     try {
       const trendData = await fetchEastmoneyTrends(code, common);
-      const filtered = _filterIntradaySessions(trendData, opts.date);
+      const filtered = _filterIntradaySessions(trendData, opts.date, code);
       if (_hasIntradayItems(filtered)) return filtered;
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;
@@ -382,7 +399,7 @@ export async function fetchIntraday(code, opts = {}) {
     if (klineData) {
       const items = filterKlineItemsByDate(klineData.items, opts.date);
       const decorated = _decorateKlineIntraday({ ...klineData, items }, common);
-      const filtered = _filterIntradaySessions(decorated, opts.date);
+      const filtered = _filterIntradaySessions(decorated, opts.date, code);
       if (_hasIntradayItems(filtered)) return filtered;
     }
   } catch (e) {

@@ -1,4 +1,4 @@
-import { normalizeCode, toEastmoneySecId } from './parser.js';
+import { normalizeCode, toEastmoneySecId, inferAssetType, ASSET_TYPES } from './parser.js';
 import { isFutureCode } from './futures/instrument.js';
 import { isFuturesMarketOpen } from './marketSession.js';
 import {
@@ -215,28 +215,56 @@ function _isTencentMinutePeriod(period) {
 }
 
 export function buildTencentKlineUrl(code, opts = {}) {
-  if (!code || typeof code !== 'string' || !STOCK_CODE_RE.test(code)) return null;
+  if (!code || typeof code !== 'string') return null;
+  const asset = inferAssetType(code);
+  let param;
+  if (asset === ASSET_TYPES.STOCK_CN) {
+    if (!STOCK_CODE_RE.test(code)) return null;
+    param = code.toLowerCase();
+  } else if (asset === ASSET_TYPES.STOCK_HK) {
+    const m = code.match(/^(?:hk|r_hk)?(\d{5})$/i);
+    if (!m) return null;
+    param = `r_hk${m[1]}`;
+  } else if (asset === ASSET_TYPES.STOCK_US) {
+    if (!/^us[a-z0-9._-]+$/i.test(code)) return null;
+    param = code;
+  } else {
+    return null;
+  }
   const period = opts.period === undefined ? DEFAULT_PERIOD : opts.period;
   const type = TENCENT_PERIOD_TYPE[period];
   if (!type) return null;
-  const norm = code.toLowerCase();
   const lmtRaw = opts.lmt === undefined ? 320 : Number(opts.lmt);
   const lmt = Number.isFinite(lmtRaw) && lmtRaw > 0 ? Math.floor(lmtRaw) : 320;
   if (_isTencentMinutePeriod(period)) {
-    return `/api/qq-kline-min/appstock/app/kline/mkline?param=${norm},${type},,${lmt}`;
+    return `/api/qq-kline-min/appstock/app/kline/mkline?param=${param},${type},,${lmt}`;
   }
-  return `/api/qq-kline/appstock/app/fqkline/get?param=${norm},${type},,,${lmt},qfq`;
+  return `/api/qq-kline/appstock/app/fqkline/get?param=${param},${type},,,${lmt},qfq`;
 }
 
 export function buildTencentYearKlineUrl(code, year = new Date().getFullYear()) {
-  if (!code || typeof code !== 'string' || !STOCK_CODE_RE.test(code)) return null;
+  if (!code || typeof code !== 'string') return null;
+  const asset = inferAssetType(code);
+  let param;
+  if (asset === ASSET_TYPES.STOCK_CN) {
+    if (!STOCK_CODE_RE.test(code)) return null;
+    param = code.toLowerCase();
+  } else if (asset === ASSET_TYPES.STOCK_HK) {
+    const m = code.match(/^(?:hk|r_hk)?(\d{5})$/i);
+    if (!m) return null;
+    param = `r_hk${m[1]}`;
+  } else if (asset === ASSET_TYPES.STOCK_US) {
+    if (!/^us[a-z0-9._-]+$/i.test(code)) return null;
+    param = code;
+  } else {
+    return null;
+  }
   const safeYear = Number(year);
   if (!Number.isInteger(safeYear) || safeYear < 1990 || safeYear > 2100) return null;
-  const norm = code.toLowerCase();
   const variable = `kline_dayqfq${safeYear}`;
   const url = new URL('https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get');
   url.searchParams.set('_var', variable);
-  url.searchParams.set('param', `${norm},day,${safeYear - 1}-01-01,${safeYear}-12-31,640,qfq`);
+  url.searchParams.set('param', `${param},day,${safeYear - 1}-01-01,${safeYear}-12-31,640,qfq`);
   return url.toString();
 }
 
@@ -325,6 +353,7 @@ const ST_RE = /^\s*\*?st\b/i;
 
 export function getPriceLimit(code, name) {
   if (typeof code !== 'string' || code.length === 0) return 10;
+  if (inferAssetType(code) !== ASSET_TYPES.STOCK_CN) return null;
   // 北交所涨跌停 30%（北交所不适用 5% ST 规则）
   if (/^bj/i.test(code)) return 30;
   // 去掉 sh/sz/bj 前缀后看前缀号
@@ -341,7 +370,7 @@ export function getPriceLimit(code, name) {
 }
 
 export function classifyKlineBar(item, prevClose, limit) {
-  if (!item) return 'normal';
+  if (!item || limit === null) return 'normal';
   const pc = Number(prevClose);
   if (!Number.isFinite(pc) || pc <= 0) return 'normal';
   const lim = Number(limit) || 10;
@@ -519,7 +548,7 @@ export function applyLiveQuoteToIntraday(items, quote, now = new Date(), isFutur
   if (!Array.isArray(items) || !items.length || !quote || typeof quote !== 'object') return items;
   const price = _positiveNumber(quote.price);
   if (!price) return items;
-  const isFut = isFuture || quote.type === 'future' || quote.isFuture || (quote.code && isFutureCode(quote.code));
+  const isFut = isFuture || quote.type === 'future' || quote.type === 'futures_global' || quote.isFuture || (quote.code && isFutureCode(quote.code));
   if (isFut) {
     if (!isFuturesMarketOpen(now, tradingDates, quote.code ? [quote.code] : [])) return items;
   } else {

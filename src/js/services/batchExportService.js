@@ -99,12 +99,12 @@ export function buildExportCsv(codes, quotesMap) {
   for (const code of codes || []) {
     if (!code) continue;
     const q = quotesMap && typeof quotesMap.get === 'function' ? quotesMap.get(code) : null;
-    const isFuture = q ? (q.type === 'future' || isFutureCode(code)) : isFutureCode(code);
+    const isFuture = q ? (q.type === 'future' || q.type === 'futures_global' || isFutureCode(code)) : (isFutureCode(code) || /^GL_/i.test(code));
     const displayCode = isFuture ? code.toUpperCase() : stripPrefix(code);
     let rawName = (q && q.name) ? String(q.name) : displayCode;
     if (/^[=+\-@\t\r]/.test(rawName)) rawName = `'${rawName}`;
     const name = `"${rawName.replace(/"/g, '""')}"`;
-    const decimals = isFuture && q && q.priceTick && q.priceTick < 0.01 ? 3 : 2;
+    const decimals = isFuture && q && ((q.priceTick && q.priceTick < 0.01) || q.priceDecimals === 3 || q.priceDecimals === 4) ? (q.priceDecimals || 3) : 2;
     const price = q && Number.isFinite(Number(q.price)) ? Number(q.price).toFixed(decimals) : '';
     const pct = q && Number.isFinite(Number(q.changePercent)) ? Number(q.changePercent).toFixed(2) : '';
     const open = q && Number.isFinite(Number(q.open)) ? Number(q.open).toFixed(decimals) : '';

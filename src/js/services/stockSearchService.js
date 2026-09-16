@@ -1,8 +1,74 @@
 // 股票与期货智能联想搜索服务
 import { isBatchQuery } from './batchExportService.js';
 import { PRODUCT_MAP, EXCHANGES } from '../futures/contractCatalog.js';
+import { GLOBAL_FUTURES_CATALOG } from '../futures/globalCatalog.js';
 import { parseFutureInput } from '../futures/instrument.js';
 import { normalizeCode } from '../parser.js';
+
+// 国际期货中文多音字、别名及拼音
+const KNOWN_GLOBAL_FUTURES_PINYIN = {
+  GL_CL0: { initials: 'nyyy', pinyin: 'niuyueyuanyou', aliases: [
+    { name: '美原油', initials: 'myy', pinyin: 'meiyuanyou' },
+    { name: '原油', initials: 'yy', pinyin: 'yuanyou' },
+    { name: 'CL', initials: 'cl', pinyin: 'cl' },
+    { name: 'CL0', initials: 'cl0', pinyin: 'cl0' }
+  ]},
+  GL_GC0: { initials: 'nyhj', pinyin: 'niuyuehuangjin', aliases: [
+    { name: '美黄金', initials: 'mhj', pinyin: 'meihuangjin' },
+    { name: '黄金', initials: 'hj', pinyin: 'huangjin' },
+    { name: 'GC', initials: 'gc', pinyin: 'gc' },
+    { name: 'GC0', initials: 'gc0', pinyin: 'gc0' }
+  ]},
+  GL_SI0: { initials: 'nyby', pinyin: 'niuyuebaiyin', aliases: [
+    { name: '美白银', initials: 'mby', pinyin: 'meibaiyin' },
+    { name: '白银', initials: 'by', pinyin: 'baiyin' },
+    { name: 'SI', initials: 'si', pinyin: 'si' },
+    { name: 'SI0', initials: 'si0', pinyin: 'si0' }
+  ]},
+  GL_HG0: { initials: 'nymt', pinyin: 'niuyuemeitong', aliases: [
+    { name: '美铜', initials: 'mt', pinyin: 'meitong' },
+    { name: 'HG', initials: 'hg', pinyin: 'hg' },
+    { name: 'HG0', initials: 'hg0', pinyin: 'hg0' }
+  ]},
+  GL_NG0: { initials: 'trq', pinyin: 'tianranqi', aliases: [
+    { name: '美天然气', initials: 'mtrq', pinyin: 'meitianranqi' },
+    { name: '天然气', initials: 'trq', pinyin: 'tianranqi' },
+    { name: 'NG', initials: 'ng', pinyin: 'ng' },
+    { name: 'NG0', initials: 'ng0', pinyin: 'ng0' }
+  ]},
+  GL_NQ0: { initials: 'nsdkqh', pinyin: 'nasidakeqihuo', aliases: [
+    { name: '纳指期货', initials: 'nzqh', pinyin: 'nazhiqihuo' },
+    { name: '纳斯达克', initials: 'nsdk', pinyin: 'nasidake' },
+    { name: '纳指', initials: 'nz', pinyin: 'nazhi' },
+    { name: 'NQ', initials: 'nq', pinyin: 'nq' },
+    { name: 'NQ0', initials: 'nq0', pinyin: 'nq0' }
+  ]},
+  GL_ES0: { initials: 'bp500qh', pinyin: 'biaopu500qihuo', aliases: [
+    { name: '标普500', initials: 'bp500', pinyin: 'biaopu500' },
+    { name: '标普期货', initials: 'bpqh', pinyin: 'biaopuqihuo' },
+    { name: '标普', initials: 'bp', pinyin: 'biaopu' },
+    { name: 'ES', initials: 'es', pinyin: 'es' },
+    { name: 'ES0', initials: 'es0', pinyin: 'es0' }
+  ]},
+  GL_YM0: { initials: 'dqsqh', pinyin: 'daoqionsiqihuo', aliases: [
+    { name: '道指期货', initials: 'dzqh', pinyin: 'daozhiqihuo' },
+    { name: '道琼斯', initials: 'dqs', pinyin: 'daoqionsi' },
+    { name: '道指', initials: 'dz', pinyin: 'daozhi' },
+    { name: 'YM', initials: 'ym', pinyin: 'ym' },
+    { name: 'YM0', initials: 'ym0', pinyin: 'ym0' }
+  ]},
+  GL_A50: { initials: 'fszga50', pinyin: 'fushizhongguoa50', aliases: [
+    { name: '富时A50', initials: 'fsa50', pinyin: 'fushia50' },
+    { name: 'A50', initials: 'a50', pinyin: 'a50' },
+    { name: '新华富时A50', initials: 'xhfsa50', pinyin: 'xinhuafushia50' }
+  ]},
+  GL_HSI: { initials: 'hszsqh', pinyin: 'hengshengzhishuqihuo', aliases: [
+    { name: '恒指期货', initials: 'hzqh', pinyin: 'hengzhiqihuo' },
+    { name: '恒指', initials: 'hz', pinyin: 'hengzhi' },
+    { name: '恒生指数', initials: 'hszs', pinyin: 'hengshengzhishu' },
+    { name: 'HSI', initials: 'hsi', pinyin: 'hsi' }
+  ]}
+};
 
 // 中文多音字及特殊字拼音补全 (针对期货品种等)
 const KNOWN_FUTURES_PINYIN = {
@@ -162,7 +228,7 @@ export function parseStatusFlag(name) {
 /**
  * 从字典与期货目录构建内存搜索条目集合
  */
-export function createStockSearchIndex(dictionaryData, futuresMap = PRODUCT_MAP) {
+export function createStockSearchIndex(dictionaryData, futuresMap = PRODUCT_MAP, globalCatalog = GLOBAL_FUTURES_CATALOG) {
   const stockItems = (dictionaryData && Array.isArray(dictionaryData.items))
     ? dictionaryData.items
     : [];
@@ -237,6 +303,53 @@ export function createStockSearchIndex(dictionaryData, futuresMap = PRODUCT_MAP)
     });
   }
 
+  // 合并国际期货品种
+  for (const info of Object.values(globalCatalog || {})) {
+    const code = info.code;
+    const displayCode = info.code;
+    const name = info.name;
+    const baseName = info.name;
+    const meta = KNOWN_GLOBAL_FUTURES_PINYIN[info.code] || {
+      initials: info.symbol.toLowerCase(),
+      pinyin: info.symbol.toLowerCase(),
+      aliases: []
+    };
+    const board = `${info.exchange} · 外盘`;
+    const numCode = info.symbol.toLowerCase();
+
+    const aliases = [
+      {
+        name: info.symbol,
+        type: 'alias',
+        initials: info.symbol.toLowerCase(),
+        pinyin: info.symbol.toLowerCase()
+      },
+      ...(meta.aliases || []).map((a) => ({
+        name: a.name,
+        type: 'alias',
+        initials: (a.initials || '').toLowerCase(),
+        pinyin: (a.pinyin || '').toLowerCase()
+      }))
+    ];
+
+    list.push({
+      code,
+      displayCode,
+      numCode,
+      name,
+      baseName,
+      initials: meta.initials.toLowerCase(),
+      pinyin: meta.pinyin.toLowerCase(),
+      baseInitials: meta.initials.toLowerCase(),
+      basePinyin: meta.pinyin.toLowerCase(),
+      product: info.symbol.toLowerCase(),
+      board,
+      type: 'futures_global',
+      isContinuous: true,
+      aliases
+    });
+  }
+
   return {
     items: list,
     meta: {
@@ -297,13 +410,18 @@ export function resetDictionaryCache() {
  * 8. 曾用名首字母完全、首字母前缀、中文子串、全拼完全、全拼子串
  * 9. 仅状态匹配
  */
-export function evaluateItemMatch(item, query, { activeStatus = null } = {}) {
+export function evaluateItemMatch(item, query, { activeStatus = null, normCode = undefined } = {}) {
   if (!query) return null;
   const q = query;
   const isPureStatus = ['st', '*st', 'xd', 'xr', 'dr', 'n', 'c'].includes(q);
 
   // 1. 完整规范代码或完整期货合约
-  if (item.code === q || item.numCode === q || (item.type === 'future' && item.displayCode.toLowerCase() === q)) {
+  if (
+    item.code === q ||
+    item.numCode === q ||
+    item.displayCode.toLowerCase() === q ||
+    (item.type === 'future' && item.displayCode.toLowerCase() === q)
+  ) {
     return {
       priority: 1,
       matchIndex: 0,
@@ -311,8 +429,8 @@ export function evaluateItemMatch(item, query, { activeStatus = null } = {}) {
       matchedReason: null
     };
   }
-  const normInput = normalizeCode(q);
-  if (normInput && normInput === item.code) {
+  const normInput = normCode !== undefined ? normCode : normalizeCode(q)?.toLowerCase();
+  if (normInput && (normInput === item.code || normInput === item.displayCode.toLowerCase())) {
     return {
       priority: 1,
       matchIndex: 0,
@@ -370,8 +488,8 @@ export function evaluateItemMatch(item, query, { activeStatus = null } = {}) {
   }
 
   // 4. 代码前缀 (含期货产品代码)
-  if (item.code.startsWith(q)) {
-    const numMatchIdx = item.numCode.indexOf(q.replace(/^(sh|sz|bj)/, ''));
+  if (item.code.toLowerCase().startsWith(q)) {
+    const numMatchIdx = item.numCode.toLowerCase().indexOf(q.replace(/^(sh|sz|bj)/, ''));
     return {
       priority: 4,
       matchIndex: numMatchIdx >= 0 ? numMatchIdx : 0,
@@ -379,7 +497,7 @@ export function evaluateItemMatch(item, query, { activeStatus = null } = {}) {
       matchedReason: null
     };
   }
-  if (item.numCode.startsWith(q)) {
+  if (item.numCode.toLowerCase().startsWith(q)) {
     return {
       priority: 4,
       matchIndex: 0,
@@ -387,7 +505,7 @@ export function evaluateItemMatch(item, query, { activeStatus = null } = {}) {
       matchedReason: null
     };
   }
-  if (item.type === 'future' && item.product && (item.product === q || item.product.startsWith(q))) {
+  if ((item.type === 'future' || item.type === 'futures_global') && item.product && (item.product.toLowerCase() === q || item.product.toLowerCase().startsWith(q))) {
     return {
       priority: 4,
       matchIndex: 0,
@@ -568,6 +686,8 @@ export function searchStocks(rawQuery, options = {}) {
   }
 
   const query = normalizeQuery(rawQuery);
+  const normInput = normalizeCode(query);
+  const normCode = normInput ? normInput.toLowerCase() : null;
   const items = index?.items || [];
   const currentWatchSet = new Set((watchList || []).map((c) => String(c).toLowerCase()));
 
@@ -623,7 +743,7 @@ export function searchStocks(rawQuery, options = {}) {
 
   for (const item of items) {
     const activeStatus = snapshotValid ? (activeStatusMap.get(item.code) || null) : null;
-    const matchResult = evaluateItemMatch(item, query, { activeStatus });
+    const matchResult = evaluateItemMatch(item, query, { activeStatus, normCode });
     if (!matchResult) continue;
 
     matched.push({
@@ -653,19 +773,21 @@ export function searchStocks(rawQuery, options = {}) {
 
   const total = matched.length;
   const sliced = matched.slice(0, maxResults);
-  const resultCandidates = sliced.map(({ item, activeStatus, priority, matchedReason }) => ({
-    code: item.code,
-    displayCode: item.displayCode,
-    numCode: item.numCode,
-    name: item.name,
-    baseName: item.baseName,
-    type: item.type,
-    board: item.board,
-    status: activeStatus,
-    matchedFormerName: matchedReason,
-    alreadyAdded: currentWatchSet.has(item.code),
-    matchPriority: priority
-  }));
+  const resultCandidates = sliced
+    .filter(({ item }) => !/^hf_/i.test(item.code) && !/^hf_/i.test(item.displayCode))
+    .map(({ item, activeStatus, priority, matchedReason }) => ({
+      code: item.code,
+      displayCode: item.displayCode,
+      numCode: item.numCode,
+      name: item.name,
+      baseName: item.baseName,
+      type: item.type,
+      board: item.board,
+      status: activeStatus,
+      matchedFormerName: matchedReason,
+      alreadyAdded: currentWatchSet.has(item.code.toLowerCase()),
+      matchPriority: priority
+    }));
 
   return {
     mode: 'single',

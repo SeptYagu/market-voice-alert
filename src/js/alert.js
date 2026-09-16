@@ -84,8 +84,18 @@ export function formatAlertMessage(quote, direction) {
   const name = quote.name || quote.code;
   if (!name) return '';
   const label = direction === 'down' ? '跌幅' : '涨幅';
-  const unit = quote.type === 'future' ? '' : ' 元';
-  const decimals = quote.type === 'future' && quote.priceTick && quote.priceTick < 0.01 ? 3 : 2;
+  const isFuture = quote.type === 'future' || quote.type === 'futures_global';
+  let unit = ' 元';
+  if (isFuture) {
+    unit = '';
+  } else if (quote.type === 'stock_hk' || quote.currency === 'HKD') {
+    unit = ' 港币';
+  } else if (quote.type === 'stock_us' || quote.currency === 'USD') {
+    unit = ' 美元';
+  }
+  const decimals = isFuture && ((quote.priceTick && quote.priceTick < 0.01) || quote.priceDecimals === 3 || quote.priceDecimals === 4)
+    ? (quote.priceDecimals || 3)
+    : 2;
   // No 「%」 suffix: TTS reads it as 「百分之」.
   return `${name} ${label} ${Math.abs(pct).toFixed(2)}，现价 ${price.toFixed(decimals)}${unit}`;
 }

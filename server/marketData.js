@@ -18,7 +18,7 @@ const AKTOOLS_BASE = process.env.AKTOOLS_BASE || 'http://127.0.0.1:8888';
 const EASTMONEY_TRENDS_HOSTS = Object.freeze([
   'push2his.eastmoney.com',
   '90.push2his.eastmoney.com',
-  '90.push2his.eastmoney.com'
+  'push2delay.eastmoney.com'
 ]);
 const TENCENT_MINUTE_BASE = 'https://web.ifzq.gtimg.cn/appstock/app/minute/query';
 const EASTMONEY_TRENDS_FIELDS1 = 'f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13';
@@ -159,7 +159,7 @@ export async function fetchAktoolsTradeCalendar(signal) {
 
 function stripMarketPrefix(code) {
   const normalized = normalizeCodeParam(code);
-  return normalized ? normalized.slice(2) : '';
+  return /^(sh|sz|bj)\d{6}$/.test(normalized) ? normalized.slice(2) : '';
 }
 
 function normalizeDateDash(raw) {

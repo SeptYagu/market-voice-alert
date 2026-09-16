@@ -7,10 +7,10 @@ export function getProxyRoutes(env = process.env) {
     accept: '*/*'
   };
   return [
-    { prefix: '/api/eastmoney-kline', target: 'https://push2his.eastmoney.com', upstreamPrefix: '/api', headers: eastmoneyHeaders },
+    { prefix: '/api/eastmoney-kline', target: 'https://push2his.eastmoney.com', targets: ['https://push2his.eastmoney.com', 'https://90.push2his.eastmoney.com', 'https://push2delay.eastmoney.com'], upstreamPrefix: '/api', headers: eastmoneyHeaders },
     { prefix: '/api/limit-up-stock', target: 'https://push2.eastmoney.com', upstreamPrefix: '/api', headers: eastmoneyHeaders },
     { prefix: '/api/qq-kline-min', target: 'https://ifzq.gtimg.cn', upstreamPrefix: '', headers: { referer: 'https://gu.qq.com/', 'user-agent': DEFAULT_USER_AGENT } },
-    { prefix: '/api/eastmoney', target: 'https://push2.eastmoney.com', upstreamPrefix: '/api', headers: eastmoneyHeaders },
+    { prefix: '/api/eastmoney', target: 'https://push2.eastmoney.com', targets: ['https://push2.eastmoney.com', 'https://push2delay.eastmoney.com'], upstreamPrefix: '/api', headers: eastmoneyHeaders },
     { prefix: '/api/limit-up', target: 'https://push2.eastmoney.com', upstreamPrefix: '/api', headers: eastmoneyHeaders },
     { prefix: '/api/qq-kline', target: 'https://web.ifzq.gtimg.cn', upstreamPrefix: '', headers: { referer: 'https://gu.qq.com/', 'user-agent': DEFAULT_USER_AGENT } },
     { prefix: '/api/aktools', target: env.AKTOOLS_BASE || 'http://127.0.0.1:8888', upstreamPrefix: '', headers: {} },
@@ -28,8 +28,15 @@ export function resolveProxyTarget(pathname, search = '', env = process.env) {
   const upstreamPath = (upstreamPrefix ? `${upstreamPrefix}/${cleanSuffix}` : `/${cleanSuffix}`).replace(/\/+$/, '') || '/';
   const targetUrl = new URL(upstreamPath, route.target);
   if (search) targetUrl.search = search;
+  const targets = Array.isArray(route.targets) && route.targets.length > 0 ? route.targets : [route.target];
+  const urls = targets.map((t) => {
+    const u = new URL(upstreamPath, t);
+    if (search) u.search = search;
+    return u.toString();
+  });
   return {
     ...route,
-    url: targetUrl.toString()
+    url: targetUrl.toString(),
+    urls
   };
 }

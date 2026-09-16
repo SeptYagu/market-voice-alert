@@ -176,3 +176,46 @@ export function isFuturesMarketOpenFallback(now = new Date(), tradingDates = [])
     isFutureTrading('RB0', now, tradingDates)
   );
 }
+
+/**
+ * 获取特定期货品种的日内分时交易时段区间 (分钟数 [startMin, endMin])
+ * @param {string|object} instrument - 品种代码或合约对象
+ * @param {Date} [now]
+ * @param {string[]} [tradingDates]
+ * @returns {Array<[number, number]>}
+ */
+export function getFuturesSessionRanges(instrument, _now = new Date(), _tradingDates = []) {
+  const inst = typeof instrument === 'object' && instrument !== null
+    ? instrument
+    : parseFutureInput(instrument);
+  if (!inst) return [];
+
+  // 1. 中金所金融期货 (完全无夜盘)
+  if (inst.isFinancial) {
+    if (inst.isTreasury) {
+      // 国债 T0/TF/TS/TL: 09:15-11:30, 13:00-15:15
+      return [[555, 690], [780, 915]];
+    }
+    // 股指 IF/IH/IC/IM: 09:30-11:30, 13:00-15:00
+    return [[570, 690], [780, 900]];
+  }
+
+  // 2. 商品期货日盘: 09:00-10:15, 10:30-11:30, 13:30-15:00
+  const ranges = [[540, 615], [630, 690], [810, 900]];
+
+  // 3. 商品期货夜盘
+  const nightEnd = inst.nightSessionEnd;
+  if (nightEnd) {
+    if (nightEnd === '23:00') {
+      ranges.push([1260, 1380]);
+    } else if (nightEnd === '01:00') {
+      ranges.push([1260, 1440]);
+      ranges.push([0, 60]);
+    } else if (nightEnd === '02:30') {
+      ranges.push([1260, 1440]);
+      ranges.push([0, 150]);
+    }
+  }
+
+  return ranges;
+}
