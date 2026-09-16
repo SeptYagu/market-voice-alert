@@ -72,6 +72,12 @@ export async function handleProxyRequest(req, res) {
           }
           break;
         } else {
+          try {
+            if (response.body?.cancel) await response.body.cancel();
+            else await response.arrayBuffer();
+          } catch {
+            // ignore drain/cancel errors
+          }
           lastError = new Error(`Upstream returned HTTP ${response.status}`);
         }
       } catch (err) {

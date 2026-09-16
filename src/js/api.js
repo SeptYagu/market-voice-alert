@@ -4,9 +4,16 @@ import {
   parseSinaFuture,
   toEastmoneySecId,
   parseEastmoneyTrends,
-  calcPercent as _calcPercent
+  calcPercent as _calcPercent,
+  inferAssetType,
+  ASSET_TYPES,
+  normalizeCode
 } from './parser.js';
 import { resolveSessionStrategy } from './marketSession.js';
+import {
+  isGlobalFutureCode,
+  toSinaGlobalSymbol
+} from './futures/globalCatalog.js';
 import {
   buildKlineUrl,
   buildTencentKlineUrl,
@@ -31,7 +38,7 @@ import { computeVwap } from './services/quoteMath.js';
 const STOCK_RE = /^(sh|sz|bj)\d{6}$/i;
 export const FUTURE_RE = /^(?:nf_?)?[a-z]{1,3}\d{1,4}$/i;
 
-export const EASTMONEY_FIELDS = 'f43,f44,f45,f46,f47,f48,f50,f51,f52,f57,f58,f60,f116,f117,f169,f170';
+export const EASTMONEY_FIELDS = 'f43,f44,f45,f46,f47,f48,f50,f51,f52,f57,f58,f60,f107,f116,f117,f169,f170';
 const EASTMONEY_TRENDS_FIELDS1 = 'f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13';
 const EASTMONEY_TRENDS_FIELDS2 = 'f51,f52,f53,f54,f55,f56,f57,f58';
 const INTRADAY_SESSION_RANGES = Object.freeze([
@@ -82,6 +89,8 @@ export function buildEastmoneyTrendsUrl(code) {
 export function toSinaFutureSymbol(code) {
   if (!code || typeof code !== 'string') return '';
   const s = code.trim();
+  if (/^hf_/i.test(s)) return s;
+  if (/^gl_/i.test(s) || isGlobalFutureCode(s)) return toSinaGlobalSymbol(s) || s;
   if (/^nf_/i.test(s)) return s;
   if (/^nf[a-z0-9]+$/i.test(s)) return s.toLowerCase();
   return `nf_${s.toUpperCase()}`;
@@ -89,7 +98,7 @@ export function toSinaFutureSymbol(code) {
 
 export function buildSinaFutureUrl(codes) {
   const list = (Array.isArray(codes) ? codes : [codes])
-    .filter((c) => typeof c === 'string' && (FUTURE_RE.test(c) || isFutureCode(c)))
+    .filter((c) => typeof c === 'string' && (FUTURE_RE.test(c) || isFutureCode(c) || isGlobalFutureCode(c) || /^hf_/i.test(c) || /^gl_/i.test(c)))
     .map(toSinaFutureSymbol)
     .filter(Boolean);
   if (!list.length) return null;
@@ -100,9 +109,32 @@ export function splitCodes(codes) {
   const list = (Array.isArray(codes) ? codes : [codes]).filter(
     (c) => typeof c === 'string' && c.length > 0
   );
-  const stocks = list.filter((c) => STOCK_RE.test(c));
-  const futures = list.filter((c) => FUTURE_RE.test(c) || isFutureCode(c));
-  return { stocks, futures };
+  const stocks = [];
+  const futures = [];
+  const globalFutures = [];
+
+  for (const c of list) {
+    const trimmed = c.trim();
+    if (!trimmed) continue;
+    const norm = normalizeCode(trimmed);
+    const target = norm || trimmed;
+    const type = inferAssetType(target);
+
+    if (type === ASSET_TYPES.FUTURES_GLOBAL || isGlobalFutureCode(target) || /^gl_/i.test(target) || /^hf_/i.test(target)) {
+      globalFutures.push(target);
+    } else if (type === ASSET_TYPES.FUTURES_CN || FUTURE_RE.test(target) || isFutureCode(target)) {
+      futures.push(target);
+    } else if (type === ASSET_TYPES.STOCK_HK || /^(?:hk|r_hk)\d{5}$/i.test(target)) {
+      stocks.push(target);
+    } else if (type === ASSET_TYPES.STOCK_US || /^us[a-z0-9._-]+$/i.test(target)) {
+      stocks.push(target);
+    } else if (STOCK_RE.test(target) || /^\d{6}$/.test(target)) {
+      stocks.push(target);
+    }
+    // Unknown or invalid codes are safely ignored
+  }
+
+  return { stocks, futures, globalFutures };
 }
 
 async function fetchGbkText(url, signal) {
@@ -161,7 +193,7 @@ export async function fetchSinaFuture(codes, { signal } = {}) {
 }
 
 export async function fetchQuotes(codes, opts = {}) {
-  const { stocks, futures } = splitCodes(codes);
+  const { stocks, futures, globalFutures = [] } = splitCodes(codes);
   const tasks = [];
   const errors = [];
 
@@ -229,6 +261,38 @@ export async function fetchQuotes(codes, opts = {}) {
     );
   }
 
+  if (globalFutures.length) {
+    tasks.push(
+      (async () => {
+        let gfQuotes = [];
+        let gfError = null;
+        try {
+          gfQuotes = await fetchEastmoney(globalFutures, opts);
+        } catch (err) {
+          if (err && err.name === 'AbortError') throw err;
+          gfError = err;
+        }
+        const gotCodes = new Set((gfQuotes || []).map((q) => q && q.code).filter(Boolean));
+        const missingGf = globalFutures.filter((c) => !gotCodes.has(c));
+        if (!missingGf.length) {
+          return gfQuotes || [];
+        }
+        try {
+          const sinaQuotes = await fetchSinaFuture(missingGf, opts);
+          const combined = [...(gfQuotes || []), ...(sinaQuotes || [])];
+          if (!combined.length && gfError) {
+            throw gfError;
+          }
+          return combined;
+        } catch (err) {
+          if (err && err.name === 'AbortError') throw err;
+          if (gfQuotes && gfQuotes.length) return gfQuotes;
+          throw (gfError || err);
+        }
+      })()
+    );
+  }
+
   const results = await Promise.allSettled(tasks);
   for (const r of results) {
     if (r.status === 'rejected') {
@@ -241,7 +305,7 @@ export async function fetchQuotes(codes, opts = {}) {
     .filter((r) => r.status === 'fulfilled')
     .flatMap((r) => r.value || []);
 
-  if ((stocks.length || futures.length) && !fulfilled.length && errors.length) {
+  if ((stocks.length || futures.length || globalFutures.length) && !fulfilled.length && errors.length) {
     const msg = errors.map((e) => (e && e.message ? e.message : String(e))).join('; ');
     throw new Error(`行情数据源全部失败: ${msg}`);
   }
@@ -253,16 +317,17 @@ export async function fetchQuotes(codes, opts = {}) {
 
   // Batch envelope: callers need to know which codes are missing, not just whether
   // the batch threw, otherwise a partially failed refresh is indistinguishable from
-  // a fully successful one. `quotes` is a plain array so nothing self-references.
+  // a success. Callers can surface stale styling or trigger a fallback per-row.
   return {
     quotes: fulfilled,
     failedCodes,
     asOf: Date.now(),
-    source: 'aggregated'
+    source: 'aggregated',
+    timestamp: Date.now()
   };
 }
 
-function _isTradingSessionTime(time, code) {
+export function _isTradingSessionTime(time, code) {
   const hhmm = chartSecondsToTime(time);
   const m = /^(\d{2}):(\d{2})$/.exec(hhmm);
   if (!m) return false;
@@ -276,11 +341,17 @@ function _isTradingSessionTime(time, code) {
 function _filterIntradaySessions(data, selectedDate, code) {
   if (!data || !Array.isArray(data.items)) return data;
   const targetCode = code || data.code;
+  const strategy = targetCode ? resolveSessionStrategy(targetCode) : null;
   return {
     ...data,
     items: data.items.filter((it) => {
       if (!it || !Number.isFinite(Number(it.time))) return false;
-      if (selectedDate && chartTimeToDate(it.time) !== selectedDate) return false;
+      if (selectedDate) {
+        const itemDate = (strategy && strategy.getTradingDay)
+          ? strategy.getTradingDay(it.time)
+          : chartTimeToDate(it.time);
+        if (itemDate !== selectedDate && chartTimeToDate(it.time) !== selectedDate) return false;
+      }
       return _isTradingSessionTime(it.time, targetCode);
     })
   };
@@ -292,7 +363,7 @@ async function fetchEastmoneyTrends(code, opts = {}) {
   const res = await fetch(url, { signal: opts.signal });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = await res.json();
-  return parseEastmoneyTrends(json, opts);
+  return parseEastmoneyTrends(json, { ...opts, code });
 }
 
 function _hasIntradayItems(data) {

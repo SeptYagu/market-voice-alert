@@ -1,6 +1,7 @@
 import { filterKlineItemsByDate } from '../src/js/kline.js';
 import { chartSecondsToTime, chartTimeToDate } from '../src/js/time.js';
 import { computeVwap } from '../src/js/services/quoteMath.js';
+import { resolveSessionStrategy } from '../src/js/marketSession.js';
 import { getOrRefresh, readCache } from './cacheStore.js';
 import { getCachedKline } from './klineService.js';
 import {
@@ -26,22 +27,36 @@ function isHistoricalDate(dateKey) {
   return /^\d{8}$/.test(dateKey) && dateKey < todayKey;
 }
 
-function isTradingSessionTime(time) {
+function isTradingSessionTime(time, code) {
   const hhmm = chartSecondsToTime(time);
   const m = /^(\d{2}):(\d{2})$/.exec(hhmm);
   if (!m) return false;
   const minutes = Number(m[1]) * 60 + Number(m[2]);
-  return SESSION_RANGES.some(([start, end]) => minutes >= start && minutes <= end);
+  if (!code) {
+    return SESSION_RANGES.some(([start, end]) => minutes >= start && minutes <= end);
+  }
+  const strategy = resolveSessionStrategy(code);
+  const ranges = (strategy && strategy.getIntradaySessionRanges)
+    ? strategy.getIntradaySessionRanges(new Date(), code)
+    : SESSION_RANGES;
+  return ranges.some(([start, end]) => minutes >= start && minutes <= end);
 }
 
-function filterIntradaySessions(data, selectedDate) {
+function filterIntradaySessions(data, selectedDate, code) {
   if (!data || !Array.isArray(data.items)) return data;
+  const targetCode = code || data.code;
+  const strategy = targetCode ? resolveSessionStrategy(targetCode) : null;
   return {
     ...data,
     items: data.items.filter((it) => {
       if (!it || !Number.isFinite(Number(it.time))) return false;
-      if (selectedDate && chartTimeToDate(it.time) !== selectedDate) return false;
-      return isTradingSessionTime(it.time);
+      if (selectedDate) {
+        const itemTradingDay = (strategy && strategy.getTradingDay)
+          ? strategy.getTradingDay(it.time)
+          : chartTimeToDate(it.time);
+        if (itemTradingDay !== selectedDate && chartTimeToDate(it.time) !== selectedDate) return false;
+      }
+      return isTradingSessionTime(it.time, targetCode);
     })
   };
 }
@@ -149,7 +164,7 @@ async function fetchIntradayNetwork(common, allowLatestTickSource) {
     // push2his main host failed 0/10 with socket resets.
     try {
       const tencentData = await fetchTencentIntradayMinutes(common);
-      const filtered = filterIntradaySessions(tencentData, common.date);
+      const filtered = filterIntradaySessions(tencentData, common.date, common.code);
       if (hasItems(filtered)) return filtered;
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;
@@ -157,7 +172,7 @@ async function fetchIntradayNetwork(common, allowLatestTickSource) {
     }
     try {
       const trendData = await fetchEastmoneyIntradayTrends(common);
-      const filtered = filterIntradaySessions(trendData, common.date);
+      const filtered = filterIntradaySessions(trendData, common.date, common.code);
       if (hasItems(filtered)) return filtered;
     } catch (e) {
       if (e && e.name === 'AbortError') throw e;
@@ -185,7 +200,7 @@ async function fetchIntradayNetwork(common, allowLatestTickSource) {
     const result = aktoolsResults[i];
     const source = aktoolsTasks[i].source;
     if (result.status === 'fulfilled') {
-      const filtered = filterIntradaySessions(result.value, common.date);
+      const filtered = filterIntradaySessions(result.value, common.date, common.code);
       if (hasItems(filtered)) return filtered;
     } else {
       if (result.reason && result.reason.name === 'AbortError') throw result.reason;
@@ -214,7 +229,7 @@ async function fetchIntradayNetwork(common, allowLatestTickSource) {
     if (klineData && (!allowLatestTickSource || klineResult.source === 'network')) {
       const items = filterKlineItemsByDate(klineData.items, common.date);
       const decorated = decorateKlineIntraday({ ...klineData, items }, common);
-      const filtered = filterIntradaySessions(decorated, common.date);
+      const filtered = filterIntradaySessions(decorated, common.date, common.code);
       if (hasItems(filtered)) {
         // A stale-served kline cache whose generatedAt is same-day after the
         // close is still a complete, trustworthy archive — completeness is

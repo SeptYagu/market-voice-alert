@@ -1,4 +1,4 @@
-import { getBeijingClockParts, getBeijingDate } from './time.js';
+import { getBeijingClockParts, getBeijingDate, chartSecondsToDate, chartSecondsToTime, shiftCalendarDate } from './time.js';
 import { isTradingDate } from './tradeCalendar.js';
 import { getFuturesSession, isFutureTrading, isAnyFutureTrading, isFuturesMarketOpenFallback, getFuturesSessionRanges } from './futures/session.js';
 import { isFutureCode } from './futures/instrument.js';
@@ -204,7 +204,11 @@ export const usStockStrategy = Object.freeze({
     return dst ? [[1290, 1440], [0, 240]] : [[1350, 1440], [0, 300]];
   },
   getTradingDay(now = new Date()) {
-    return getUsEasternDate(now);
+    if (typeof now === 'number') {
+      return getUsEasternDate(new Date(now * 1000));
+    }
+    const dateObj = (typeof now === 'string') ? new Date(now) : now;
+    return getUsEasternDate(dateObj);
   },
   isVoiceAllowed(now = new Date(), cfg) {
     if (!cfg.enabled) return true;
@@ -240,7 +244,22 @@ export const globalFuturesStrategy = Object.freeze({
     return dst ? [[360, 1440], [0, 300]] : [[420, 1440], [0, 360]];
   },
   getTradingDay(now = new Date()) {
-    return getBeijingDate(now);
+    if (typeof now === 'number') {
+      const dateStr = chartSecondsToDate(now);
+      const timeStr = chartSecondsToTime(now);
+      const [h, mi] = timeStr.split(':').map(Number);
+      const min = h * 60 + mi;
+      const dst = isUsDaylightSavingTime(new Date(now * 1000));
+      const breakEnd = dst ? 6 * 60 : 7 * 60;
+      return min < breakEnd ? shiftCalendarDate(dateStr, -1) : dateStr;
+    }
+    const dateObj = (typeof now === 'string') ? new Date(now) : now;
+    const parts = getBeijingClockParts(dateObj);
+    const min = parts.hour * 60 + parts.minute;
+    const baseDate = getBeijingDate(dateObj);
+    const dst = isUsDaylightSavingTime(dateObj);
+    const breakEnd = dst ? 6 * 60 : 7 * 60;
+    return min < breakEnd ? shiftCalendarDate(baseDate, -1) : baseDate;
   },
   isVoiceAllowed(now = new Date(), cfg) {
     if (!cfg.enabled) return true;

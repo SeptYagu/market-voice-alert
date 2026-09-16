@@ -13,7 +13,8 @@ import {
   resolveSessionStrategy,
   isUsDaylightSavingTime,
   getVoiceEligibleCodes,
-  chinaFuturesStrategy
+  chinaFuturesStrategy,
+  globalFuturesStrategy
 } from '../src/js/marketSession.js';
 import {
   getFuturesSessionRanges
@@ -25,6 +26,7 @@ import {
   searchStocks
 } from '../src/js/services/stockSearchService.js';
 import { decideVoiceSchedule } from '../src/js/services/voiceSchedule.js';
+import { EASTMONEY_FIELDS, fetchQuotes } from '../src/js/api.js';
 
 QUnit.module('Phase 1: inferAssetType 全值域覆盖与正交路由断言', () => {
   QUnit.test('严格区分国内期货、外盘期货、港股、美股及 A 股', (t) => {
@@ -105,11 +107,15 @@ QUnit.module('Phase 1: toEastmoneySecId 映射与市场注册表', () => {
 });
 
 QUnit.module('Phase 1: parseEastmoney 缩放系数与多市场行情解析', () => {
+  QUnit.test('EASTMONEY_FIELDS 必须包含 f107 市场号字段', (t) => {
+    t.true(EASTMONEY_FIELDS.includes('f107'), 'EASTMONEY_FIELDS must include f107');
+  });
+
   QUnit.test('10 大外盘期货 qtDivisor 精确缩放', (t) => {
     const catalog = GLOBAL_FUTURES_CATALOG;
 
     // GL_CL0 (divisor: 100)
-    const clJson = { data: { f116: catalog.GL_CL0.marketId, f57: catalog.GL_CL0.eastmoneySymbol, f43: 10372, f60: 10000, f58: '纽约原油', f170: 372 } };
+    const clJson = { data: { f107: catalog.GL_CL0.marketId, f57: catalog.GL_CL0.eastmoneySymbol, f43: 10372, f60: 10000, f58: '纽约原油', f170: 372 } };
     const cl = parseEastmoney(clJson);
     t.equal(cl.code, 'GL_CL0');
     t.equal(cl.type, 'futures_global');
@@ -119,63 +125,63 @@ QUnit.module('Phase 1: parseEastmoney 缩放系数与多市场行情解析', () 
     t.equal(cl.changePercent, 3.72);
 
     // GL_GC0 (divisor: 10)
-    const gcJson = { data: { f116: catalog.GL_GC0.marketId, f57: catalog.GL_GC0.eastmoneySymbol, f43: 27000, f60: 26500, f58: '纽约黄金' } };
+    const gcJson = { data: { f107: catalog.GL_GC0.marketId, f57: catalog.GL_GC0.eastmoneySymbol, f43: 27000, f60: 26500, f58: '纽约黄金' } };
     const gc = parseEastmoney(gcJson);
     t.equal(gc.code, 'GL_GC0');
     t.equal(gc.price, 2700.0);
     t.equal(gc.prevClose, 2650.0);
 
     // GL_SI0 (divisor: 1000)
-    const siJson = { data: { f116: catalog.GL_SI0.marketId, f57: catalog.GL_SI0.eastmoneySymbol, f43: 31500, f60: 30000, f58: '纽约白银' } };
+    const siJson = { data: { f107: catalog.GL_SI0.marketId, f57: catalog.GL_SI0.eastmoneySymbol, f43: 31500, f60: 30000, f58: '纽约白银' } };
     const si = parseEastmoney(siJson);
     t.equal(si.code, 'GL_SI0');
     t.equal(si.price, 31.5);
     t.equal(si.prevClose, 30.0);
 
     // GL_HG0 (divisor: 10000)
-    const hgJson = { data: { f116: catalog.GL_HG0.marketId, f57: catalog.GL_HG0.eastmoneySymbol, f43: 45678, f60: 45000, f58: '纽约美铜' } };
+    const hgJson = { data: { f107: catalog.GL_HG0.marketId, f57: catalog.GL_HG0.eastmoneySymbol, f43: 45678, f60: 45000, f58: '纽约美铜' } };
     const hg = parseEastmoney(hgJson);
     t.equal(hg.code, 'GL_HG0');
     t.equal(hg.price, 4.5678);
     t.equal(hg.prevClose, 4.5);
 
     // GL_NG0 (divisor: 1000)
-    const ngJson = { data: { f116: catalog.GL_NG0.marketId, f57: catalog.GL_NG0.eastmoneySymbol, f43: 2345, f60: 2000, f58: '天然气' } };
+    const ngJson = { data: { f107: catalog.GL_NG0.marketId, f57: catalog.GL_NG0.eastmoneySymbol, f43: 2345, f60: 2000, f58: '天然气' } };
     const ng = parseEastmoney(ngJson);
     t.equal(ng.code, 'GL_NG0');
     t.equal(ng.price, 2.345);
     t.equal(ng.prevClose, 2.0);
 
     // GL_NQ0 (divisor: 100)
-    const nqJson = { data: { f116: catalog.GL_NQ0.marketId, f57: catalog.GL_NQ0.eastmoneySymbol, f43: 1987650, f60: 1950000, f58: '纳斯达克期货' } };
+    const nqJson = { data: { f107: catalog.GL_NQ0.marketId, f57: catalog.GL_NQ0.eastmoneySymbol, f43: 1987650, f60: 1950000, f58: '纳斯达克期货' } };
     const nq = parseEastmoney(nqJson);
     t.equal(nq.code, 'GL_NQ0');
     t.equal(nq.price, 19876.5);
     t.equal(nq.prevClose, 19500);
 
     // GL_ES0 (divisor: 100)
-    const esJson = { data: { f116: catalog.GL_ES0.marketId, f57: catalog.GL_ES0.eastmoneySymbol, f43: 567850, f60: 560000, f58: '标普500期货' } };
+    const esJson = { data: { f107: catalog.GL_ES0.marketId, f57: catalog.GL_ES0.eastmoneySymbol, f43: 567850, f60: 560000, f58: '标普500期货' } };
     const es = parseEastmoney(esJson);
     t.equal(es.code, 'GL_ES0');
     t.equal(es.price, 5678.5);
     t.equal(es.prevClose, 5600);
 
     // GL_YM0 (divisor: 1)
-    const ymJson = { data: { f116: catalog.GL_YM0.marketId, f57: catalog.GL_YM0.eastmoneySymbol, f43: 41234, f60: 41000, f58: '道琼斯期货' } };
+    const ymJson = { data: { f107: catalog.GL_YM0.marketId, f57: catalog.GL_YM0.eastmoneySymbol, f43: 41234, f60: 41000, f58: '道琼斯期货' } };
     const ym = parseEastmoney(ymJson);
     t.equal(ym.code, 'GL_YM0');
     t.equal(ym.price, 41234);
     t.equal(ym.prevClose, 41000);
 
     // GL_A50 (divisor: 10, SGX 0.1 点报价)
-    const a50Json = { data: { f116: catalog.GL_A50.marketId, f57: catalog.GL_A50.eastmoneySymbol, f43: 143900, f60: 142710, f58: '富时中国A50' } };
+    const a50Json = { data: { f107: catalog.GL_A50.marketId, f57: catalog.GL_A50.eastmoneySymbol, f43: 143900, f60: 142710, f58: '富时中国A50' } };
     const a50 = parseEastmoney(a50Json);
     t.equal(a50.code, 'GL_A50');
     t.equal(a50.price, 14390.0);
     t.equal(a50.prevClose, 14271.0);
 
     // GL_HSI (divisor: 1)
-    const hsiJson = { data: { f116: catalog.GL_HSI.marketId, f57: catalog.GL_HSI.eastmoneySymbol, f43: 24701, f60: 24676, f58: '恒生指数期货' } };
+    const hsiJson = { data: { f107: catalog.GL_HSI.marketId, f57: catalog.GL_HSI.eastmoneySymbol, f43: 24701, f60: 24676, f58: '恒生指数期货' } };
     const hsi = parseEastmoney(hsiJson);
     t.equal(hsi.code, 'GL_HSI');
     t.equal(hsi.price, 24701);
@@ -184,7 +190,7 @@ QUnit.module('Phase 1: parseEastmoney 缩放系数与多市场行情解析', () 
 
   QUnit.test('港美股 parseEastmoney div1000 规范化', (t) => {
     // 港股市场 116
-    const hkJson = { data: { f116: 116, f57: '00700', f43: 380000, f60: 375000, f58: '腾讯控股' } };
+    const hkJson = { data: { f107: 116, f57: '00700', f43: 380000, f60: 375000, f58: '腾讯控股' } };
     const hk = parseEastmoney(hkJson);
     t.equal(hk.code, 'hk00700');
     t.equal(hk.type, 'stock_hk');
@@ -192,7 +198,7 @@ QUnit.module('Phase 1: parseEastmoney 缩放系数与多市场行情解析', () 
     t.equal(hk.prevClose, 375.0);
 
     // 美股市场 105
-    const usJson = { data: { f116: 105, f57: 'AAPL', f43: 225000, f60: 220000, f58: '苹果' } };
+    const usJson = { data: { f107: 105, f57: 'AAPL', f43: 225000, f60: 220000, f58: '苹果' } };
     const us = parseEastmoney(usJson);
     t.equal(us.code, 'usAAPL');
     t.equal(us.type, 'stock_us');
@@ -224,6 +230,16 @@ QUnit.module('Phase 1: parseSinaGlobalFuture 备源解析与基准重绑', () =>
     const fromDispatch = parseSinaFuture('hf_CL', line);
     t.equal(fromDispatch.code, 'GL_CL0');
     t.equal(fromDispatch.price, 103.72);
+  });
+
+  QUnit.test('解析 15 字段新浪外盘期货（第1字段为空时自动回退为现价与昨结之差）', (t) => {
+    const sampleEmptyChange = '103.72,,103.70,103.74,105.00,101.50,22:30:00,100.00,101.00,123456,10,20,2026-09-16,原油连续';
+    const quote = parseSinaGlobalFuture('hf_CL', sampleEmptyChange);
+    t.ok(quote, '解析成功');
+    t.equal(quote.price, 103.72);
+    t.equal(quote.prevClose, 100.0);
+    t.equal(quote.change, 3.72, '自动推导 change');
+    t.equal(quote.changePercent, 3.72, '自动推导 changePercent');
   });
 });
 
@@ -270,6 +286,20 @@ QUnit.module('Phase 1: 多市场策略派发与语音调度隔离', () => {
     t.false(isUsDaylightSavingTime(new Date('2026-01-01T12:00:00Z')), '1月为美股冬令时');
   });
 
+  QUnit.test('CME 外盘期货冬夏令时结算窗口判定', (t) => {
+    // 夏令时（如 7 月某周三）：05:00 - 06:00 为休市结算，06:30 为交易中
+    const summerBreak = new Date('2026-07-08T05:30:00+08:00');
+    const summerTrade = new Date('2026-07-08T06:30:00+08:00');
+    t.false(globalFuturesStrategy.isTradingNow(summerBreak), '夏令时 05:30 结算休市');
+    t.true(globalFuturesStrategy.isTradingNow(summerTrade), '夏令时 06:30 正常交易');
+
+    // 冬令时（如 1 月某周三）：06:00 - 07:00 为休市结算，05:30 为交易中
+    const winterTrade = new Date('2026-01-07T05:30:00+08:00');
+    const winterBreak = new Date('2026-01-07T06:30:00+08:00');
+    t.true(globalFuturesStrategy.isTradingNow(winterTrade), '冬令时 05:30 正常交易');
+    t.false(globalFuturesStrategy.isTradingNow(winterBreak), '冬令时 06:30 结算休市');
+  });
+
   QUnit.test('混合资产时段隔离：22:00 A 股收盘不触发全局 autoStop，外盘正常播报', (t) => {
     const list = ['sh600519', 'GL_CL0'];
     const time2200 = new Date('2026-06-05T22:00:00+08:00');
@@ -294,6 +324,33 @@ QUnit.module('Phase 1: 多市场策略派发与语音调度隔离', () => {
     t.equal(next.enabled, true, '含有外盘标的时 22:00 保持 enabled');
     t.true(next.eligibleCodes.includes('GL_CL0'), 'GL_CL0 保持播报资格');
     t.true(next.timerShouldRun, '定时器继续保持运行');
+    t.equal(next.transitionNotice, null, '混合标的在 22:00 不得触发收盘提示');
+  });
+
+  QUnit.test('混合资产时段隔离：16:00 A 股收盘不触发全局 autoStop，外盘保持运行', (t) => {
+    const list = ['sh600519', 'GL_CL0'];
+    const time1600 = new Date('2026-06-05T16:00:00+08:00');
+    const settings = {
+      enabled: true,
+      smartSchedule: { enabled: true, autoStopAfterClose: true, pauseLunchBreak: true }
+    };
+    const previous = { timerShouldRun: true, eligibleCodes: ['sh600519', 'GL_CL0'] };
+    const eligible = getVoiceEligibleCodes(list, settings.smartSchedule, time1600, tradingDates);
+    t.true(eligible.includes('GL_CL0'), '16:00 GL_CL0 处于交易时段');
+    t.false(eligible.includes('sh600519'), '16:00 A 股已收盘');
+
+    const next = decideVoiceSchedule({
+      codes: list,
+      settings,
+      now: time1600,
+      tradingDates,
+      previous
+    });
+
+    t.equal(next.enabled, true, '含有外盘标的时 16:00 保持 enabled');
+    t.true(next.eligibleCodes.includes('GL_CL0'), 'GL_CL0 保持播报资格');
+    t.true(next.timerShouldRun, '定时器继续保持运行');
+    t.equal(next.transitionNotice, null, '混合标的在 16:00 不得触发全局已收盘提示');
   });
 
   QUnit.test('纯 A 股标的 16:00 正常触发收盘停播', (t) => {
@@ -406,3 +463,55 @@ QUnit.module('Phase 1: 智能搜索联想与 hf_* 彻底隔离', (hooks) => {
     }
   });
 });
+
+QUnit.module('Phase 1: fetchQuotes 跨市场行情路由与聚合', (hooks) => {
+  let originalFetch;
+  hooks.beforeEach(() => { originalFetch = globalThis.fetch; });
+  hooks.afterEach(() => { globalThis.fetch = originalFetch; });
+
+  QUnit.test('fetchQuotes 能够正确分发外盘期货 (Eastmoney) 与港美股 (Tencent)', async (t) => {
+    globalThis.fetch = async (url) => {
+      const target = String(url);
+      if (target.includes('secid=102.CL00Y') || target.includes('/api/eastmoney/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: { f107: 102, f57: 'CL00Y', f43: 10372, f60: 10000, f58: '纽约原油' }
+          })
+        };
+      }
+      if (target.includes('/api/tencent/')) {
+        const hkRow = 'v_r_hk00700="100~腾讯控股~00700~380.00~375.00~378.00~200~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~20260916100000~5.00~1.33~382.00~374.00~0/200/4000~"';
+        const usRow = 'v_usAAPL="200~苹果~AAPL~225.00~220.00~222.00~500~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~20260916100000~5.00~2.27~226.00~221.00~0/500/10000~"';
+        const payload = `${hkRow}\n${usRow}`;
+        return {
+          ok: true,
+          status: 200,
+          arrayBuffer: async () => new TextEncoder().encode(payload).buffer
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    };
+
+    const res = await fetchQuotes(['GL_CL0', 'hk00700', 'usAAPL']);
+    t.equal(res.quotes.length, 3, '成功获取全部 3 个跨市场标的');
+    t.deepEqual(res.failedCodes, [], '无失败代码');
+
+    const cl = res.quotes.find((q) => q.code === 'GL_CL0');
+    t.ok(cl, '包含 GL_CL0');
+    t.equal(cl.price, 103.72);
+    t.equal(cl.type, 'futures_global');
+
+    const hk = res.quotes.find((q) => q.code === 'hk00700');
+    t.ok(hk, '包含 hk00700');
+    t.equal(hk.price, 380.0);
+    t.equal(hk.type, 'stock_hk');
+
+    const us = res.quotes.find((q) => q.code === 'usAAPL');
+    t.ok(us, '包含 usAAPL');
+    t.equal(us.price, 225.0);
+    t.equal(us.type, 'stock_us');
+  });
+});
+

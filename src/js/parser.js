@@ -9,7 +9,9 @@ import {
 import {
   parseBeijingDateTimeToChartSeconds,
   parseTencentMinuteToChartSeconds,
-  chartTimeToDate
+  chartTimeToDate,
+  chartSecondsToTime,
+  shiftCalendarDate
 } from './time.js';
 import { computeVwap } from './services/quoteMath.js';
 
@@ -111,6 +113,20 @@ const US_MARKET_MAP = new Map([
   ['BF.B', '106']
 ]);
 const usSecIdCache = new Map();
+
+export function setUsMarketId(symbol, marketId) {
+  if (!symbol || !marketId) return;
+  const clean = String(symbol).trim().toUpperCase();
+  const mid = String(marketId);
+  usSecIdCache.set(clean, mid);
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(`market_us_${clean}`, mid);
+    } catch {
+      // ignore
+    }
+  }
+}
 
 export function resolveUsMarketId(symbol) {
   const clean = String(symbol).trim().toUpperCase();
@@ -226,7 +242,8 @@ export function parseEastmoney(json) {
   if (d.f43 === undefined || d.f43 === null || !d.f57) return null;
 
   const rawSymbol = String(d.f57).trim();
-  const marketId = Number(d.f107 !== undefined && d.f107 !== null ? d.f107 : d.f116);
+  // 市场号回显字段为 f107（f116 为总市值，切勿混淆）
+  const marketId = (d.f107 !== undefined && d.f107 !== null && d.f107 !== '-') ? Number(d.f107) : null;
   const globalFuture = getGlobalFutureByMarketAndSymbol(marketId, rawSymbol);
 
   let qtDivisor = 100;
@@ -253,6 +270,7 @@ export function parseEastmoney(json) {
     name = d.f58 || fullCode;
     type = 'stock_us';
     decimals = 2;
+    setUsMarketId(rawSymbol, marketId);
   } else {
     qtDivisor = 100;
     const rawLower = rawSymbol.toLowerCase();
@@ -293,6 +311,8 @@ export function parseEastmoney(json) {
     openChangePercent: Number(openChangePercent.toFixed(2)),
     change: Number(change.toFixed(decimals)),
     changePercent: Number(changePercent.toFixed(2)),
+    priceDecimals: decimals,
+    currency: globalFuture?.currency || (type === 'stock_hk' ? 'HKD' : (type === 'stock_us' ? 'USD' : 'CNY')),
     type,
     source: 'eastmoney'
   };
@@ -368,10 +388,12 @@ export function parseSinaGlobalFuture(arg1, arg2, arg3) {
     change: Number(change.toFixed(decimals)),
     changePercent: Number(changePercent.toFixed(2)),
     openChangePercent: Number(openChangePercent.toFixed(2)),
+    priceDecimals: decimals,
+    currency: globalInfo?.currency || 'USD',
     time,
     date,
     updateTime: (date && time) ? `${date.replace(/-/g, '')}${time.replace(/:/g, '')}` : '',
-    quoteDate: date,
+    quoteDate: date ? date.replace(/-/g, '') : '',
     type: 'futures_global',
     source: 'sina'
   };
@@ -486,13 +508,33 @@ export function calcPercent(close, prevClose) {
 }
 const _calcPercent = calcPercent;
 
-function _parseTrendRow(row, prevClose, selectedDate) {
+function _resolveRowTradingDay(time, code, customGetTradingDay) {
+  if (typeof customGetTradingDay === 'function') {
+    return customGetTradingDay(time);
+  }
+  const dateStr = chartTimeToDate(time);
+  if (code && (code.startsWith('GL_') || code.startsWith('gl_') || /^[a-z0-9]+00y$/i.test(code) || /^hsi_m$/i.test(code))) {
+    const timeStr = chartSecondsToTime(time);
+    const [h, mi] = timeStr.split(':').map(Number);
+    const min = h * 60 + mi;
+    // CME settlement break ends at 06:00 (DST 360 min) / 07:00 (non-DST 420 min)
+    if (min < 360) {
+      return shiftCalendarDate(dateStr, -1);
+    }
+  }
+  return dateStr;
+}
+
+function _parseTrendRow(row, prevClose, selectedDate, code, customGetTradingDay) {
   if (typeof row !== 'string') return null;
   const parts = row.split(',');
   if (parts.length < 7) return null;
   const time = parseBeijingDateTimeToChartSeconds(parts[0]);
   if (!Number.isFinite(time)) return null;
-  if (selectedDate && chartTimeToDate(time) !== selectedDate) return null;
+  if (selectedDate) {
+    const itemDate = _resolveRowTradingDay(time, code, customGetTradingDay);
+    if (itemDate !== selectedDate && chartTimeToDate(time) !== selectedDate) return null;
+  }
   const open = parseFloat(parts[1]);
   const close = parseFloat(parts[2]);
   const high = parseFloat(parts[3]);
@@ -526,14 +568,15 @@ export function parseEastmoneyTrends(json, opts = {}) {
     : (Number.isFinite(Number(opts.prevClose)) ? Number(opts.prevClose) : 0);
   const rows = Array.isArray(d.trends) ? d.trends : [];
   const selectedDate = opts.date || '';
+  const code = opts.code || (d && d.code ? _normalizeTrendCode(d) : '');
   const items = [];
   for (const row of rows) {
-    const it = _parseTrendRow(row, preClose, selectedDate);
+    const it = _parseTrendRow(row, preClose, selectedDate, code, opts.getTradingDay);
     if (it) items.push(it);
   }
   return {
-    code: _normalizeTrendCode(d),
-    name: d.name || _normalizeTrendCode(d),
+    code: code || _normalizeTrendCode(d),
+    name: d.name || code || _normalizeTrendCode(d),
     source: 'eastmoney-trends2',
     preClose,
     items
