@@ -173,7 +173,8 @@ export function isVolumeBarUp(it, prevClose) {
   if (Number.isFinite(open) && close > open) return true;
 
   // 2. 收盘高于昨收（包含高开低走假阴线收涨、一字涨停）-> 红色（如 9.11 新农开发）
-  if (Number.isFinite(pc) && close > pc) return true;
+  // 必须守卫 pc > 0，防止 prevClose 为 null/0 时退化为 close > 0 导致首根阴线误判为红
+  if (Number.isFinite(pc) && pc > 0 && close > pc) return true;
 
   // 其余情况（收跌、平盘、常规收阴等）-> 绿色
   return false;

@@ -278,15 +278,30 @@ QUnit.module('kline.formatVolumeBars', () => {
     t.deepEqual(formatVolumeBars(null), []);
   });
   QUnit.test('colors fake-yin positive day (close < open but close > prevClose, e.g. 9.11 新农开发) as red', (t) => {
-    // 2026-09-10 close: 9.64; 2026-09-11 open: 10.38, close: 9.72 (close > prevClose, +0.83%)
+    // 2026-09-09 close: 8.76; 2026-09-10 (一字涨停) open: 9.64, close: 9.64; 2026-09-11 (假阴真阳) open: 10.38, close: 9.72
     const items = [
+      { time: '2026-09-09', open: 8.00, close: 8.76, high: 8.76, low: 7.98, volume: 200000 },
       { time: '2026-09-10', open: 9.64, close: 9.64, high: 9.64, low: 9.47, volume: 400015 },
       { time: '2026-09-11', open: 10.38, close: 9.72, high: 10.60, low: 9.26, volume: 1362603 }
     ];
     const bars = formatVolumeBars(items, { up: '#E74C3C', down: '#27AE60' });
-    t.equal(bars.length, 2);
-    t.equal(bars[0].color, '#E74C3C', 'limit up day is red');
-    t.equal(bars[1].color, '#E74C3C', '9.11 peaking day (high-open low-close but closed up vs prevClose) is red');
+    t.equal(bars.length, 3);
+    t.equal(bars[0].color, '#E74C3C', 'first bar yang is red');
+    t.equal(bars[1].color, '#E74C3C', '9.10 limit up day (close 9.64 > prevClose 8.76) is red');
+    t.equal(bars[2].color, '#E74C3C', '9.11 peaking day (high-open low-close but closed up vs prevClose 9.64) is red');
+  });
+  QUnit.test('prevClose is null/missing does not coerce null to 0 (prevents first bar false-positive red)', (t) => {
+    // When prevClose is null, non-yang bars (yin / flat) must be green
+    t.equal(isVolumeBarUp({ open: 10, close: 9.5 }, null), false, 'yin bar with null prevClose is green');
+    t.equal(isVolumeBarUp({ open: 10, close: 10 }, null), false, 'flat bar with null prevClose is green');
+    t.equal(isVolumeBarUp({ open: 10, close: 10.5 }, null), true, 'yang bar with null prevClose is red');
+
+    // Batch first bar with yin must be green
+    const batch = formatVolumeBars([
+      { time: 't1', open: 10, close: 9.5, volume: 100 },
+      { time: 't2', open: 9.6, close: 9.4, volume: 100 }
+    ], { up: '#E74C3C', down: '#27AE60' });
+    t.equal(batch[0].color, '#27AE60', 'first bar yin must be green when prevClose is absent');
   });
   QUnit.test('supports opts.prevClose for single-item live update', (t) => {
     const single = [{ time: '2026-09-11', open: 10.38, close: 9.72, volume: 1362603 }];

@@ -247,6 +247,29 @@ QUnit.module('chart.createIntradayChart (instance API)', (hooks) => {
     ctl.destroy();
   });
 
+  QUnit.test('createIntradayChart detail legend renders HH:mm time alongside price and volume', (t) => {
+    const host = makeHost();
+    const ctl = createIntradayChart(host, { theme: 'warm', height: 360 });
+    // 1789122600 is 2026-09-11 10:30 in Beijing chart-seconds
+    ctl.setData([
+      {
+        time: 1789122600,
+        open: 10,
+        high: 10.5,
+        low: 9.8,
+        close: 10.3,
+        avgPrice: 10.15,
+        percent: 3,
+        volume: 120
+      }
+    ]);
+    const subLine = host.parentElement.querySelector('.intraday-crosshair-detail .legend-line-sub');
+    t.ok(subLine, 'detail legend subLine exists in DOM');
+    t.ok(subLine.textContent.includes('2026-09-11 10:30'), `subLine includes HH:mm time: ${subLine.textContent}`);
+    t.ok(subLine.textContent.includes('价 10.30'), 'subLine includes price');
+    ctl.destroy();
+  });
+
   QUnit.test('calcIntradayVolumeColor adheres to standard red-up / green-down rules', (t) => {
     // 价格较上一分钟上涨 -> 红色
     t.equal(calcIntradayVolumeColor(10.5, 10.2), CANDLE_UP_COLOR, 'close > prevPrice is red');

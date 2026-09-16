@@ -43,6 +43,24 @@
    - `tests/chart.test.js` 新增 `localization` 中文年-月-日格式化器与 `timeVisible: isMinute` 断言。
 2. **门禁实跑**：
    - `npm run lint`：0 错误 0 警告
-   - `npm test`：**841/841 全部通过**（无跳过、无失败）
+   - `npm test`：**843/843 全部通过**（无跳过、无失败）
    - `npm run build`：生产构建成功（`dist/` 编译通过）
    - `npx playwright test e2e/chart.spec.js`：**12/12 全部通过**
+
+---
+
+## 4. Round 1 审查缺陷闭环（Round 2 修复详情）
+
+依据 WorkBuddy Round 1 独立代码审查报告（`docs/handoff/2026-09-15-workbuddy-code-review-round1-handoff.md`）指出的 3 项 P2 缺陷，在 Round 2 完成严格闭环：
+
+1. **P2-1 闭环（`src/js/kline.js`）**：
+   - 根因：`Number(null) === 0`，且 `Number.isFinite(0) === true`。原代码未守卫 `pc > 0`，当 `prevClose === null` 时，判据 `close > pc` 退化为 `close > 0`，导致数据集最左侧首根阴线或平盘恒为红柱。
+   - 修复：在 `isVolumeBarUp` 中补齐 `pc > 0` 严格数值守卫：`if (Number.isFinite(pc) && pc > 0 && close > pc) return true`。与 `classifyKlineBar` 的 `pc <= 0` 语义严格保持一致。
+2. **P2-2 闭环（`src/js/chart.js`）**：
+   - 根因：`renderIntradayDetail(time)` 调用 `_detailTime(time)` 未传递周期，默认取 `'1d'`，分时图的数值 chart-seconds（由 `parseTencentMinuteToChartSeconds` 生成）被 `formatChartTime` 剥离了时分，导致分时图顶部浮层由原本的 `2026-09-11 10:30` 回归为纯日期。
+   - 修复：在 `renderIntradayDetail` 中显式指定分时周期：`_detailTime(time, '1m')`，浮层恢复完整的 `YYYY-MM-DD HH:mm`。
+3. **P2-3 闭环（`tests/kline.test.js` & `tests/chart.test.js`）**：
+   - 测试重构与判别力补齐：
+     - 在 `tests/kline.test.js` 中为假阴真阳样本补充真实 9.09 昨收（8.76），将 9.10 一字涨停与 9.11 假阴真阳明确分离，消除 `null -> 0` 的假通过假象。
+     - 新增 `prevClose is null/missing does not coerce null to 0` 专项测试，覆盖首根为阴线或平盘且 `prevClose === null` 时必须显绿、只有真正阳线显红的边界断言，具备击杀 P2-1 的真实判别力。
+     - 在 `tests/chart.test.js` 中新增 `createIntradayChart detail legend renders HH:mm time alongside price and volume` 单元测试，直接断言分时图浮层 DOM 包含 `YYYY-MM-DD HH:mm`（如 `2026-09-11 10:30`），具备击杀 P2-2 的真实判别力。

@@ -663,7 +663,7 @@ export function createIntradayChart(container, opts = {}) {
     const average = Number(point.avgPrice);
     const volume = Number(point.volume);
     const text = [
-      _detailTime(time),
+      _detailTime(time, '1m'),
       `价 ${_detailNumber(close)}`,
       Number.isFinite(pct) ? `幅 ${_percentFormatter(pct)}` : '',
       average > 0 ? `均 ${_detailNumber(average)}` : '均 --',
