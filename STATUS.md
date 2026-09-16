@@ -1,6 +1,22 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：国际期货与国际股票接入方案 —— WorkBuddy 审查 round 2 **未通过**（2×P2 + 5×P3），待修复闭环
+## 2026-09-16 当前状态：国际期货与国际股票接入方案 v3 —— 闭环 Round 2 全部缺陷（2×P2 + 5×P3），发起 WorkBuddy 审查 round 3
+
+方案交接（v3 全量闭环版）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
+Round 2 审查报告：[`docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md)
+Round 1 审查报告：[`docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-16-workbuddy-code-review-round1-handoff.md)
+
+- **闭环内容（Round 2 缺陷闭环）**：
+  1. **P2-1（东财外盘期货市场号与单源恒指）**：彻底剔除东财伪市场 `m:100`，纠正 A50 期指真实 secid 为 `104.CN00Y`（SGX 市场 `m:104`，当月连续，实测 `trends2` n=1088）；恒指期货经东财 `m:100-124` 扫描确认无连续合约，明确 `GL_HSI` 采用新浪 `hf_HSI` 单源实时行情驱动并显式降级，解除与 §5.2 和 §3.4 的冲突；
+  2. **P2-2（CME 每日结算休市窗口恢复冬夏双变体）**：恢复冬夏令时双变体，芝加哥本地 CT 16:00-17:00 每日结算对应夏令时（CDT）北京时间 05:00-06:00、冬令时（CST）北京时间 06:00-07:00，由 `isUsDaylightSavingTime(date)` 动态分派，杜绝冬季交易时段被误判为休市；
+  3. **P3-1（启动期冲突断言与配置引用纠偏）**：将恒真断言替换为解析器输出行为断言（`parseFutureInput('SI0').exchange === 'gfex'`，`inferAssetType('GL_SI0') === 'futures_global'`），纠正配置字典引用为 `PRODUCT_MAP`；
+  4. **P3-2（`kline.js` 代码形态正则位置纠偏）**：纠正 `STOCK_CODE_RE` 声明位置为 210，调用守卫为 218（`buildTencentKlineUrl`）和 232（`buildTencentYearKlineUrl`）；
+  5. **P3-3（`getPriceLimit` 消费方双端改造）**：除 `getPriceLimit` 对非 A 股返回 `null` 外，在 `kline.js:345`（`classifyKlineBar`）中对 `limit === null` 显式短路，使非 A 股涨跌停标记返回 `'normal'`，彻底杜绝静默回退为 10；
+  6. **P3-4（美股字段数纠偏）**：修正腾讯美股字段数为实测的 71 字段（非 73）；
+  7. **P3-5（分时与 1 分钟 K 线口径统一）**：统一端点口径，港股分时 331 根（含 09:30 点，午盘从 13:01 起步无 13:00 点）、1 分钟 K 线 330 根；美股分时 391 根（含 09:30 点）、1 分钟 K 线 390 根。
+- **验证结论**：本地门禁全部通过（`npm run lint` 0 错误，`npm test` 843/843 全部通过，`npm run build` 成功）；向 WorkBuddy 发起 Round 3 审查。
+
+## 2026-09-16 历史状态：国际期货与国际股票接入方案 —— WorkBuddy 审查 round 2 **未通过**（2×P2 + 5×P3），待修复闭环
 
 审查报告：[`docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-16-global-market-workbuddy-code-review-round2-handoff.md)（被审 `ea2bb5a`，基准 `45593a5`；报告文件名加任务作用域前缀，因模板名 `2026-09-16-workbuddy-code-review-round2-handoff.md` 已被图表审查链占用）
 被审方案（v2）：[`docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md`](docs/handoff/2026-09-16-global-market-feasibility-and-architecture-handoff.md)
