@@ -1,6 +1,16 @@
 # STATUS.md - 项目状态
 
-## 2026-09-17 当前状态：Phase 1 国际期货与外盘基础落地代码（`5e02539`）—— 独立审查 Round 3 未通过（1×P2 + 1×P3，均为本轮修复新增代码缺陷）
+## 2026-09-17 当前状态：Phase 1 国际期货与外盘基础落地代码（`6241d9c`）—— 独立审查 Round 4 未通过（1×P3，Round 3 两项缺陷单元层已闭环）
+
+审查报告：[`docs/handoff/2026-09-17-global-futures-phase1-workbuddy-code-review-round4-handoff.md`](docs/handoff/2026-09-17-global-futures-phase1-workbuddy-code-review-round4-handoff.md)
+被审提交：`6241d9c`（基准 `adf057f`，本轮实际审查增量 `7f33014..6241d9c` = 3 文件 / +158 −18）；门禁实跑：`npm test` 873/873 全绿（+4 品种级新断言）。
+
+- **Round 3 两项缺陷（P2-1/P3-1）单元层已实测真闭环**：品种级 `sessionStart/EndBeijingMin`/`minBars` 登记 + 首末根双侧校验；变异 M1（HSI endMin 还原美盘统一值）与 M2b（拆首根校验 + A50 minBars→500）均确定性转红；端到端实测 `GL_A50 date=2026-09-16` 缺头归档 `archiveComplete=false`（Round 3 误标 true），修复生效。
+- **P3-1（本轮新引入回归，阻断）**：完整性判据的 DST 取自 `generatedAt` 而非归档会话自身（`server/intradayService.js:156`）——美国夏令时切换周末之前的 CME 型交易日（8 品种，每年 2 天），其完整归档在切换后首次抓取时被永久误判不完整。决定性反例（纯单元 4 案例）：同一份冬令时周五完整归档，genAt 切换前 → true、切换后 → false（春令时方向系本轮首根校验新引入；秋令时方向为旧末根判据既有同根因缺陷，一并修复）。该日归档永久 stale + 信任门不通过 + 重复拉上游；数据可见无静默残缺，故 P3，按门槛构成阻断。
+- **待确认风险/未验证项**：① HK/SGX 完整归档捕获窗（北京 03:00–09:15）存在性未证实——现时点实测上游已清洗 HSI 日盘段，`GL_HSI date=2026-09-16` 判不完整属**诚实标记**（数据确缺日盘半段，非 Round 3 误判形态）；② A50 美盘夏令时 `[0,300]` ranges 滤除夜盘 05:00–05:15 真实 bar（既有行为，末根判据 0 裕量通过，仅登记）；③ S17 并行偶发失败、`push2his` 连接重置（沿承上轮，非回归）。
+- **复审验收**：见报告 §四（DST 来源改由会话自身推导 + 4 条切换周断言变异必红 + 全量全绿；捕获窗端到端实测时间门控、不阻塞代码复审）。
+
+## 2026-09-17 历史状态：Phase 1 国际期货与外盘基础落地代码（`5e02539`）—— 独立审查 Round 3 未通过（1×P2 + 1×P3，均为本轮修复新增代码缺陷）
 
 审查报告：[`docs/handoff/2026-09-17-global-futures-phase1-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-17-global-futures-phase1-workbuddy-code-review-round3-handoff.md)
 被审提交：`5e02539`（基准 `adf057f`，实际审查增量 `9389bcd..5e02539` = 24 文件 / +2501 −196）；门禁实跑：`npm test` 基线 869/869 全绿。
