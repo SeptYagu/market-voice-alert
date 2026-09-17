@@ -1,6 +1,15 @@
 # STATUS.md - 项目状态
 
-## 2026-09-17 当前状态：Phase 1 国际期货与外盘基础落地代码（`6241d9c`）—— 独立审查 Round 4 未通过（1×P3，Round 3 两项缺陷单元层已闭环）
+## 2026-09-17 当前状态：Phase 1 国际期货与外盘基础落地完成（`a09115b`）—— WorkBuddy 独立审查 Round 5 审核通过（0 缺陷，全绿交付）
+
+交付报告：[`docs/handoff/2026-09-17-global-futures-phase1-completion-handoff.md`](docs/handoff/2026-09-17-global-futures-phase1-completion-handoff.md)
+交付提交：`a09115b`（基准 `adf057f`，Round 5 审查增量 `853bb15..a09115b` = 3 文件 / +131 −13）；门禁实跑：`npm test` 877/877 全绿，`npm run lint` 0 错误，`npm run build` 成功（gzip 120.19 KB ≤ 125.10 KB）。
+
+- **Round 4 缺陷（P3-1）已实测真闭环**：完整性判据夏令时来源由 `generatedAtMs` 彻底改造为直接依据归档会话自身的时间戳（`lastItem.time` / `firstItem.time`）推导。新增 4 个夏令时切换周末前 CME 交易日归档测试案例（涵盖 2026 春季/秋季切换，以及 2025 冬春边界真实会话），变异 M1（还原为 `generatedAtMs`）时 4 个断言全部确定性转红，修复真实生效。
+- **WorkBuddy 独立对抗审查 Round 5 最终结论**：**0 缺陷，审核通过**。历经 5 轮严格锚定基准 `adf057f` 的对抗审查（Round 1: 2×P1 + 3×P2 + 5×P3；Round 2: 2×P2 + 6×P3；Round 3: 1×P2 + 1×P3；Round 4: 1×P3；Round 5: 0 缺陷），全部 P1~P3 缺陷与回归均已闭环消除并通过真实变异测试守护。
+- **10 个国际期货核心品种全链路正式就绪**：`GL_CL0`、`GL_GC0`、`GL_SI0`、`GL_HG0`、`GL_NG0`、`GL_NQ0`、`GL_ES0`、`GL_YM0`、`GL_A50`、`GL_HSI` 报价解析、多市场除数/换算系数、品种级交易时段跨午夜与冬夏令时策略、服务端分时首末根完整快照归档、TTS 语音精准播报与自选表渲染全部落地交付，对既有 A 股与国内期货保持 100% 零回归隔离。
+
+## 2026-09-17 历史状态：Phase 1 国际期货与外盘基础落地代码（`6241d9c`）—— 独立审查 Round 4 未通过（1×P3，Round 3 两项缺陷单元层已闭环）
 
 审查报告：[`docs/handoff/2026-09-17-global-futures-phase1-workbuddy-code-review-round4-handoff.md`](docs/handoff/2026-09-17-global-futures-phase1-workbuddy-code-review-round4-handoff.md)
 被审提交：`6241d9c`（基准 `adf057f`，本轮实际审查增量 `7f33014..6241d9c` = 3 文件 / +158 −18）；门禁实跑：`npm test` 873/873 全绿（+4 品种级新断言）。
