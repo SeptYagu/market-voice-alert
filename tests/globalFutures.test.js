@@ -778,4 +778,53 @@ QUnit.module('Phase 1: 外盘分时完整性判据品种级覆盖 (Round 3 P2-1 
   });
 });
 
+QUnit.module('Phase 1: CME 跨夏令时切换周五完整归档在切换前后生成判定 (Round 4 P3-1)', () => {
+  // 1. 春令时切换周末前周五（冬令时会话，2026-03-06）：
+  // 首根 2026-03-06 07:00 (420 min)，末根 2026-03-07 05:59 (359 min)，共 1379 根
+  const winterFridayItems = [
+    { time: parseBeijingDateTimeToChartSeconds('2026-03-06 07:00:00'), close: 70 },
+    ...Array.from({ length: 1377 }, (_, i) => ({
+      time: parseBeijingDateTimeToChartSeconds('2026-03-06 07:01:00') + i * 60,
+      close: 70
+    })),
+    { time: parseBeijingDateTimeToChartSeconds('2026-03-07 05:59:00'), close: 71 }
+  ];
+
+  // 2. 秋令时切换周末前周五（夏令时会话，2026-10-30）：
+  // 首根 2026-10-30 06:00 (360 min)，末根 2026-10-31 05:00 (300 min)，共 1380 根
+  const summerFridayItems = [
+    { time: parseBeijingDateTimeToChartSeconds('2026-10-30 06:00:00'), close: 80 },
+    ...Array.from({ length: 1378 }, (_, i) => ({
+      time: parseBeijingDateTimeToChartSeconds('2026-10-30 06:01:00') + i * 60,
+      close: 80
+    })),
+    { time: parseBeijingDateTimeToChartSeconds('2026-10-31 05:00:00'), close: 81 }
+  ];
+
+  QUnit.test('春令时切换前周五冬令时会话在切换前 (EST) 生成判定为完整', (t) => {
+    const genAt = new Date('2026-03-07T08:00:00+08:00').getTime();
+    const isComplete = isHistoricalSnapshotComplete(genAt, '2026-03-06', { code: 'GL_CL0', items: winterFridayItems }, 'GL_CL0');
+    t.true(isComplete, '春令时切换前生成归档完整 (EST -> EST)');
+  });
+
+  QUnit.test('春令时切换前周五冬令时会话在切换后 (EDT) 生成依然判定为完整 (P3-1 核心闭环)', (t) => {
+    const genAt = new Date('2026-03-09T10:00:00+08:00').getTime();
+    const isComplete = isHistoricalSnapshotComplete(genAt, '2026-03-06', { code: 'GL_CL0', items: winterFridayItems }, 'GL_CL0');
+    t.true(isComplete, '春令时切换后生成归档依然完整 (EST 会话不受 EDT genAt 误判)');
+  });
+
+  QUnit.test('秋令时切换前周五夏令时会话在切换前 (EDT) 生成判定为完整', (t) => {
+    const genAt = new Date('2026-10-31T08:00:00+08:00').getTime();
+    const isComplete = isHistoricalSnapshotComplete(genAt, '2026-10-30', { code: 'GL_CL0', items: summerFridayItems }, 'GL_CL0');
+    t.true(isComplete, '秋令时切换前生成归档完整 (EDT -> EDT)');
+  });
+
+  QUnit.test('秋令时切换前周五夏令时会话在切换后 (EST) 生成依然判定为完整 (P3-1 核心闭环)', (t) => {
+    const genAt = new Date('2026-11-02T10:00:00+08:00').getTime();
+    const isComplete = isHistoricalSnapshotComplete(genAt, '2026-10-30', { code: 'GL_CL0', items: summerFridayItems }, 'GL_CL0');
+    t.true(isComplete, '秋令时切换后生成归档依然完整 (EDT 会话不受 EST genAt 误判)');
+  });
+});
+
+
 

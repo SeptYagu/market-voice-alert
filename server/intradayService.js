@@ -150,15 +150,17 @@ export function isHistoricalSnapshotComplete(generatedAtMs, dateDash, data, code
     const stamp = beijingStamp(n);
     if (stamp.date < nextDate) return false;
 
-    const dst = isUsDaylightSavingTime(new Date(n));
+    const items = data?.items;
+    const minRequiredBars = getGlobalFutureMinBars(targetCode);
+    if (!Array.isArray(items) || items.length < minRequiredBars) return false;
+
+    const lastItem = items[items.length - 1];
+    const sessionDateObj = new Date(typeof lastItem.time === 'number' ? lastItem.time * 1000 : lastItem.time);
+    const dst = isUsDaylightSavingTime(sessionDateObj);
     const endMin = getSessionEndBeijingMin(targetCode, dst);
     const startMin = getSessionStartBeijingMin(targetCode, dst);
-    const minRequiredBars = getGlobalFutureMinBars(targetCode);
 
     if (stamp.date === nextDate && stamp.minutes < endMin + 5) return false;
-
-    const items = data?.items;
-    if (!Array.isArray(items) || items.length < minRequiredBars) return false;
 
     // Head check: first item must be on trading day dateDash and within 15 minutes of session start
     const firstItem = items[0];
@@ -170,7 +172,6 @@ export function isHistoricalSnapshotComplete(generatedAtMs, dateDash, data, code
     if (firstMin > startMin + 15) return false;
 
     // Tail check: last item must be on nextDate and within 15 minutes of session close
-    const lastItem = items[items.length - 1];
     const lastDate = chartTimeToDate(lastItem.time);
     if (lastDate !== nextDate) return false;
     const lastHhmm = chartSecondsToTime(lastItem.time);
