@@ -1,6 +1,17 @@
 # STATUS.md - 项目状态
 
-## 2026-09-16 当前状态：Phase 1 国际期货与外盘基础落地代码（`9389bcd`）—— 独立审查 Round 2 未通过（2×P2 + 6×P3）
+## 2026-09-17 当前状态：Phase 1 国际期货与外盘基础落地代码（`5e02539`）—— 独立审查 Round 3 未通过（1×P2 + 1×P3，均为本轮修复新增代码缺陷）
+
+审查报告：[`docs/handoff/2026-09-17-global-futures-phase1-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-17-global-futures-phase1-workbuddy-code-review-round3-handoff.md)
+被审提交：`5e02539`（基准 `adf057f`，实际审查增量 `9389bcd..5e02539` = 24 文件 / +2501 −196）；门禁实跑：`npm test` 基线 869/869 全绿。
+
+- **Round 2 全部 8 项缺陷（P2-1/P2-2/P3-1..P3-6）已实测真闭环**：9 组定点反向变异确定性转红（日历日判据回退、服务端并集判据回退、旧启发式还原、撤销 session ranges 接线、双层 `hf_` 过滤同拆、`breakEnd` 固定 360、还原 `known||'105'`、小数位 `{3,4}` 白名单回退、`quoteDate` 还原 10 位）；真源端到端复核：`toEastmoneySecId('usBA')→null`、`GL_CL0 date=2026-09-17` API 与直连 `trends2` 条数**差额 0**、`GL_HSI date=2026-09-16` 跨午夜夜盘段（09-17 00:00–03:00）完整保留。
+- **P2（新缺陷，阻断）**：`server/intradayService.js:148/:158` 本轮新增的 `isHistoricalSnapshotComplete` futures_global 分支把美盘 DST 结算时刻（05:00/06:00 前 15 分钟）套用于全部 10 品种——HKFE 恒指夜盘真实末根 03:00（180 min < 285/345）**全年**、SGX A50 夜盘末根 05:15（315 min < 冬令时 345）**冬令时**下，已完成交易日的完整归档被永久判 `archiveComplete=false`：响应 `stale` 恒真（`:336/:360`）、历史快照信任门 `:313` 永不通过（每次重拉上游）。实测 `GL_HSI date=2026-09-16` 返回 600 根完整归档仍标不完整。判据末根门变异为恒真后全量 869/869 仍绿（零品种级覆盖）。
+- **P3（新缺陷）**：同判据只校验末根不校验首根——上游仅保留最近交易日窗口（A50 实测窗口自 T 日 16:46 起，缺日盘 09:00–16:35 约 455 根）时，缺头归档被标 `archiveComplete=true` 并经 `:313` 信任门永久缓存（实测 `GL_A50 date=2026-09-16` n=735 first=16:46 标完整）。Round 2 P2-1「静默残缺」危害形态的头部残留变体。
+- **待确认风险/未验证项**：① CME 型已完成交易日全量条数对齐未能整段复测（06:00 换日后上游仅存当前会话，非本轮回归）；② S17 性能预算用例并行负载下偶发失败（预存基建敏感性）；③ `push2his`/`90.push2his` 仍 100% 连接重置，轮转至 `push2delay` 生效（与既有记载一致）。
+- **复审验收**：见报告 §四（品种级会话末根登记 + 首根校验，新增断言变异必红 + 端到端复测）。
+
+## 2026-09-16 历史状态：Phase 1 国际期货与外盘基础落地代码（`9389bcd`）—— 独立审查 Round 2 未通过（2×P2 + 6×P3）
 
 审查报告：[`docs/handoff/2026-09-16-global-futures-phase1-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-16-global-futures-phase1-workbuddy-code-review-round2-handoff.md)
 被审提交：`9389bcd`（基准 `adf057f`，实际审查增量 `4373343..9389bcd` = 12 文件 / +455 −178）；门禁实跑：`lint` 0 问题、`npm test` 863/863、`npm run build` 成功。
