@@ -31,7 +31,7 @@ import {
 import { decideVoiceSchedule } from '../src/js/services/voiceSchedule.js';
 import { EASTMONEY_FIELDS, fetchQuotes } from '../src/js/api.js';
 import { filterKlineItemsByDate, applyLiveQuoteToKline } from '../src/js/kline.js';
-import { filterIntradaySessions } from '../server/intradayService.js';
+import { filterIntradaySessions, isHistoricalSnapshotComplete } from '../server/intradayService.js';
 import { filterMinuteBarsForTradingDay } from '../server/futures/futuresKlineService.js';
 import { resolveProxyTarget } from '../server/proxyRoutes.js';
 import { buildExportCsv } from '../src/js/services/batchExportService.js';
@@ -713,6 +713,68 @@ QUnit.module('Phase 1: 代理出网兜底与 push2delay 轮转 (P2-3)', () => {
     t.ok(target, '成功解析东财代理目标');
     t.true(Array.isArray(target.urls), 'target.urls 为数组');
     t.true(target.urls.some(u => u.includes('push2delay.eastmoney.com')), '包含 push2delay.eastmoney.com 兜底主机');
+  });
+});
+
+QUnit.module('Phase 1: 外盘分时完整性判据品种级覆盖 (Round 3 P2-1 & P3-1)', () => {
+  QUnit.test('GL_HSI 完成交易日归档 (末根 03:00) 判定为完整归档 (P2-1)', (t) => {
+    // 恒指交易日 2026-09-16，首根 09:15，末根次日 03:00，次日 10:00 生成
+    const items = [
+      { time: parseBeijingDateTimeToChartSeconds('2026-09-16 09:15:00'), close: 17500 },
+      ...Array.from({ length: 598 }, (_, i) => ({
+        time: parseBeijingDateTimeToChartSeconds('2026-09-16 09:16:00') + i * 60,
+        close: 17500
+      })),
+      { time: parseBeijingDateTimeToChartSeconds('2026-09-17 03:00:00'), close: 17600 }
+    ];
+    const genAt = new Date('2026-09-17T10:00:00+08:00').getTime();
+    const isComplete = isHistoricalSnapshotComplete(genAt, '2026-09-16', { code: 'GL_HSI', items }, 'GL_HSI');
+    t.true(isComplete, 'GL_HSI 完成交易日 (末根 03:00, n=600) 归档完整');
+  });
+
+  QUnit.test('GL_A50 冬令时样本 (末根 05:15, isUsDaylightSavingTime=false) 判定为完整归档 (P2-1)', (t) => {
+    // A50 冬令时 2026-01-15，首根 09:00，末根次日 05:15，次日 10:00 生成
+    const genAt = new Date('2026-01-16T10:00:00+08:00').getTime();
+    t.false(isUsDaylightSavingTime(new Date(genAt)), '验证 1 月 16 日处于美股冬令时');
+    const items = [
+      { time: parseBeijingDateTimeToChartSeconds('2026-01-15 09:00:00'), close: 12000 },
+      ...Array.from({ length: 900 }, (_, i) => ({
+        time: parseBeijingDateTimeToChartSeconds('2026-01-15 09:01:00') + i * 60,
+        close: 12000
+      })),
+      { time: parseBeijingDateTimeToChartSeconds('2026-01-16 05:15:00'), close: 12100 }
+    ];
+    const isComplete = isHistoricalSnapshotComplete(genAt, '2026-01-15', { code: 'GL_A50', items }, 'GL_A50');
+    t.true(isComplete, 'GL_A50 冬令时样本 (末根 05:15) 归档完整');
+  });
+
+  QUnit.test('GL_A50 缺头归档 (首根 16:46, 缺日盘) 判定为不完整归档 (P3-1)', (t) => {
+    // A50 截断样本：首根 16:46，末根 05:15，缺少 09:00-16:35 日盘
+    const genAt = new Date('2026-09-17T10:00:00+08:00').getTime();
+    const items = [
+      { time: parseBeijingDateTimeToChartSeconds('2026-09-16 16:46:00'), close: 12000 },
+      ...Array.from({ length: 733 }, (_, i) => ({
+        time: parseBeijingDateTimeToChartSeconds('2026-09-16 16:47:00') + i * 60,
+        close: 12000
+      })),
+      { time: parseBeijingDateTimeToChartSeconds('2026-09-17 05:15:00'), close: 12100 }
+    ];
+    const isComplete = isHistoricalSnapshotComplete(genAt, '2026-09-16', { code: 'GL_A50', items }, 'GL_A50');
+    t.false(isComplete, 'GL_A50 头部被截断 (first=16:46, 缺日盘) 必须判定为不完整归档');
+  });
+
+  QUnit.test('GL_A50 首根完整归档 (首根 09:00, 末根 05:15) 正常判定为完整归档 (P3-1 对照)', (t) => {
+    const genAt = new Date('2026-09-17T10:00:00+08:00').getTime();
+    const items = [
+      { time: parseBeijingDateTimeToChartSeconds('2026-09-16 09:00:00'), close: 12000 },
+      ...Array.from({ length: 1100 }, (_, i) => ({
+        time: parseBeijingDateTimeToChartSeconds('2026-09-16 09:01:00') + i * 60,
+        close: 12000
+      })),
+      { time: parseBeijingDateTimeToChartSeconds('2026-09-17 05:15:00'), close: 12100 }
+    ];
+    const isComplete = isHistoricalSnapshotComplete(genAt, '2026-09-16', { code: 'GL_A50', items }, 'GL_A50');
+    t.true(isComplete, 'GL_A50 首根完整 (first=09:00, last=05:15, n=1102) 判定为完整归档');
   });
 });
 

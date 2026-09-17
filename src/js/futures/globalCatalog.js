@@ -16,7 +16,10 @@ export const GLOBAL_FUTURES_CATALOG = Object.freeze({
     qtDivisor: 100,
     sinaScale: 1.0,
     priceDecimals: 2,
-    baseFromOwnField7: true
+    baseFromOwnField7: true,
+    sessionStartBeijingMin: (dst) => (dst ? 360 : 420),
+    sessionEndBeijingMin: (dst) => (dst ? 300 : 360),
+    minBars: 500
   }),
   GL_GC0: Object.freeze({
     code: 'GL_GC0',
@@ -30,7 +33,10 @@ export const GLOBAL_FUTURES_CATALOG = Object.freeze({
     sinaSymbol: 'hf_GC',
     qtDivisor: 10,
     sinaScale: 1.0,
-    priceDecimals: 1
+    priceDecimals: 1,
+    sessionStartBeijingMin: (dst) => (dst ? 360 : 420),
+    sessionEndBeijingMin: (dst) => (dst ? 300 : 360),
+    minBars: 500
   }),
   GL_SI0: Object.freeze({
     code: 'GL_SI0',
@@ -44,7 +50,10 @@ export const GLOBAL_FUTURES_CATALOG = Object.freeze({
     sinaSymbol: 'hf_SI',
     qtDivisor: 1000,
     sinaScale: 1.0,
-    priceDecimals: 3
+    priceDecimals: 3,
+    sessionStartBeijingMin: (dst) => (dst ? 360 : 420),
+    sessionEndBeijingMin: (dst) => (dst ? 300 : 360),
+    minBars: 500
   }),
   GL_HG0: Object.freeze({
     code: 'GL_HG0',
@@ -58,7 +67,10 @@ export const GLOBAL_FUTURES_CATALOG = Object.freeze({
     sinaSymbol: 'hf_HG',
     qtDivisor: 10000,
     sinaScale: 0.01,
-    priceDecimals: 4
+    priceDecimals: 4,
+    sessionStartBeijingMin: (dst) => (dst ? 360 : 420),
+    sessionEndBeijingMin: (dst) => (dst ? 300 : 360),
+    minBars: 500
   }),
   GL_NG0: Object.freeze({
     code: 'GL_NG0',
@@ -73,7 +85,10 @@ export const GLOBAL_FUTURES_CATALOG = Object.freeze({
     qtDivisor: 1000,
     sinaScale: 1.0,
     priceDecimals: 3,
-    baseFromOwnField7: true
+    baseFromOwnField7: true,
+    sessionStartBeijingMin: (dst) => (dst ? 360 : 420),
+    sessionEndBeijingMin: (dst) => (dst ? 300 : 360),
+    minBars: 500
   }),
   GL_NQ0: Object.freeze({
     code: 'GL_NQ0',
@@ -87,7 +102,10 @@ export const GLOBAL_FUTURES_CATALOG = Object.freeze({
     sinaSymbol: 'hf_NQ',
     qtDivisor: 100,
     sinaScale: 1.0,
-    priceDecimals: 2
+    priceDecimals: 2,
+    sessionStartBeijingMin: (dst) => (dst ? 360 : 420),
+    sessionEndBeijingMin: (dst) => (dst ? 300 : 360),
+    minBars: 500
   }),
   GL_ES0: Object.freeze({
     code: 'GL_ES0',
@@ -101,7 +119,10 @@ export const GLOBAL_FUTURES_CATALOG = Object.freeze({
     sinaSymbol: 'hf_ES',
     qtDivisor: 100,
     sinaScale: 1.0,
-    priceDecimals: 2
+    priceDecimals: 2,
+    sessionStartBeijingMin: (dst) => (dst ? 360 : 420),
+    sessionEndBeijingMin: (dst) => (dst ? 300 : 360),
+    minBars: 500
   }),
   GL_YM0: Object.freeze({
     code: 'GL_YM0',
@@ -115,7 +136,10 @@ export const GLOBAL_FUTURES_CATALOG = Object.freeze({
     sinaSymbol: 'hf_YM',
     qtDivisor: 1,
     sinaScale: 1.0,
-    priceDecimals: 0
+    priceDecimals: 0,
+    sessionStartBeijingMin: (dst) => (dst ? 360 : 420),
+    sessionEndBeijingMin: (dst) => (dst ? 300 : 360),
+    minBars: 500
   }),
   GL_A50: Object.freeze({
     code: 'GL_A50',
@@ -129,7 +153,10 @@ export const GLOBAL_FUTURES_CATALOG = Object.freeze({
     sinaSymbol: 'hf_CHA50CFD',
     qtDivisor: 10,
     sinaScale: 1.0,
-    priceDecimals: 1
+    priceDecimals: 1,
+    sessionStartBeijingMin: 540,
+    sessionEndBeijingMin: 315,
+    minBars: 800
   }),
   GL_HSI: Object.freeze({
     code: 'GL_HSI',
@@ -143,7 +170,10 @@ export const GLOBAL_FUTURES_CATALOG = Object.freeze({
     sinaSymbol: 'hf_HSI',
     qtDivisor: 1,
     sinaScale: 1.0,
-    priceDecimals: 0
+    priceDecimals: 0,
+    sessionStartBeijingMin: 555,
+    sessionEndBeijingMin: 180,
+    minBars: 500
   })
 });
 
@@ -191,4 +221,31 @@ export function toEastmoneyGlobalSecId(code) {
 export function toSinaGlobalSymbol(code) {
   const item = getGlobalFuture(code);
   return item ? item.sinaSymbol : null;
+}
+
+export function getSessionEndBeijingMin(itemOrCode, dst = true) {
+  const item = typeof itemOrCode === 'string'
+    ? (getGlobalFuture(itemOrCode) || getGlobalFutureBySecId(itemOrCode) || getGlobalFutureBySinaSymbol(itemOrCode))
+    : itemOrCode;
+  if (!item) return dst ? 300 : 360;
+  if (typeof item.sessionEndBeijingMin === 'function') return item.sessionEndBeijingMin(dst);
+  if (typeof item.sessionEndBeijingMin === 'number') return item.sessionEndBeijingMin;
+  return dst ? 300 : 360;
+}
+
+export function getSessionStartBeijingMin(itemOrCode, dst = true) {
+  const item = typeof itemOrCode === 'string'
+    ? (getGlobalFuture(itemOrCode) || getGlobalFutureBySecId(itemOrCode) || getGlobalFutureBySinaSymbol(itemOrCode))
+    : itemOrCode;
+  if (!item) return dst ? 360 : 420;
+  if (typeof item.sessionStartBeijingMin === 'function') return item.sessionStartBeijingMin(dst);
+  if (typeof item.sessionStartBeijingMin === 'number') return item.sessionStartBeijingMin;
+  return dst ? 360 : 420;
+}
+
+export function getGlobalFutureMinBars(itemOrCode) {
+  const item = typeof itemOrCode === 'string'
+    ? (getGlobalFuture(itemOrCode) || getGlobalFutureBySecId(itemOrCode) || getGlobalFutureBySinaSymbol(itemOrCode))
+    : itemOrCode;
+  return (item && Number.isInteger(item.minBars)) ? item.minBars : 500;
 }

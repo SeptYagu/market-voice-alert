@@ -11,6 +11,11 @@ import {
   fetchTencentIntradayMinutes
 } from './marketData.js';
 import { normalizeCodeParam, normalizeDateKey, parsePositiveNumber } from './utils.js';
+import {
+  getSessionEndBeijingMin,
+  getSessionStartBeijingMin,
+  getGlobalFutureMinBars
+} from '../src/js/futures/globalCatalog.js';
 
 const INTRADAY_TTL_MS = 10 * 1000;
 const SESSION_RANGES = Object.freeze([
@@ -132,7 +137,7 @@ function beijingStamp(ms) {
 // A snapshot captured while the session was still running only contains part
 // of the day (e.g. fetched at 10:30 -> chart shows "morning only" forever,
 // and its last close never matches the daily K-line). Snapshots generated on
-function isHistoricalSnapshotComplete(generatedAtMs, dateDash, data, code) {
+export function isHistoricalSnapshotComplete(generatedAtMs, dateDash, data, code) {
   if (data?.archiveComplete === false) return false;
   const targetCode = code || data?.code;
   const strategy = targetCode ? resolveSessionStrategy(targetCode) : null;
@@ -144,18 +149,34 @@ function isHistoricalSnapshotComplete(generatedAtMs, dateDash, data, code) {
     if (!Number.isFinite(n) || n <= 0) return false;
     const stamp = beijingStamp(n);
     if (stamp.date < nextDate) return false;
+
     const dst = isUsDaylightSavingTime(new Date(n));
-    const breakStart = dst ? 5 * 60 : 6 * 60;
-    if (stamp.date === nextDate && stamp.minutes < breakStart + 5) return false;
+    const endMin = getSessionEndBeijingMin(targetCode, dst);
+    const startMin = getSessionStartBeijingMin(targetCode, dst);
+    const minRequiredBars = getGlobalFutureMinBars(targetCode);
+
+    if (stamp.date === nextDate && stamp.minutes < endMin + 5) return false;
+
     const items = data?.items;
-    if (!Array.isArray(items) || items.length < 500) return false;
+    if (!Array.isArray(items) || items.length < minRequiredBars) return false;
+
+    // Head check: first item must be on trading day dateDash and within 15 minutes of session start
+    const firstItem = items[0];
+    const firstDate = chartTimeToDate(firstItem.time);
+    if (firstDate !== dateDash) return false;
+    const firstHhmm = chartSecondsToTime(firstItem.time);
+    const [fh, fmi] = firstHhmm.split(':').map(Number);
+    const firstMin = fh * 60 + fmi;
+    if (firstMin > startMin + 15) return false;
+
+    // Tail check: last item must be on nextDate and within 15 minutes of session close
     const lastItem = items[items.length - 1];
     const lastDate = chartTimeToDate(lastItem.time);
     if (lastDate !== nextDate) return false;
     const lastHhmm = chartSecondsToTime(lastItem.time);
-    const [h, mi] = lastHhmm.split(':').map(Number);
-    const lastMin = h * 60 + mi;
-    return lastMin >= breakStart - 15;
+    const [lh, lmi] = lastHhmm.split(':').map(Number);
+    const lastMin = lh * 60 + lmi;
+    return lastMin >= endMin - 15;
   }
 
   // A-share default:
