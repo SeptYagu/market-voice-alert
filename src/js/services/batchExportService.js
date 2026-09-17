@@ -104,7 +104,9 @@ export function buildExportCsv(codes, quotesMap) {
     let rawName = (q && q.name) ? String(q.name) : displayCode;
     if (/^[=+\-@\t\r]/.test(rawName)) rawName = `'${rawName}`;
     const name = `"${rawName.replace(/"/g, '""')}"`;
-    const decimals = isFuture && q && ((q.priceTick && q.priceTick < 0.01) || q.priceDecimals === 3 || q.priceDecimals === 4) ? (q.priceDecimals || 3) : 2;
+    const decimals = q && Number.isInteger(q.priceDecimals) && q.priceDecimals >= 0
+      ? q.priceDecimals
+      : (isFuture && q && q.priceTick && q.priceTick < 0.01 ? 3 : 2);
     const price = q && Number.isFinite(Number(q.price)) ? Number(q.price).toFixed(decimals) : '';
     const pct = q && Number.isFinite(Number(q.changePercent)) ? Number(q.changePercent).toFixed(2) : '';
     const open = q && Number.isFinite(Number(q.open)) ? Number(q.open).toFixed(decimals) : '';

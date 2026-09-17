@@ -94,7 +94,9 @@ export function renderRow(code, isActive, options = {}) {
   });
   const isFuture = q.type === 'future' || q.type === 'futures_global' || isFutureCode(code);
   const displayCode = isFuture ? code.toUpperCase() : code;
-  const priceDecimals = isFuture && ((q.priceTick && q.priceTick < 0.01) || q.priceDecimals === 3 || q.priceDecimals === 4) ? (q.priceDecimals || 3) : 2;
+  const priceDecimals = Number.isInteger(q.priceDecimals) && q.priceDecimals >= 0
+    ? q.priceDecimals
+    : (isFuture && q.priceTick && q.priceTick < 0.01 ? 3 : 2);
   // The row keeps its last successful price when a refresh fails; mark it so an old
   // quote cannot pass for a fresh one.
   const stale = q.stale === true;
@@ -337,7 +339,9 @@ export function updateRowQuoteCells(code, quote) {
   if (allCells.length < 9) return;
   const dir = priceDirection(Number(q.changePercent));
   const isFuture = q.type === 'future' || q.type === 'futures_global' || isFutureCode(code);
-  const priceDecimals = isFuture && ((q.priceTick && q.priceTick < 0.01) || q.priceDecimals === 3 || q.priceDecimals === 4) ? (q.priceDecimals || 3) : 2;
+  const priceDecimals = Number.isInteger(q.priceDecimals) && q.priceDecimals >= 0
+    ? q.priceDecimals
+    : (isFuture && q.priceTick && q.priceTick < 0.01 ? 3 : 2);
 
   const getCell = (field, fallbackIndex) => row.querySelector(`td[data-field="${field}"]`) || allCells[fallbackIndex];
 

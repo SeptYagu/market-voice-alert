@@ -350,7 +350,7 @@ function _filterIntradaySessions(data, selectedDate, code) {
         const itemDate = (strategy && strategy.getTradingDay)
           ? strategy.getTradingDay(it.time)
           : chartTimeToDate(it.time);
-        if (itemDate !== selectedDate && chartTimeToDate(it.time) !== selectedDate) return false;
+        if (itemDate !== selectedDate) return false;
       }
       return _isTradingSessionTime(it.time, targetCode);
     })
@@ -468,7 +468,7 @@ export async function fetchIntraday(code, opts = {}) {
       signal: opts.signal
     });
     if (klineData) {
-      const items = filterKlineItemsByDate(klineData.items, opts.date);
+      const items = filterKlineItemsByDate(klineData.items, opts.date, code);
       const decorated = _decorateKlineIntraday({ ...klineData, items }, common);
       const filtered = _filterIntradaySessions(decorated, opts.date, code);
       if (_hasIntradayItems(filtered)) return filtered;

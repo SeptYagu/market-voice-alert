@@ -1,7 +1,7 @@
 import { filterKlineItemsByDate } from '../src/js/kline.js';
-import { chartSecondsToTime, chartTimeToDate } from '../src/js/time.js';
+import { chartSecondsToTime, chartTimeToDate, shiftCalendarDate } from '../src/js/time.js';
 import { computeVwap } from '../src/js/services/quoteMath.js';
-import { resolveSessionStrategy } from '../src/js/marketSession.js';
+import { resolveSessionStrategy, isUsDaylightSavingTime } from '../src/js/marketSession.js';
 import { getOrRefresh, readCache } from './cacheStore.js';
 import { getCachedKline } from './klineService.js';
 import {
@@ -42,7 +42,7 @@ function isTradingSessionTime(time, code) {
   return ranges.some(([start, end]) => minutes >= start && minutes <= end);
 }
 
-function filterIntradaySessions(data, selectedDate, code) {
+export function filterIntradaySessions(data, selectedDate, code) {
   if (!data || !Array.isArray(data.items)) return data;
   const targetCode = code || data.code;
   const strategy = targetCode ? resolveSessionStrategy(targetCode) : null;
@@ -54,7 +54,7 @@ function filterIntradaySessions(data, selectedDate, code) {
         const itemTradingDay = (strategy && strategy.getTradingDay)
           ? strategy.getTradingDay(it.time)
           : chartTimeToDate(it.time);
-        if (itemTradingDay !== selectedDate && chartTimeToDate(it.time) !== selectedDate) return false;
+        if (itemTradingDay !== selectedDate) return false;
       }
       return isTradingSessionTime(it.time, targetCode);
     })
@@ -132,10 +132,34 @@ function beijingStamp(ms) {
 // A snapshot captured while the session was still running only contains part
 // of the day (e.g. fetched at 10:30 -> chart shows "morning only" forever,
 // and its last close never matches the daily K-line). Snapshots generated on
-// a later day, or after 15:05 Beijing, are treated as complete archives.
-function isHistoricalSnapshotComplete(generatedAtMs, dateDash, data) {
-  // A new write time does not make an old morning-only fallback complete.
-  if (data?.archiveComplete === false || !data?.items?.some((item) =>
+function isHistoricalSnapshotComplete(generatedAtMs, dateDash, data, code) {
+  if (data?.archiveComplete === false) return false;
+  const targetCode = code || data?.code;
+  const strategy = targetCode ? resolveSessionStrategy(targetCode) : null;
+  const assetType = strategy?.assetType;
+
+  if (assetType === 'futures_global') {
+    const nextDate = shiftCalendarDate(dateDash, 1);
+    const n = Number(generatedAtMs);
+    if (!Number.isFinite(n) || n <= 0) return false;
+    const stamp = beijingStamp(n);
+    if (stamp.date < nextDate) return false;
+    const dst = isUsDaylightSavingTime(new Date(n));
+    const breakStart = dst ? 5 * 60 : 6 * 60;
+    if (stamp.date === nextDate && stamp.minutes < breakStart + 5) return false;
+    const items = data?.items;
+    if (!Array.isArray(items) || items.length < 500) return false;
+    const lastItem = items[items.length - 1];
+    const lastDate = chartTimeToDate(lastItem.time);
+    if (lastDate !== nextDate) return false;
+    const lastHhmm = chartSecondsToTime(lastItem.time);
+    const [h, mi] = lastHhmm.split(':').map(Number);
+    const lastMin = h * 60 + mi;
+    return lastMin >= breakStart - 15;
+  }
+
+  // A-share default:
+  if (!data?.items?.some((item) =>
     chartTimeToDate(item.time) === dateDash && chartSecondsToTime(item.time) === '15:00')) return false;
   const n = Number(generatedAtMs);
   if (!Number.isFinite(n) || n <= 0) return false;
@@ -227,14 +251,14 @@ async function fetchIntradayNetwork(common, allowLatestTickSource) {
     // still accept stale kline data — that is how closing archives recover
     // when AKTools is down.
     if (klineData && (!allowLatestTickSource || klineResult.source === 'network')) {
-      const items = filterKlineItemsByDate(klineData.items, common.date);
+      const items = filterKlineItemsByDate(klineData.items, common.date, common.code);
       const decorated = decorateKlineIntraday({ ...klineData, items }, common);
       const filtered = filterIntradaySessions(decorated, common.date, common.code);
       if (hasItems(filtered)) {
         // A stale-served kline cache whose generatedAt is same-day after the
         // close is still a complete, trustworthy archive — completeness is
         // decided by isHistoricalSnapshotComplete, not by the envelope.
-        const archiveComplete = isHistoricalSnapshotComplete(klineResult.generatedAt, common.date, filtered);
+        const archiveComplete = isHistoricalSnapshotComplete(klineResult.generatedAt, common.date, filtered, common.code);
         return { ...filtered, upstreamStale: !archiveComplete && !!klineResult.stale, archiveComplete };
       }
     }
@@ -286,7 +310,7 @@ export async function getCachedIntraday({
     if (!historical) {
       historical = await readHistoricalCache(['intraday', code, `${dateKey}-latest-${safePrevClose}.json`], INTRADAY_TTL_MS);
     }
-    if (historical && isHistoricalSnapshotComplete(historical.generatedAt, selectedDate, historical.data)) {
+    if (historical && isHistoricalSnapshotComplete(historical.generatedAt, selectedDate, historical.data, code)) {
       historical.data = { ...historical.data, name: name || historical.data.name || code };
       return historical;
     }

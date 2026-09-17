@@ -223,9 +223,9 @@ function _buildSegments(quote) {
   } else if (quote.type === 'stock_us' || quote.currency === 'USD') {
     unit = ' 美元';
   }
-  const decimals = isFuture && ((quote.priceTick && quote.priceTick < 0.01) || quote.priceDecimals === 3 || quote.priceDecimals === 4)
-    ? (quote.priceDecimals || 3)
-    : 2;
+  const decimals = Number.isInteger(quote.priceDecimals) && quote.priceDecimals >= 0
+    ? quote.priceDecimals
+    : (isFuture && quote.priceTick && quote.priceTick < 0.01 ? 3 : 2);
   const priceSeg = `${price.toFixed(decimals)}${unit}`;
 
   const pct = Number(quote.changePercent);

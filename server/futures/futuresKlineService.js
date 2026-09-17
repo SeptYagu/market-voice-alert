@@ -3,8 +3,9 @@ import { getFuturesSession } from './futuresSessionService.js';
 import { getCachedFuturesQuote } from './futuresQuoteService.js';
 import { getOrRefresh } from '../cacheStore.js';
 import { getCachedTradeCalendar } from '../calendarService.js';
-import { parseBeijingDateTimeToChartSeconds, chartTimeToDate, shiftCalendarDate } from '../../src/js/time.js';
+import { parseBeijingDateTimeToChartSeconds, chartTimeToDate, chartSecondsToTime, shiftCalendarDate } from '../../src/js/time.js';
 import { shiftTradingDate } from '../../src/js/tradeCalendar.js';
+import { getFuturesSessionRanges } from '../../src/js/futures/session.js';
 import { fetchWithTimeout } from '../utils.js';
 
 async function _loadTradingDates(signal) {
@@ -367,7 +368,7 @@ export async function getCachedFuturesKline(symbolOrId, period = 'day', opts = {
   return result ? result.data : null;
 }
 
-function filterMinuteBarsForTradingDay(bars, targetTradingDay, inst, tradingDates = []) {
+export function filterMinuteBarsForTradingDay(bars, targetTradingDay, inst, tradingDates = []) {
   if (!Array.isArray(bars) || !bars.length) return [];
   const prevDay = shiftTradingDate(targetTradingDay, -1, tradingDates);
 
@@ -390,16 +391,31 @@ function filterMinuteBarsForTradingDay(bars, targetTradingDay, inst, tradingDate
 
   const dayStart = parseBeijingDateTimeToChartSeconds(`${targetTradingDay} 08:59:00`);
   const dayEnd = parseBeijingDateTimeToChartSeconds(`${targetTradingDay} 15:16:00`);
+  const ranges = getFuturesSessionRanges(inst);
 
   return bars.filter((b) => {
     if (!Number.isFinite(b.time)) return false;
+    let inWindow = false;
     if (nightStart !== null && nightEnd !== null && b.time >= nightStart && b.time <= nightEnd) {
-      return true;
+      inWindow = true;
+    } else if (b.time >= dayStart && b.time <= dayEnd) {
+      inWindow = true;
     }
-    if (b.time >= dayStart && b.time <= dayEnd) {
-      return true;
+    if (!inWindow) return false;
+
+    if (ranges && ranges.length > 0) {
+      const timeStr = chartSecondsToTime(b.time);
+      const [h, m] = timeStr.split(':').map(Number);
+      const minutes = h * 60 + m;
+      const inRange = ranges.some(([start, end]) => {
+        if (start === 0) {
+          return minutes >= 0 && minutes <= end;
+        }
+        return minutes >= start - 1 && minutes <= end;
+      });
+      if (!inRange) return false;
     }
-    return false;
+    return true;
   });
 }
 

@@ -236,6 +236,8 @@ export function createStockSearchIndex(dictionaryData, futuresMap = PRODUCT_MAP,
   const list = [];
 
   for (const s of stockItems) {
+    if (!s || !s.c) continue;
+    if (/^hf_/i.test(s.c)) continue;
     const code = s.c.toLowerCase();
     const name = s.n;
     const baseName = s.b || s.n;

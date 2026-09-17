@@ -1,8 +1,8 @@
-import { getBeijingClockParts, getBeijingDate, chartSecondsToDate, chartSecondsToTime, shiftCalendarDate } from './time.js';
+import { getBeijingClockParts, getBeijingDate, chartSecondsToDate, chartSecondsToTime, chartTimeToDate, shiftCalendarDate } from './time.js';
 import { isTradingDate } from './tradeCalendar.js';
 import { getFuturesSession, isFutureTrading, isAnyFutureTrading, isFuturesMarketOpenFallback, getFuturesSessionRanges } from './futures/session.js';
 import { isFutureCode } from './futures/instrument.js';
-import { inferAssetType, ASSET_TYPES } from './parser.js';
+import { inferAssetType, ASSET_TYPES, setStrategyResolver } from './parser.js';
 
 export { getBeijingDate, isFutureTrading, isAnyFutureTrading };
 
@@ -108,7 +108,11 @@ export const chinaStockStrategy = Object.freeze({
     return [[555, 690], [780, 900]];
   },
   getTradingDay(now = new Date()) {
-    return getBeijingDate(now);
+    if (typeof now === 'number') {
+      return chartTimeToDate(now);
+    }
+    const dateObj = typeof now === 'string' ? new Date(now) : now;
+    return getBeijingDate(dateObj);
   },
   isVoiceAllowed(now = new Date(), cfg, tradingDates = []) {
     const session = getMarketSession(now, tradingDates);
@@ -135,9 +139,16 @@ export const chinaFuturesStrategy = Object.freeze({
     return getFuturesSessionRanges(code, now);
   },
   getTradingDay(now = new Date(), code) {
-    if (!code) return getBeijingDate(now);
-    const sess = getFuturesSession(code, now);
-    return sess.tradingDay || getBeijingDate(now);
+    if (typeof now === 'number') {
+      if (!code) return chartTimeToDate(now);
+      const dateObj = new Date(now * 1000);
+      const sess = getFuturesSession(code, dateObj);
+      return sess.tradingDay || chartTimeToDate(now);
+    }
+    const dateObj = typeof now === 'string' ? new Date(now) : now;
+    if (!code) return getBeijingDate(dateObj);
+    const sess = getFuturesSession(code, dateObj);
+    return sess.tradingDay || getBeijingDate(dateObj);
   },
   isVoiceAllowed(now = new Date(), cfg, tradingDates = [], code) {
     if (!cfg.enabled) return true;
@@ -172,7 +183,11 @@ export const hkStockStrategy = Object.freeze({
     return [[570, 720], [781, 960]];
   },
   getTradingDay(now = new Date()) {
-    return getBeijingDate(now);
+    if (typeof now === 'number') {
+      return chartTimeToDate(now);
+    }
+    const dateObj = typeof now === 'string' ? new Date(now) : now;
+    return getBeijingDate(dateObj);
   },
   isVoiceAllowed(now = new Date(), cfg) {
     if (!cfg.enabled) return true;
@@ -335,3 +350,5 @@ export function isLiveTradeDate(selectedDate, instrument = false, now = new Date
   }
   return !selectedDate || selectedDate === getBeijingDate(now);
 }
+
+setStrategyResolver(resolveSessionStrategy);

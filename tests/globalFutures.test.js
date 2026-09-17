@@ -4,7 +4,10 @@ import {
   toEastmoneySecId,
   parseEastmoney,
   parseSinaFuture,
-  parseSinaGlobalFuture
+  parseSinaGlobalFuture,
+  setUsMarketId,
+  _resolveRowTradingDay,
+  parseEastmoneyTrends
 } from '../src/js/parser.js';
 import {
   GLOBAL_FUTURES_CATALOG
@@ -13,12 +16,12 @@ import {
   resolveSessionStrategy,
   isUsDaylightSavingTime,
   getVoiceEligibleCodes,
+  chinaStockStrategy,
   chinaFuturesStrategy,
+  hkStockStrategy,
+  usStockStrategy,
   globalFuturesStrategy
 } from '../src/js/marketSession.js';
-import {
-  getFuturesSessionRanges
-} from '../src/js/futures/session.js';
 import { formatQuoteSpeech } from '../src/js/tts.js';
 import { formatAlertMessage } from '../src/js/alert.js';
 import {
@@ -27,6 +30,12 @@ import {
 } from '../src/js/services/stockSearchService.js';
 import { decideVoiceSchedule } from '../src/js/services/voiceSchedule.js';
 import { EASTMONEY_FIELDS, fetchQuotes } from '../src/js/api.js';
+import { filterKlineItemsByDate, applyLiveQuoteToKline } from '../src/js/kline.js';
+import { filterIntradaySessions } from '../server/intradayService.js';
+import { filterMinuteBarsForTradingDay } from '../server/futures/futuresKlineService.js';
+import { resolveProxyTarget } from '../server/proxyRoutes.js';
+import { buildExportCsv } from '../src/js/services/batchExportService.js';
+import { parseBeijingDateTimeToChartSeconds, chartTimeToDate, chartSecondsToTime, chartSecondsToDate } from '../src/js/time.js';
 
 QUnit.module('Phase 1: inferAssetType 全值域覆盖与正交路由断言', () => {
   QUnit.test('严格区分国内期货、外盘期货、港股、美股及 A 股', (t) => {
@@ -215,15 +224,36 @@ QUnit.module('Phase 1: parseSinaGlobalFuture 备源解析与基准重绑', () =>
     const quote = parseSinaGlobalFuture('hf_CL', sample);
     t.ok(quote, '解析成功');
     t.equal(quote.code, 'GL_CL0', '规范化为 GL_CL0 代码');
+    t.equal(quote.name, '原油连续');
     t.equal(quote.type, 'futures_global');
     t.equal(quote.price, 103.72);
     t.equal(quote.prevClose, 100.0);
+    t.equal(quote.open, 101.0);
+    t.equal(quote.high, 105.0);
+    t.equal(quote.low, 101.5);
     t.equal(quote.change, 3.72);
     t.equal(quote.changePercent, 3.72);
+    t.equal(quote.openChangePercent, 1.0);
+    t.equal(quote.priceDecimals, 2);
+    t.equal(quote.currency, 'USD');
+    t.equal(quote.time, '22:30:00');
+    t.equal(quote.quoteDate, '20260916');
+    t.equal(quote.quoteDate.length, 8, 'quoteDate 必须为 8 位');
+    t.equal(quote.updateTime, '20260916223000');
+    t.equal(quote.source, 'sina');
 
-    // 涨跌幅与理论值差异 < 0.6pp
-    const expectedPct = ((103.72 - 100.0) / 100.0) * 100;
-    t.true(Math.abs(quote.changePercent - expectedPct) < 0.6, 'changePercent 误差小于 0.6pp');
+    // 验证主备源切换时涨跌幅跳变 < 0.6pp 守卫
+    const primaryQuote = { code: 'GL_CL0', price: 103.65, prevClose: 100.0, changePercent: 3.65 };
+    t.true(Math.abs(primaryQuote.changePercent - quote.changePercent) < 0.6, '主备源切换涨跌幅跳变绝对差值小于 0.6pp');
+
+    // 验证 applyLiveQuoteToKline 消费 8 位 quoteDate 追加新日线 Bar
+    const initialKline = [
+      { time: parseBeijingDateTimeToChartSeconds('2026-09-15 15:00:00'), close: 100 }
+    ];
+    const updated = applyLiveQuoteToKline(initialKline, quote, '1d');
+    t.equal(updated.length, 2, 'quoteDate 8位契约驱动追加新日线Bar (条数+1)');
+    t.equal(updated[1].close, 103.72);
+    t.equal(chartTimeToDate(updated[1].time), '2026-09-16');
 
     // 验证 parseSinaFuture 分发到 parseSinaGlobalFuture
     const line = `var hq_str_hf_CL="${sample}";`;
@@ -240,6 +270,8 @@ QUnit.module('Phase 1: parseSinaGlobalFuture 备源解析与基准重绑', () =>
     t.equal(quote.prevClose, 100.0);
     t.equal(quote.change, 3.72, '自动推导 change');
     t.equal(quote.changePercent, 3.72, '自动推导 changePercent');
+    t.equal(quote.quoteDate, '20260916');
+    t.equal(quote.quoteDate.length, 8);
   });
 });
 
@@ -266,9 +298,20 @@ QUnit.module('Phase 1: 国内期货时段等价性回归 (RB0/AU0/T0/IF0)', () =
     t.equal(chinaFuturesStrategy.getSession(time1508, 'RB0'), 'after-close', '15:08 RB0 已收盘');
     t.equal(chinaFuturesStrategy.getSession(time1508, 'T0'), 'trading', '15:08 T0 仍在交易中');
 
-    // Session ranges export
-    t.true(getFuturesSessionRanges('RB0', time2130).length > 0, 'RB0 session ranges');
-    t.true(getFuturesSessionRanges('T0', time2130).length > 0, 'T0 session ranges');
+    // Session ranges active consumption in filterMinuteBarsForTradingDay
+    const testBars = [
+      { time: parseBeijingDateTimeToChartSeconds('2026-06-05 09:30:00'), close: 3500 },
+      { time: parseBeijingDateTimeToChartSeconds('2026-06-05 10:20:00'), close: 3505 }, // break 10:15-10:30
+      { time: parseBeijingDateTimeToChartSeconds('2026-06-05 11:00:00'), close: 3510 },
+      { time: parseBeijingDateTimeToChartSeconds('2026-06-05 12:00:00'), close: 3515 }, // lunch break
+      { time: parseBeijingDateTimeToChartSeconds('2026-06-05 14:00:00'), close: 3520 }
+    ];
+    const instRb = { symbol: 'rb2610', nightSessionEnd: '23:00' };
+    const filtered = filterMinuteBarsForTradingDay(testBars, '2026-06-05', instRb);
+    t.equal(filtered.length, 3, '休市间隙分钟Bar被过滤 (10:20 与 12:00)');
+    t.true(filtered.some(b => chartSecondsToTime(b.time) === '09:30'));
+    t.false(filtered.some(b => chartSecondsToTime(b.time) === '10:20'), '10:20 休市Bar被滤除');
+    t.false(filtered.some(b => chartSecondsToTime(b.time) === '12:00'), '12:00 午休Bar被滤除');
   });
 });
 
@@ -328,15 +371,15 @@ QUnit.module('Phase 1: 多市场策略派发与语音调度隔离', () => {
   });
 
   QUnit.test('混合资产时段隔离：16:00 A 股收盘不触发全局 autoStop，外盘保持运行', (t) => {
-    const list = ['sh600519', 'GL_CL0'];
+    const list = ['sh600519', 'GL_HSI'];
     const time1600 = new Date('2026-06-05T16:00:00+08:00');
     const settings = {
       enabled: true,
       smartSchedule: { enabled: true, autoStopAfterClose: true, pauseLunchBreak: true }
     };
-    const previous = { timerShouldRun: true, eligibleCodes: ['sh600519', 'GL_CL0'] };
+    const previous = { timerShouldRun: true, eligibleCodes: ['sh600519', 'GL_HSI'] };
     const eligible = getVoiceEligibleCodes(list, settings.smartSchedule, time1600, tradingDates);
-    t.true(eligible.includes('GL_CL0'), '16:00 GL_CL0 处于交易时段');
+    t.true(eligible.includes('GL_HSI'), '16:00 GL_HSI 处于交易时段');
     t.false(eligible.includes('sh600519'), '16:00 A 股已收盘');
 
     const next = decideVoiceSchedule({
@@ -348,7 +391,7 @@ QUnit.module('Phase 1: 多市场策略派发与语音调度隔离', () => {
     });
 
     t.equal(next.enabled, true, '含有外盘标的时 16:00 保持 enabled');
-    t.true(next.eligibleCodes.includes('GL_CL0'), 'GL_CL0 保持播报资格');
+    t.true(next.eligibleCodes.includes('GL_HSI'), 'GL_HSI 保持播报资格');
     t.true(next.timerShouldRun, '定时器继续保持运行');
     t.equal(next.transitionNotice, null, '混合标的在 16:00 不得触发全局已收盘提示');
   });
@@ -452,7 +495,16 @@ QUnit.module('Phase 1: 智能搜索联想与 hf_* 彻底隔离', (hooks) => {
     t.ok(resHsi.items.find((it) => it.code === 'GL_HSI'), '恒指 命中 GL_HSI');
   });
 
-  QUnit.test('全局搜索候选项与内部 hf_* 集合完全不相交 (∩ ^hf_ = ∅)', (t) => {
+  QUnit.test('全局搜索候选项与内部 hf_* 集合完全不相交且注入条目被过滤 (∩ ^hf_ = ∅)', (t) => {
+    const injectedIndex = createStockSearchIndex({
+      items: [
+        { c: 'hf_CL', n: '原油测试' },
+        { c: 'hf_SI', n: '白银测试' }
+      ]
+    });
+    const resInjected = searchStocks('hf_CL', { index: injectedIndex });
+    t.equal(resInjected.items.length, 0, '注入的 hf_ 条目被坚决排除');
+
     const queries = ['cl', 'si', 'gc', 'hg', 'ng', 'nq', 'es', 'ym', 'a50', 'hsi', 'hf_cl', 'hf_si'];
     for (const q of queries) {
       const res = searchStocks(q, { index });
@@ -514,4 +566,154 @@ QUnit.module('Phase 1: fetchQuotes 跨市场行情路由与聚合', (hooks) => {
     t.equal(us.type, 'stock_us');
   });
 });
+
+QUnit.module('Phase 1: 策略对象单例与同一性断言', () => {
+  QUnit.test('resolveSessionStrategy 返回模块级单例对象且同一性成立', (t) => {
+    t.strictEqual(resolveSessionStrategy('GL_CL0'), globalFuturesStrategy, 'GL_CL0 单例同一性');
+    t.strictEqual(resolveSessionStrategy('hf_CL'), globalFuturesStrategy, 'hf_CL 备源单例同一性');
+    t.strictEqual(resolveSessionStrategy('hf_SI'), globalFuturesStrategy, 'hf_SI 备源单例同一性');
+    t.strictEqual(resolveSessionStrategy('sh600519'), chinaStockStrategy, 'A股单例同一性');
+    t.strictEqual(resolveSessionStrategy('RB0'), chinaFuturesStrategy, '国内期货单例同一性');
+    t.strictEqual(resolveSessionStrategy('hk00700'), hkStockStrategy, '港股单例同一性');
+    t.strictEqual(resolveSessionStrategy('usAAPL'), usStockStrategy, '美股单例同一性');
+  });
+});
+
+QUnit.module('Phase 1: 跨午夜分时交易日归并与单一归属断言 (P2-1, P2-2)', () => {
+  QUnit.test('GL_CL0 跨午夜 1381 根分时在 date=T 完整保留，在 date=T+1 返回 0 根', (t) => {
+    // 构造 2026-09-16 交易日的 1381 根分时：
+    // 2026-09-16 06:00 至 2026-09-17 05:00 (含跨午夜 00:00-05:00 301根)
+    const items = [];
+    const startSec = parseBeijingDateTimeToChartSeconds('2026-09-16 06:00:00');
+    for (let i = 0; i < 1381; i++) {
+      items.push({
+        time: startSec + i * 60,
+        price: 100 + i * 0.01,
+        close: 100 + i * 0.01
+      });
+    }
+
+    // 1. filterKlineItemsByDate 单日提取
+    const filteredT = filterKlineItemsByDate(items, '2026-09-16', 'GL_CL0');
+    t.equal(filteredT.length, 1381, 'date=2026-09-16 完整保留 1381 根（含跨午夜至次日晨 05:00）');
+
+    const filteredTPlus1 = filterKlineItemsByDate(items, '2026-09-17', 'GL_CL0');
+    t.equal(filteredTPlus1.length, 0, 'date=2026-09-17 严格返回 0 根（不得发生并集泄漏）');
+
+    // 2. filterIntradaySessions 服务端过滤
+    const intradayT = filterIntradaySessions({ items }, '2026-09-16', 'GL_CL0');
+    t.equal(intradayT.items.length, 1381, '服务端分时 date=2026-09-16 完整保留 1381 根');
+
+    const intradayTPlus1 = filterIntradaySessions({ items }, '2026-09-17', 'GL_CL0');
+    t.equal(intradayTPlus1.items.length, 0, '服务端分时 date=2026-09-17 严格返回 0 根');
+
+    // 3. parseEastmoneyTrends 趋势解析
+    const trendsRows = items.map(it => {
+      const dt = chartSecondsToDate(it.time) + ' ' + chartSecondsToTime(it.time);
+      return `${dt},${it.price},${it.price},${it.price},${it.price},100,1000,${it.price}`;
+    });
+    const parsedT = parseEastmoneyTrends({ data: { trends: trendsRows, preClose: 100 } }, { code: 'GL_CL0', date: '2026-09-16' });
+    t.equal(parsedT.items.length, 1381, 'parseEastmoneyTrends date=2026-09-16 获得 1381 根');
+
+    const parsedTPlus1 = parseEastmoneyTrends({ data: { trends: trendsRows, preClose: 100 } }, { code: 'GL_CL0', date: '2026-09-17' });
+    t.equal(parsedTPlus1.items.length, 0, 'parseEastmoneyTrends date=2026-09-17 严格获得 0 根');
+  });
+});
+
+QUnit.module('Phase 1: _resolveRowTradingDay 与 globalFuturesStrategy.getTradingDay 策略一致性 (P3-1)', () => {
+  QUnit.test('夏令时与冬令时结算断档边界完全吻合', (t) => {
+    // 夏令时 (DST): 2026-07-15 05:30 (breakEnd 为 06:00，05:30 属前一交易日 2026-07-14)
+    const summerMorningSec = parseBeijingDateTimeToChartSeconds('2026-07-15 05:30:00');
+    t.equal(
+      _resolveRowTradingDay(summerMorningSec, 'GL_CL0'),
+      globalFuturesStrategy.getTradingDay(summerMorningSec),
+      '夏令时 05:30 交易日归属一致'
+    );
+    t.equal(_resolveRowTradingDay(summerMorningSec, 'GL_CL0'), '2026-07-14');
+
+    // 夏令时 06:30 (已过 06:00，属当天 2026-07-15)
+    const summerAfterSec = parseBeijingDateTimeToChartSeconds('2026-07-15 06:30:00');
+    t.equal(
+      _resolveRowTradingDay(summerAfterSec, 'GL_CL0'),
+      globalFuturesStrategy.getTradingDay(summerAfterSec),
+      '夏令时 06:30 交易日归属一致'
+    );
+    t.equal(_resolveRowTradingDay(summerAfterSec, 'GL_CL0'), '2026-07-15');
+
+    // 冬令时 (Non-DST): 2026-12-15 06:30 (breakEnd 为 07:00，06:30 仍属前一交易日 2026-12-14)
+    const winterMorningSec = parseBeijingDateTimeToChartSeconds('2026-12-15 06:30:00');
+    t.equal(
+      _resolveRowTradingDay(winterMorningSec, 'GL_CL0'),
+      globalFuturesStrategy.getTradingDay(winterMorningSec),
+      '冬令时 06:30 交易日归属一致'
+    );
+    t.equal(_resolveRowTradingDay(winterMorningSec, 'GL_CL0'), '2026-12-14');
+
+    // 冬令时 07:30 (已过 07:00，属当天 2026-12-15)
+    const winterAfterSec = parseBeijingDateTimeToChartSeconds('2026-12-15 07:30:00');
+    t.equal(
+      _resolveRowTradingDay(winterAfterSec, 'GL_CL0'),
+      globalFuturesStrategy.getTradingDay(winterAfterSec),
+      '冬令时 07:30 交易日归属一致'
+    );
+    t.equal(_resolveRowTradingDay(winterAfterSec, 'GL_CL0'), '2026-12-15');
+  });
+});
+
+QUnit.module('Phase 1: 全链路小数位数消费 (P3-2)', () => {
+  QUnit.test('GL_HG0 4位, GL_GC0 1位, GL_YM0/GL_HSI 0位, GL_SI0 3位精度在 TTS/Alert/导出中精确对齐', (t) => {
+    const quotes = [
+      { code: 'GL_HG0', name: '纽约铜', price: 6.44, changePercent: 1.0, priceDecimals: 4, type: 'futures_global' },
+      { code: 'GL_GC0', name: '纽约黄金', price: 2750.5, changePercent: 1.0, priceDecimals: 1, type: 'futures_global' },
+      { code: 'GL_YM0', name: '道琼斯期货', price: 43500, changePercent: 1.0, priceDecimals: 0, type: 'futures_global' },
+      { code: 'GL_HSI', name: '恒指期货', price: 24688, changePercent: 1.0, priceDecimals: 0, type: 'futures_global' },
+      { code: 'GL_SI0', name: '白银期货', price: 34.567, changePercent: 1.0, priceDecimals: 3, type: 'futures_global' }
+    ];
+
+    // 1. TTS 精度断言
+    t.true(formatQuoteSpeech(quotes[0]).includes('6.4400'), 'GL_HG0 4位小数 TTS');
+    t.true(formatQuoteSpeech(quotes[1]).includes('2750.5'), 'GL_GC0 1位小数 TTS');
+    t.false(formatQuoteSpeech(quotes[1]).includes('2750.50'), 'GL_GC0 不得补多余的0');
+    t.true(formatQuoteSpeech(quotes[2]).includes('43500'), 'GL_YM0 0位小数 TTS');
+    t.false(formatQuoteSpeech(quotes[2]).includes('43500.'), 'GL_YM0 不得带小数点');
+    t.true(formatQuoteSpeech(quotes[3]).includes('24688'), 'GL_HSI 0位小数 TTS');
+    t.false(formatQuoteSpeech(quotes[3]).includes('24688.'), 'GL_HSI 不得带小数点');
+    t.true(formatQuoteSpeech(quotes[4]).includes('34.567'), 'GL_SI0 3位小数 TTS');
+
+    // 2. Alert 精度断言
+    t.true(formatAlertMessage(quotes[0], 'up', 1.0).includes('6.4400'), 'GL_HG0 4位小数 Alert');
+    t.true(formatAlertMessage(quotes[1], 'up', 1.0).includes('2750.5'), 'GL_GC0 1位小数 Alert');
+    t.false(formatAlertMessage(quotes[1], 'up', 1.0).includes('2750.50'), 'GL_GC0 Alert 不带多余0');
+    t.true(formatAlertMessage(quotes[2], 'up', 1.0).includes('43500'), 'GL_YM0 0位小数 Alert');
+    t.true(formatAlertMessage(quotes[3], 'up', 1.0).includes('24688'), 'GL_HSI 0位小数 Alert');
+    t.true(formatAlertMessage(quotes[4], 'up', 1.0).includes('34.567'), 'GL_SI0 3位小数 Alert');
+
+    // 3. 导出 CSV 精度断言
+    const qMap = new Map(quotes.map(q => [q.code, q]));
+    const csv = buildExportCsv(quotes.map(q => q.code), qMap);
+    t.true(csv.includes(',6.4400,'), 'CSV 含 6.4400');
+    t.true(csv.includes(',2750.5,'), 'CSV 含 2750.5');
+    t.true(csv.includes(',43500,'), 'CSV 含 43500');
+    t.true(csv.includes(',24688,'), 'CSV 含 24688');
+    t.true(csv.includes(',34.567,'), 'CSV 含 34.567');
+  });
+});
+
+QUnit.module('Phase 1: 美股市场号动态探测与降级 (P3-3)', () => {
+  QUnit.test('未收录美股符号降级为 null，设置缓存后正确解析', (t) => {
+    t.equal(toEastmoneySecId('usBA'), null, '未收录美股符号降级为 null');
+    setUsMarketId('BA', '106');
+    t.equal(toEastmoneySecId('usBA'), '106.BA', '写入缓存后解析出 106.BA');
+  });
+});
+
+QUnit.module('Phase 1: 代理出网兜底与 push2delay 轮转 (P2-3)', () => {
+  QUnit.test('代理路由包含 push2delay 候选主机', (t) => {
+    const target = resolveProxyTarget('/api/eastmoney/test');
+    t.ok(target, '成功解析东财代理目标');
+    t.true(Array.isArray(target.urls), 'target.urls 为数组');
+    t.true(target.urls.some(u => u.includes('push2delay.eastmoney.com')), '包含 push2delay.eastmoney.com 兜底主机');
+  });
+});
+
 

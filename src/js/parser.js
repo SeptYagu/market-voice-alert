@@ -9,9 +9,7 @@ import {
 import {
   parseBeijingDateTimeToChartSeconds,
   parseTencentMinuteToChartSeconds,
-  chartTimeToDate,
-  chartSecondsToTime,
-  shiftCalendarDate
+  chartTimeToDate
 } from './time.js';
 import { computeVwap } from './services/quoteMath.js';
 
@@ -143,8 +141,10 @@ export function resolveUsMarketId(symbol) {
     }
   }
   const known = US_MARKET_MAP.get(clean) || US_MARKET_MAP.get(clean.replace(/\./g, '_')) || US_MARKET_MAP.get(clean.replace(/_/g, '.'));
-  const marketId = known || '105';
-  usSecIdCache.set(clean, marketId);
+  const marketId = known || null;
+  if (marketId) {
+    usSecIdCache.set(clean, marketId);
+  }
   return marketId;
 }
 
@@ -163,6 +163,7 @@ export function toEastmoneySecId(code) {
     const symbol = raw.slice(2);
     const cleanSym = symbol.replace(/\./g, '_');
     const marketId = resolveUsMarketId(symbol);
+    if (!marketId) return null;
     return `${marketId}.${cleanSym.toUpperCase()}`;
   }
   const m = inferMarket(code);
@@ -391,7 +392,6 @@ export function parseSinaGlobalFuture(arg1, arg2, arg3) {
     priceDecimals: decimals,
     currency: globalInfo?.currency || 'USD',
     time,
-    date,
     updateTime: (date && time) ? `${date.replace(/-/g, '')}${time.replace(/:/g, '')}` : '',
     quoteDate: date ? date.replace(/-/g, '') : '',
     type: 'futures_global',
@@ -508,21 +508,26 @@ export function calcPercent(close, prevClose) {
 }
 const _calcPercent = calcPercent;
 
-function _resolveRowTradingDay(time, code, customGetTradingDay) {
+let _strategyResolver = null;
+export function setStrategyResolver(resolver) {
+  _strategyResolver = resolver;
+}
+
+export function _resolveRowTradingDay(time, code, customGetTradingDay) {
   if (typeof customGetTradingDay === 'function') {
     return customGetTradingDay(time);
   }
-  const dateStr = chartTimeToDate(time);
-  if (code && (code.startsWith('GL_') || code.startsWith('gl_') || /^[a-z0-9]+00y$/i.test(code) || /^hsi_m$/i.test(code))) {
-    const timeStr = chartSecondsToTime(time);
-    const [h, mi] = timeStr.split(':').map(Number);
-    const min = h * 60 + mi;
-    // CME settlement break ends at 06:00 (DST 360 min) / 07:00 (non-DST 420 min)
-    if (min < 360) {
-      return shiftCalendarDate(dateStr, -1);
+  if (code && typeof _strategyResolver === 'function') {
+    try {
+      const strategy = _strategyResolver(code);
+      if (strategy && typeof strategy.getTradingDay === 'function') {
+        return strategy.getTradingDay(time);
+      }
+    } catch {
+      // ignore
     }
   }
-  return dateStr;
+  return chartTimeToDate(time);
 }
 
 function _parseTrendRow(row, prevClose, selectedDate, code, customGetTradingDay) {
@@ -533,7 +538,7 @@ function _parseTrendRow(row, prevClose, selectedDate, code, customGetTradingDay)
   if (!Number.isFinite(time)) return null;
   if (selectedDate) {
     const itemDate = _resolveRowTradingDay(time, code, customGetTradingDay);
-    if (itemDate !== selectedDate && chartTimeToDate(time) !== selectedDate) return null;
+    if (itemDate !== selectedDate) return null;
   }
   const open = parseFloat(parts[1]);
   const close = parseFloat(parts[2]);

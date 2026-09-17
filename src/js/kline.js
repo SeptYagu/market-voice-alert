@@ -1,6 +1,6 @@
 import { normalizeCode, toEastmoneySecId, inferAssetType, ASSET_TYPES } from './parser.js';
 import { isFutureCode } from './futures/instrument.js';
-import { isFuturesMarketOpen } from './marketSession.js';
+import { isFuturesMarketOpen, resolveSessionStrategy } from './marketSession.js';
 import {
   parseBeijingDateTimeToChartSeconds,
   parseTencentMinuteToChartSeconds,
@@ -597,9 +597,16 @@ export function applyLiveQuoteToIntraday(items, quote, now = new Date(), isFutur
   return sameMinute ? [...priorItems, point] : [...items, point];
 }
 
-export function filterKlineItemsByDate(items, date) {
+export function filterKlineItemsByDate(items, date, code) {
   if (!Array.isArray(items) || !date) return [];
-  return items.filter((it) => chartTimeToDate(it && it.time) === date);
+  const strategy = code ? resolveSessionStrategy(code) : null;
+  return items.filter((it) => {
+    if (!it || !Number.isFinite(Number(it.time))) return false;
+    const itemTradingDay = (strategy && strategy.getTradingDay)
+      ? strategy.getTradingDay(it.time)
+      : chartTimeToDate(it.time);
+    return itemTradingDay === date;
+  });
 }
 
 export function getLastKlineDate(items) {
