@@ -578,7 +578,18 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
     if (isAStock) {
       const quoteTimeMinutes = getQuoteBeijingTimeMinutes(quote);
       const isQuotePreOpen = quoteTimeMinutes !== null && quoteTimeMinutes < 9 * 60 + 25;
-      if (isQuotePreOpen) {
+      const isPostOpenTime = quoteTimeMinutes !== null && quoteTimeMinutes >= 9 * 60 + 25;
+      const hasValidOpen = Boolean(quoteOpen && quoteOpen > 0);
+      const hasTradeVolume = Boolean((quoteVolume && quoteVolume > 0) || (quoteAmount && quoteAmount > 0));
+      const isZeroVolume = quote.volume !== undefined && quote.volume !== null && Number(quote.volume) === 0 && (!quote.amount || Number(quote.amount) === 0);
+
+      const hasOfficialTrade = !isQuotePreOpen && (
+        (isPostOpenTime && hasValidOpen) ||
+        (hasValidOpen && hasTradeVolume) ||
+        (hasValidOpen && !isZeroVolume)
+      );
+
+      if (!hasOfficialTrade) {
         const newBar = {
           time: newTime,
           open: price,
@@ -593,9 +604,21 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
         };
         return [...items, newBar];
       }
+
+      const clockDate = typeof now === 'string' ? new Date(now) : (now instanceof Date ? now : new Date());
+      const clockParts = getBeijingClockParts(clockDate);
+      const clockMinutes = clockParts.hour * 60 + clockParts.minute;
+      const isContinuousTrading = clockMinutes >= 9 * 60 + 30;
+
       const open = quoteOpen || price;
-      const high = Math.max(open, price);
-      const low = Math.min(open, price);
+      const high = isContinuousTrading
+        ? Math.max(open, price, quoteHigh || 0)
+        : Math.max(open, price);
+      const lowCandidates = (isContinuousTrading
+        ? [open, price, quoteLow]
+        : [open, price]
+      ).filter((v) => v > 0);
+      const low = lowCandidates.length ? Math.min(...lowCandidates) : price;
       const newBar = {
         time: newTime,
         open,
@@ -627,36 +650,62 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
 
   const updated = { ...last, close: price };
   if (period === '1d' && isAStock) {
+    const clockDate = typeof now === 'string' ? new Date(now) : (now instanceof Date ? now : new Date());
+    const clockParts = getBeijingClockParts(clockDate);
+    const clockMinutes = clockParts.hour * 60 + clockParts.minute;
+    const isContinuousTrading = clockMinutes >= 9 * 60 + 30;
+
     if (last.preview) {
       const quoteTimeMinutes = getQuoteBeijingTimeMinutes(quote);
       const isQuotePreOpen = quoteTimeMinutes !== null && quoteTimeMinutes < 9 * 60 + 25;
-
+      const isPostOpenTime = quoteTimeMinutes !== null && quoteTimeMinutes >= 9 * 60 + 25;
       const hasValidOpen = Boolean(quoteOpen && quoteOpen > 0);
+      const hasTradeVolume = Boolean((quoteVolume && quoteVolume > 0) || (quoteAmount && quoteAmount > 0));
+      const isZeroVolume = quote.volume !== undefined && quote.volume !== null && Number(quote.volume) === 0 && (!quote.amount || Number(quote.amount) === 0);
+
       const hasPriceShift = price !== last.close;
       const hasOpenShift = hasValidOpen && quoteOpen !== last.close;
-      const hasSubstantialShift = hasValidOpen && hasPriceShift && hasOpenShift;
+      const hasSubstantialShift = hasValidOpen && hasPriceShift && hasOpenShift && !isZeroVolume;
 
       const hasOfficialTradeEvidence = !isQuotePreOpen && (
         hasSubstantialShift ||
-        (hasValidOpen && (quoteVolume > 0 || quoteAmount > 0) && quoteTimeMinutes !== null && quoteTimeMinutes >= 9 * 60 + 25)
+        (hasValidOpen && hasTradeVolume) ||
+        (hasValidOpen && isPostOpenTime)
       );
 
       if (hasOfficialTradeEvidence) {
         const open = quoteOpen || price;
         updated.open = open;
-        updated.high = Math.max(open, price);
-        updated.low = Math.min(open, price);
+        updated.high = isContinuousTrading
+          ? Math.max(open, price, quoteHigh || 0)
+          : Math.max(open, price);
+        const lowCandidates = (isContinuousTrading
+          ? [open, price, quoteLow]
+          : [open, price]
+        ).filter((v) => v > 0);
+        updated.low = lowCandidates.length ? Math.min(...lowCandidates) : price;
         delete updated.preview;
         updated.previewDate = last.previewDate || targetDate;
       } else {
         // Still in pre-open preview mode (or stale snapshot without confirmed trade):
-        // Retain preview flag and update all price fields to current tick without locking historical min/max
-        updated.open = price;
-        updated.high = price;
-        updated.low = price;
-        updated.close = price;
-        updated.volume = 0;
-        updated.amount = 0;
+        // Retain preview flag. If trade volume is present without timestamp, accumulate envelope.
+        // If confirmed pre-open or zero-volume tick, collapse prices to current price and keep volume/amount at 0.
+        if (hasTradeVolume && !isQuotePreOpen) {
+          const lastHigh = _positiveNumber(last.high) || price;
+          const lastLow = _positiveNumber(last.low) || price;
+          updated.high = Math.max(lastHigh, price);
+          updated.low = Math.min(lastLow, price);
+          updated.open = _positiveNumber(last.open) || price;
+          updated.volume = quoteVolume || last.volume || 0;
+          updated.amount = quoteAmount || last.amount || 0;
+        } else {
+          updated.open = price;
+          updated.high = price;
+          updated.low = price;
+          updated.close = price;
+          updated.volume = 0;
+          updated.amount = 0;
+        }
         updated.preview = true;
         updated.previewDate = last.previewDate || targetDate;
         if (Number.isFinite(Number(quote.changePercent))) updated.changePercent = Number(quote.changePercent);
@@ -665,8 +714,14 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
     } else {
       const lastHigh = _positiveNumber(last.high) || price;
       const lastLow = _positiveNumber(last.low) || price;
-      updated.high = Math.max(lastHigh, price);
-      updated.low = Math.min(lastLow, price);
+      if (isContinuousTrading) {
+        updated.high = Math.max(lastHigh, quoteHigh || 0, price);
+        const lowCandidates = [lastLow, quoteLow, price].filter((v) => v > 0);
+        updated.low = lowCandidates.length ? Math.min(...lowCandidates) : price;
+      } else {
+        updated.high = Math.max(lastHigh, price);
+        updated.low = Math.min(lastLow, price);
+      }
       if (quoteOpen) updated.open = quoteOpen;
     }
     if (quoteVolume) updated.volume = quoteVolume;
