@@ -114,8 +114,14 @@ export const chinaStockStrategy = Object.freeze({
     const dateObj = typeof now === 'string' ? new Date(now) : now;
     return getBeijingDate(dateObj);
   },
-  isVoiceAllowed(now = new Date(), cfg, tradingDates = []) {
+  isVoiceAllowed(now = new Date(), cfg = DEFAULT_SMART_SCHEDULE, tradingDates = []) {
+    if (!cfg.enabled) return true;
     const session = getMarketSession(now, tradingDates);
+    if (session === 'opening-auction') {
+      const min = _minutesInBeijing(now);
+      if (min >= 9 * 60 + 20 && min < 9 * 60 + 30) return true;
+      return !!cfg.autoStartAuction;
+    }
     return isVoiceAllowedInSession(session, cfg);
   }
 });

@@ -119,8 +119,9 @@ export function applyLiveTickToKlineChart(ctl, inst, quoteOrPrice) {
     quoteOrPrice && typeof quoteOrPrice === 'object' ? quoteOrPrice.price : quoteOrPrice
   );
   if (!Number.isFinite(livePrice) || livePrice <= 0) return;
+  const effectiveCode = inst.klineData?.code || inst.code || (quoteOrPrice && quoteOrPrice.code);
   const updated = quoteOrPrice && typeof quoteOrPrice === 'object'
-    ? applyLiveQuoteToKline(inst.klineData.items, quoteOrPrice, inst.period)
+    ? applyLiveQuoteToKline(inst.klineData.items, quoteOrPrice, inst.period, effectiveCode)
     : applyLiveTickToKline(inst.klineData.items, livePrice, inst.period);
   if (updated === inst.klineData.items) return;
   inst.klineData = { ...inst.klineData, items: updated };
@@ -287,7 +288,8 @@ export class ChartRowManager {
     try {
       const ctl = createIntradayChart(host, {
         theme: this.getTheme(),
-        height: this.intradayHeight
+        height: this.intradayHeight,
+        isFuture: isFutureCode(code)
       });
       this.intradayCtlMap.set(code, ctl);
       const inst = this.getInst(code);
@@ -393,7 +395,7 @@ export class ChartRowManager {
           const fallbackDate = resolveLiveFallbackDate(code, inst, this.getTradingDates());
           const targetDate = q.tradingDay || q.date || q.quoteDate || fallbackDate;
           const quoteForKline = (q.tradingDay || q.quoteDate || q.date) ? q : { ...q, date: targetDate };
-          const merged = applyLiveQuoteToKline(inst.klineData.items, quoteForKline, inst.period);
+          const merged = applyLiveQuoteToKline(inst.klineData.items, quoteForKline, inst.period, code);
           if (merged !== inst.klineData.items) {
             inst.klineData = { ...inst.klineData, items: merged };
           }

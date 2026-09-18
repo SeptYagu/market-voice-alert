@@ -1,6 +1,6 @@
 import { decideVoiceSchedule } from '../services/voiceSchedule.js';
-import { formatQuoteSpeech, formatQuoteSpeechDelta } from '../tts.js';
-import { getBeijingDate } from '../time.js';
+import { formatQuoteSpeech, formatQuoteSpeechDelta, buildQuoteSpeechSegments } from '../tts.js';
+import { getBeijingClockParts, getBeijingDate } from '../time.js';
 
 export function createVoiceController({ getSettings, saveSettings, getCodes, getQuotes,
   getTradingDates, speech, clock = () => new Date(), onChange = () => {},
@@ -32,15 +32,27 @@ export function createVoiceController({ getSettings, saveSettings, getCodes, get
     // "Same quote is not repeated" is the default and can be switched off from the
     // voice bar. `full` is the one-off path (manual test broadcast, closing snapshot):
     // it always announces the selected fields, even when nothing changed.
-    const dedupe = !manual && !full && settings.skipUnchanged !== false;
+    const parts = getBeijingClockParts(clock());
+    const min = parts.hour * 60 + parts.minute;
+    // 09:20 - 09:25 开盘集合竞价不可撤单博弈期，强制按间隔全量播报（不受 skipUnchanged 约束）
+    const isAuctionGuaranteedWindow = min >= 9 * 60 + 20 && min < 9 * 60 + 25;
+    const dedupe = !manual && !full && !isAuctionGuaranteedWindow && settings.skipUnchanged !== false;
     for (const code of codes) {
       const quote = getQuotes().get(code);
       if (!quote) continue;
       // The full formatter is required when dedup is off: the delta variant needs a
       // changed price/percent and would stay silent for a name-only field selection.
-      const result = dedupe
-        ? formatQuoteSpeechDelta(quote, memory.get(code), settings.fields, settings.fieldsOrder)
-        : { text: formatQuoteSpeech(quote, settings.fields, settings.fieldsOrder), spoken: null };
+      let result;
+      if (dedupe) {
+        result = formatQuoteSpeechDelta(quote, memory.get(code), settings.fields, settings.fieldsOrder);
+      } else {
+        const canSeedBaseline = !full && settings.skipUnchanged !== false;
+        const spokenSegments = canSeedBaseline ? buildQuoteSpeechSegments(quote) : null;
+        result = {
+          text: formatQuoteSpeech(quote, settings.fields, settings.fieldsOrder),
+          spoken: spokenSegments ? { price: spokenSegments.price, percent: spokenSegments.percent } : null
+        };
+      }
       if (!result.text) continue;
       // The dedup baseline may only advance once the listener actually heard the
       // announcement: a queued item that is coalesced away, expires, times out or

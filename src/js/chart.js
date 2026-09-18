@@ -546,6 +546,7 @@ export function createIntradayChart(container, opts = {}) {
   let displayAverageData = [];
   let displayPercentData = [];
   let displayVolumeData = [];
+  let currentDisplayTimes = [];
   // Keeps the full session visible: fitContent() and the fix* edge options both
   // anchor to the last bar *with a value* and ignore trailing whitespace bars,
   // so we pin the logical range to the generated display timeline instead.
@@ -708,6 +709,7 @@ export function createIntradayChart(container, opts = {}) {
       displayAverageData = [];
       displayPercentData = [];
       displayVolumeData = [];
+      currentDisplayTimes = [];
       if (priceSeries) priceSeries.setData([]);
       if (averageSeries) averageSeries.setData([]);
       if (percentSeries) percentSeries.setData([]);
@@ -735,13 +737,17 @@ export function createIntradayChart(container, opts = {}) {
       if (!hhmm) return false;
       const [h, m] = hhmm.split(':').map(Number);
       const min = h * 60 + m;
-      return (min < 9 * 60 + 30 && min >= 9 * 60) || min >= 15 * 60 + 5 || min < 9 * 60;
+      return (min < 9 * 60 + 15 && min >= 9 * 60) || min >= 15 * 60 + 5 || min < 9 * 60;
     });
 
-    const isFutureTimeline = opts.isFuture || hasNonStockHours;
+    const isFutureTimeline = opts.isFuture === true || hasNonStockHours;
     const timeline = [];
     if (date && !isFutureTimeline) {
-      for (const [startHour, startMinute, endHour, endMinute] of [[9, 30, 11, 30], [13, 0, 15, 0]]) {
+      for (const [startHour, startMinute, endHour, endMinute] of [
+        [9, 15, 9, 25],
+        [9, 30, 11, 30],
+        [13, 0, 15, 0]
+      ]) {
         const start = startHour * 60 + startMinute;
         const end = endHour * 60 + endMinute;
         for (let minute = start; minute <= end; minute++) {
@@ -753,6 +759,7 @@ export function createIntradayChart(container, opts = {}) {
       }
     }
     const displayTimes = (!isFutureTimeline && timeline.length) ? timeline : [...byTime.keys()].sort((a, b) => a - b);
+    currentDisplayTimes = displayTimes;
     lastDisplayCount = displayTimes.length;
     const averageByTime = new Map();
     for (const it of arr) {
@@ -990,6 +997,7 @@ export function createIntradayChart(container, opts = {}) {
     getVisibleRange,
     setVisibleRange,
     _getDisplayVolumeData: () => displayVolumeData,
+    _getDisplayTimes: () => currentDisplayTimes,
     destroy
   };
 }

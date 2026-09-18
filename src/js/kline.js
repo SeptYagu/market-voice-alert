@@ -5,6 +5,7 @@ import {
   parseBeijingDateTimeToChartSeconds,
   parseTencentMinuteToChartSeconds,
   chartTimeToDate,
+  chartSecondsToTime,
   getBeijingClockParts,
   getBeijingMinuteChartSeconds
 } from './time.js';
@@ -451,7 +452,7 @@ function _positiveNumber(value) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-export function applyLiveQuoteToKline(items, quote, period) {
+export function applyLiveQuoteToKline(items, quote, period, code, now = new Date()) {
   if (!Array.isArray(items) || !items.length || !quote || typeof quote !== 'object') return items;
   const price = _positiveNumber(quote.price);
   if (!price) return items;
@@ -469,8 +470,58 @@ export function applyLiveQuoteToKline(items, quote, period) {
   const quoteVolume = _positiveNumber(quote.volume);
   const quoteAmount = _positiveNumber(quote.amount);
 
+  const effectiveCode = code || (quote && quote.code);
+  const isAStock = Boolean(effectiveCode && inferAssetType(effectiveCode) === ASSET_TYPES.STOCK_CN);
+
+  if (period === '1d' && isAStock) {
+    const clockDate = typeof now === 'string' ? new Date(now) : (now instanceof Date ? now : new Date());
+    const parts = getBeijingClockParts(clockDate);
+    const min = parts.hour * 60 + parts.minute;
+    if (min < 9 * 60 + 25) {
+      if (lastDate && targetDate && lastDate < targetDate) {
+        const newTime = typeof last.time === 'number' ? parseBeijingDateTimeToChartSeconds(targetDate) : targetDate;
+        const newBar = {
+          time: newTime,
+          open: price,
+          high: price,
+          low: price,
+          close: price,
+          volume: 0,
+          amount: 0,
+          changePercent: Number.isFinite(Number(quote.changePercent)) ? Number(quote.changePercent) : 0
+        };
+        return [...items, newBar];
+      }
+      const updated = {
+        ...last,
+        open: price,
+        high: price,
+        low: price,
+        close: price
+      };
+      if (Number.isFinite(Number(quote.changePercent))) updated.changePercent = Number(quote.changePercent);
+      return [...items.slice(0, -1), updated];
+    }
+  }
+
   if (period === '1d' && lastDate && targetDate && lastDate < targetDate) {
     const newTime = typeof last.time === 'number' ? parseBeijingDateTimeToChartSeconds(targetDate) : targetDate;
+    if (isAStock) {
+      const open = quoteOpen || price;
+      const high = Math.max(open, price);
+      const low = Math.min(open, price);
+      const newBar = {
+        time: newTime,
+        open,
+        high,
+        low,
+        close: price,
+        volume: quoteVolume || 0,
+        amount: quoteAmount || 0,
+        changePercent: Number.isFinite(Number(quote.changePercent)) ? Number(quote.changePercent) : 0
+      };
+      return [...items, newBar];
+    }
     const open = quoteOpen || price;
     const high = Math.max(price, quoteHigh || 0, open);
     const lowCandidates = [quoteLow, price, open].filter((v) => v > 0);
@@ -489,6 +540,18 @@ export function applyLiveQuoteToKline(items, quote, period) {
   }
 
   const updated = { ...last, close: price };
+  if (period === '1d' && isAStock) {
+    const lastHigh = _positiveNumber(last.high) || price;
+    const lastLow = _positiveNumber(last.low) || price;
+    updated.high = Math.max(lastHigh, price);
+    updated.low = Math.min(lastLow, price);
+    if (quoteOpen) updated.open = quoteOpen;
+    if (quoteVolume) updated.volume = quoteVolume;
+    if (quoteAmount) updated.amount = quoteAmount;
+    if (Number.isFinite(Number(quote.changePercent))) updated.changePercent = Number(quote.changePercent);
+    return [...items.slice(0, -1), updated];
+  }
+
   const lastHigh = _positiveNumber(last.high);
   const lastLow = _positiveNumber(last.low);
   updated.high = Math.max(lastHigh, quoteHigh, price);
@@ -505,9 +568,10 @@ export function applyLiveQuoteToKline(items, quote, period) {
   return [...items.slice(0, -1), updated];
 }
 
-function _isContinuousTradingMinute(parts) {
+function _isTradingMinute(parts) {
   const minutes = parts.hour * 60 + parts.minute;
   return (
+    (minutes >= 9 * 60 + 15 && minutes <= 9 * 60 + 25) ||
     (minutes >= 9 * 60 + 30 && minutes < 11 * 60 + 30) ||
     (minutes >= 13 * 60 && minutes < 15 * 60)
   );
@@ -520,10 +584,19 @@ function _isContinuousTradingMinute(parts) {
 // there is no new minute to append while trading is halted. The last point's
 // high/low/volume belong to its own minute's real trades and stay untouched;
 // avgPrice can be recomputed because quote volume/amount are day-cumulative.
-function _correctLastIntradayPoint(items, quote, nowMinute) {
+function _correctLastIntradayPoint(items, quote, nowMinute, now = new Date()) {
   const last = items[items.length - 1];
   const lastTime = Number(last && last.time);
   if (!Number.isFinite(nowMinute) || !Number.isFinite(lastTime) || nowMinute < lastTime) return items;
+  const timeStr = typeof last.time === 'number' ? chartSecondsToTime(last.time) : String(last.time).slice(-5);
+  if (timeStr === '09:25') {
+    const dateObj = typeof now === 'string' ? new Date(now) : (now instanceof Date ? now : new Date());
+    const parts = getBeijingClockParts(dateObj);
+    const min = parts.hour * 60 + parts.minute;
+    if (min >= 9 * 60 + 26 && min < 9 * 60 + 30) {
+      return items;
+    }
+  }
   const price = _positiveNumber(quote.price);
   if (!price || Number(last.close) === price) return items;
   const prevClose = _positiveNumber(quote.prevClose) || _positiveNumber(last && (last.preClose || last.prevClose));
@@ -553,8 +626,8 @@ export function applyLiveQuoteToIntraday(items, quote, now = new Date(), isFutur
     if (!isFuturesMarketOpen(now, tradingDates, quote.code ? [quote.code] : [])) return items;
   } else {
     const parts = getBeijingClockParts(now);
-    if (!_isContinuousTradingMinute(parts)) {
-      return _correctLastIntradayPoint(items, quote, getBeijingMinuteChartSeconds(now));
+    if (!_isTradingMinute(parts)) {
+      return _correctLastIntradayPoint(items, quote, getBeijingMinuteChartSeconds(now), now);
     }
   }
   const time = getBeijingMinuteChartSeconds(now);

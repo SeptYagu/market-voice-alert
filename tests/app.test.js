@@ -783,8 +783,8 @@ QUnit.module('app.applyLiveTickToChartForCode', (hooks) => {
     });
     const last = inst.klineData.items[0];
     t.equal(last.open, 10.2);
-    t.equal(last.high, 12.5);
-    t.equal(last.low, 8.8);
+    t.equal(last.high, 12, 'high updated by live price breakout');
+    t.equal(last.low, 9, 'low preserved against unverified external quote.low');
     t.equal(last.close, 12);
     t.equal(last.volume, 1800);
     t.equal(last.amount, 20000);
