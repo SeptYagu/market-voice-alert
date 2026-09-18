@@ -17,77 +17,212 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
     document.body.innerHTML = '';
   });
 
-  // 5.1(1) A 股掌阅科技集合竞价跌停下影线消除（双前置覆盖）
-  QUnit.test('5.1(1a) A 股盘前跌停下影线消除 - 追加路径（items 末柱为昨日）', (t) => {
+  // 5.1(1) A 股掌阅科技集合竞价跌停下影线消除与 09:25 交接重基线（双前置覆盖）
+  QUnit.test('5.1(1a) A 股盘前跌停下影线消除与 09:25 交接重基线 - 追加路径（items 末柱为昨日）', (t) => {
     const items = [
       { time: '2026-09-17', open: 20, high: 20, low: 20, close: 20, volume: 1000 }
     ];
-    // 09:18 传入跌停价 18.00（追加分支，创建今日临时柱，价格收敛于 18.00）
+    // 09:18 传入虚拟跌停价 18.00 且报价携带外部脏 high: 22, low: 18（测试追加分支守卫判别力）
     const t1 = applyLiveQuoteToKline(
       items,
-      { price: 18, open: 18, tradingDay: '2026-09-18' },
+      { price: 18, open: 18, high: 22, low: 18, tradingDay: '2026-09-18' },
       '1d',
       'sh603533',
       new Date('2026-09-18T09:18:00+08:00')
     );
     t.equal(t1.length, 2, 'appends today bar');
     t.equal(t1[1].low, 18, '09:18 temporary bar low is 18.00');
+    t.equal(t1[1].high, 18, '09:18 temporary bar high converges to 18.00 (rejects dirty high 22)');
+    t.true(t1[1].preview, '09:18 bar is marked preview');
 
-    // 09:19 撤单价格回升至 20.00（原地更新分支，价格收敛于 20.00，抹除 18.00）
+    // 09:20 撤单价格回升至 18.60（原地更新分支，价格收敛于 18.60）
     const t2 = applyLiveQuoteToKline(
       t1,
-      { price: 20, open: 20, tradingDay: '2026-09-18' },
+      { price: 18.6, open: 18.6, high: 22, low: 18, tradingDay: '2026-09-18' },
       '1d',
       'sh603533',
-      new Date('2026-09-18T09:19:00+08:00')
+      new Date('2026-09-18T09:20:00+08:00')
     );
     t.equal(t2.length, 2);
-    t.equal(t2[1].low, 20, '09:19 order cancelled, low rebounds to 20.00');
+    t.equal(t2[1].low, 18.6, '09:20 order cancelled, low rebounds to 18.60');
+    t.true(t2[1].preview, '09:20 bar retains preview flag');
 
-    // 09:25 正式开盘 20.00
+    // 09:24:50 最后一拍虚拟撮合价 19.60
     const t3 = applyLiveQuoteToKline(
       t2,
-      { price: 20, open: 20, tradingDay: '2026-09-18' },
+      { price: 19.6, open: 19.6, tradingDay: '2026-09-18' },
       '1d',
       'sh603533',
-      new Date('2026-09-18T09:25:00+08:00')
+      new Date('2026-09-18T09:24:50+08:00')
     );
-    t.equal(t3[1].low, 20.00, '今日 Bar 的 low === 20.00，绝不保留 18.00（追加路径）');
+    t.equal(t3[1].low, 19.6, '09:24:50 last pre-open tick low is 19.60');
+
+    // 09:25:03 正式撮合开盘 20.50（重基线：消除 19.60 盘前虚拟值，low === 20.50）
+    const t4 = applyLiveQuoteToKline(
+      t3,
+      { price: 20.5, open: 20.5, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:25:03+08:00')
+    );
+    t.equal(t4[1].open, 20.5, '09:25 open is 20.50');
+    t.equal(t4[1].low, 20.5, '今日 Bar 的 low === 20.50，重基线消除 19.60 虚假下影线（追加路径）');
+    t.equal(t4[1].high, 20.5, '09:25 high is 20.50');
+    t.false(Boolean(t4[1].preview), '09:25 preview flag is purged');
+
+    // 10:00 盘中上涨至 20.90
+    const t5 = applyLiveQuoteToKline(
+      t4,
+      { price: 20.9, open: 20.5, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T10:00:00+08:00')
+    );
+    t.equal(t5[1].low, 20.5, '10:00 low remains 20.50');
+    t.equal(t5[1].high, 20.9, '10:00 high breakout to 20.90');
+
+    // 14:55 尾盘上涨至 21.30
+    const t6 = applyLiveQuoteToKline(
+      t5,
+      { price: 21.3, open: 20.5, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T14:55:00+08:00')
+    );
+    t.equal(t6[1].low, 20.50, '14:55 全天最低成交价依然保持 20.50，绝不保留 19.60/18.00 虚假下影线');
+    t.equal(t6[1].high, 21.30, '14:55 high is 21.30');
   });
 
-  QUnit.test('5.1(1b) A 股盘前跌停下影线消除 - 原地更新路径（items 已含今日柱）', (t) => {
+  QUnit.test('5.1(1b) A 股盘前跌停下影线消除与 09:25 交接重基线 - 原地更新路径（items 已含今日柱）', (t) => {
     const items = [
       { time: '2026-09-18', open: 20, high: 20, low: 20, close: 20, volume: 0 }
     ];
-    // 09:18 跌停价 18.00
+    // 09:18 跌停价 18.00 且带脏 high/low
     const t1 = applyLiveQuoteToKline(
       items,
-      { price: 18, open: 18, tradingDay: '2026-09-18' },
+      { price: 18, open: 18, high: 22, low: 18, tradingDay: '2026-09-18' },
       '1d',
       'sh603533',
       new Date('2026-09-18T09:18:00+08:00')
     );
     t.equal(t1[0].low, 18, '09:18 low is 18.00');
+    t.equal(t1[0].high, 18, '09:18 high converges to 18.00');
+    t.true(t1[0].preview, 'marked as preview');
 
-    // 09:19 撤单回升至 20.00
+    // 09:20 撤单回升至 18.60
     const t2 = applyLiveQuoteToKline(
       t1,
-      { price: 20, open: 20, tradingDay: '2026-09-18' },
+      { price: 18.6, open: 18.6, high: 22, low: 18, tradingDay: '2026-09-18' },
       '1d',
       'sh603533',
-      new Date('2026-09-18T09:19:00+08:00')
+      new Date('2026-09-18T09:20:00+08:00')
     );
-    t.equal(t2[0].low, 20, '09:19 low rebounds to 20.00');
+    t.equal(t2[0].low, 18.6, '09:19 low rebounds to 18.60');
 
-    // 09:25 正式开盘 20.00
+    // 09:24:50 最后一拍虚拟价 19.60
     const t3 = applyLiveQuoteToKline(
       t2,
-      { price: 20, open: 20, tradingDay: '2026-09-18' },
+      { price: 19.6, open: 19.6, tradingDay: '2026-09-18' },
       '1d',
       'sh603533',
-      new Date('2026-09-18T09:25:00+08:00')
+      new Date('2026-09-18T09:24:50+08:00')
     );
-    t.equal(t3[0].low, 20.00, '今日 Bar 的 low === 20.00，绝不保留 18.00（原地路径）');
+    t.equal(t3[0].low, 19.6);
+
+    // 09:25:03 正式撮合开盘 20.50
+    const t4 = applyLiveQuoteToKline(
+      t3,
+      { price: 20.5, open: 20.5, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:25:03+08:00')
+    );
+    t.equal(t4[0].low, 20.50, '今日 Bar 的 low === 20.50，重基线消除 19.60 虚假下影线（原地路径）');
+    t.false(Boolean(t4[0].preview), 'preview purged');
+
+    // 14:55 价格突破至 21.30
+    const t5 = applyLiveQuoteToKline(
+      t4,
+      { price: 21.3, open: 20.5, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T14:55:00+08:00')
+    );
+    t.equal(t5[0].low, 20.50, '14:55 low remains 20.50');
+    t.equal(t5[0].high, 21.30, '14:55 high breakout to 21.30');
+  });
+
+  // 5.1(1c) 周K/月K 集合竞价期间冻结 high/low，不吸纳外部脏报价极值（P2-2）
+  QUnit.test('5.1(1c) 周K/月K 集合竞价期间冻结 high/low，不吸纳外部脏报价极值', (t) => {
+    const weeklyItems = [
+      { time: '2026-09-14', open: 30, high: 32, low: 21, close: 31, volume: 100 }
+    ];
+    // 09:18 传入外部脏 low = 18
+    const w1 = applyLiveQuoteToKline(
+      weeklyItems,
+      { price: 30.5, high: 30.8, low: 18, tradingDay: '2026-09-18' },
+      '1w',
+      'sh603533',
+      new Date('2026-09-18T09:18:00+08:00')
+    );
+    t.equal(w1[0].low, 21, '周K 09:18 冻结 low，不吸纳外部脏 low 18');
+    t.equal(w1[0].high, 32, '周K 09:18 冻结 high，保持历史高点 32');
+    t.equal(w1[0].close, 30.5, '周K 09:18 close 更新为现价 30.5');
+
+    // 10:00 盘中真实成交
+    const w2 = applyLiveQuoteToKline(
+      w1,
+      { price: 30.5, high: 30.8, low: 30.4, tradingDay: '2026-09-18' },
+      '1w',
+      'sh603533',
+      new Date('2026-09-18T10:00:00+08:00')
+    );
+    t.equal(w2[0].low, 21, '周K 10:00 low 依然为官方最低 21，不被污染');
+    t.equal(w2[0].high, 32, '周K 10:00 high 为 32');
+
+    // 月K 测试
+    const monthlyItems = [
+      { time: '2026-09-01', open: 28, high: 35, low: 22, close: 30, volume: 500 }
+    ];
+    const m1 = applyLiveQuoteToKline(
+      monthlyItems,
+      { price: 30.5, high: 30.8, low: 18, tradingDay: '2026-09-18' },
+      '1M',
+      'sh603533',
+      new Date('2026-09-18T09:18:00+08:00')
+    );
+    t.equal(m1[0].low, 22, '月K 09:18 冻结 low，不吸纳外部脏 low 18');
+    t.equal(m1[0].high, 35, '月K 09:18 冻结 high，保持 35');
+    t.equal(m1[0].close, 30.5, '月K 09:18 close 更新为现价 30.5');
+  });
+
+  // 5.1(1d) 日线 live tick 时钟参数化注入，避免墙钟依赖（P3-1）
+  QUnit.test('5.1(1d) 日线 live tick 时钟参数化注入，避免墙钟依赖', (t) => {
+    const items = [
+      { time: '2026-09-18', open: 10, high: 11, low: 9, close: 10.5, volume: 1000, amount: 10000 }
+    ];
+    // 冻结时钟为 09:18（盘前）
+    const rPre = applyLiveQuoteToKline(
+      items,
+      { price: 12, open: 10.2, high: 12.5, low: 8.8, volume: 1800, amount: 20000, tradingDay: '2026-09-18' },
+      '1d',
+      'sh600519',
+      new Date('2026-09-18T09:18:00+08:00')
+    );
+    t.equal(rPre[0].low, 12, '09:18 盘前收敛于 price 12');
+    t.true(rPre[0].preview, 'marked as preview');
+
+    // 冻结时钟为 14:00（盘中）
+    const rMid = applyLiveQuoteToKline(
+      items,
+      { price: 12, open: 10.2, high: 12.5, low: 8.8, volume: 1800, amount: 20000, tradingDay: '2026-09-18' },
+      '1d',
+      'sh600519',
+      new Date('2026-09-18T14:00:00+08:00')
+    );
+    t.equal(rMid[0].open, 10.2);
+    t.equal(rMid[0].high, 12);
+    t.equal(rMid[0].low, 9);
   });
 
   // 5.1(2) 外部脏 quote.low 隔离验证（追加分支与原地分支双覆盖）

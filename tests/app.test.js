@@ -780,7 +780,7 @@ QUnit.module('app.applyLiveTickToChartForCode', (hooks) => {
     });
     _applyLiveTickToChartForCode('sh600519', {
       price: 12, open: 10.2, high: 12.5, low: 8.8, volume: 1800, amount: 20000
-    });
+    }, new Date('2026-09-18T10:00:00+08:00'));
     const last = inst.klineData.items[0];
     t.equal(last.open, 10.2);
     t.equal(last.high, 12, 'high updated by live price breakout');

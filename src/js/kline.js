@@ -473,30 +473,45 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
   const effectiveCode = code || (quote && quote.code);
   const isAStock = Boolean(effectiveCode && inferAssetType(effectiveCode) === ASSET_TYPES.STOCK_CN);
 
-  if (period === '1d' && isAStock) {
+  if (isAStock) {
     const clockDate = typeof now === 'string' ? new Date(now) : (now instanceof Date ? now : new Date());
     const parts = getBeijingClockParts(clockDate);
     const min = parts.hour * 60 + parts.minute;
     if (min < 9 * 60 + 25) {
-      if (lastDate && targetDate && lastDate < targetDate) {
-        const newTime = typeof last.time === 'number' ? parseBeijingDateTimeToChartSeconds(targetDate) : targetDate;
-        const newBar = {
-          time: newTime,
+      if (period === '1d') {
+        if (lastDate && targetDate && lastDate < targetDate) {
+          const newTime = typeof last.time === 'number' ? parseBeijingDateTimeToChartSeconds(targetDate) : targetDate;
+          const newBar = {
+            time: newTime,
+            open: price,
+            high: price,
+            low: price,
+            close: price,
+            volume: 0,
+            amount: 0,
+            preview: true,
+            previewDate: targetDate,
+            changePercent: Number.isFinite(Number(quote.changePercent)) ? Number(quote.changePercent) : 0
+          };
+          return [...items, newBar];
+        }
+        if (lastDate && targetDate && lastDate > targetDate) return items;
+        const updated = {
+          ...last,
           open: price,
           high: price,
           low: price,
           close: price,
-          volume: 0,
-          amount: 0,
-          changePercent: Number.isFinite(Number(quote.changePercent)) ? Number(quote.changePercent) : 0
+          preview: true,
+          previewDate: targetDate
         };
-        return [...items, newBar];
+        if (Number.isFinite(Number(quote.changePercent))) updated.changePercent = Number(quote.changePercent);
+        return [...items.slice(0, -1), updated];
       }
+      // Non-1d periods (1w, 1M etc.) of A-shares during pre-open 09:15-09:25:
+      // Freeze high/low (do not consume external quote.high/low, do not min/max)
       const updated = {
         ...last,
-        open: price,
-        high: price,
-        low: price,
         close: price
       };
       if (Number.isFinite(Number(quote.changePercent))) updated.changePercent = Number(quote.changePercent);
@@ -541,11 +556,20 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
 
   const updated = { ...last, close: price };
   if (period === '1d' && isAStock) {
-    const lastHigh = _positiveNumber(last.high) || price;
-    const lastLow = _positiveNumber(last.low) || price;
-    updated.high = Math.max(lastHigh, price);
-    updated.low = Math.min(lastLow, price);
-    if (quoteOpen) updated.open = quoteOpen;
+    if (last.preview) {
+      const open = quoteOpen || price;
+      updated.open = open;
+      updated.high = Math.max(open, price);
+      updated.low = Math.min(open, price);
+      delete updated.preview;
+      delete updated.previewDate;
+    } else {
+      const lastHigh = _positiveNumber(last.high) || price;
+      const lastLow = _positiveNumber(last.low) || price;
+      updated.high = Math.max(lastHigh, price);
+      updated.low = Math.min(lastLow, price);
+      if (quoteOpen) updated.open = quoteOpen;
+    }
     if (quoteVolume) updated.volume = quoteVolume;
     if (quoteAmount) updated.amount = quoteAmount;
     if (Number.isFinite(Number(quote.changePercent))) updated.changePercent = Number(quote.changePercent);

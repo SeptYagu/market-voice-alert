@@ -1317,8 +1317,8 @@ export async function loadKlineForCode(code) {
 
 // Live-tick update: only mutates the LAST bar via series.update(bar), which
 // preserves the user's zoom/pan on the time scale. No setData, no fitContent.
-export function applyLiveTickToChartForCode(code, quoteOrPrice) {
-  monitorChartMgr.applyLiveTick(code, quoteOrPrice);
+export function applyLiveTickToChartForCode(code, quoteOrPrice, now = new Date()) {
+  monitorChartMgr.applyLiveTick(code, quoteOrPrice, now);
 }
 
 export function applyLiveQuoteToIntradayForCode(code, quote, isLimitUp = false, now = new Date()) {

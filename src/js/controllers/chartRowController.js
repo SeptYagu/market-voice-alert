@@ -113,7 +113,7 @@ export function applyIntradayDataToChart(ctl, inst, data) {
   if (typeof ctl.fitContent === 'function') ctl.fitContent();
 }
 
-export function applyLiveTickToKlineChart(ctl, inst, quoteOrPrice) {
+export function applyLiveTickToKlineChart(ctl, inst, quoteOrPrice, now = new Date()) {
   if (!ctl || !inst || !inst.klineData) return;
   const livePrice = Number(
     quoteOrPrice && typeof quoteOrPrice === 'object' ? quoteOrPrice.price : quoteOrPrice
@@ -121,7 +121,7 @@ export function applyLiveTickToKlineChart(ctl, inst, quoteOrPrice) {
   if (!Number.isFinite(livePrice) || livePrice <= 0) return;
   const effectiveCode = inst.klineData?.code || inst.code || (quoteOrPrice && quoteOrPrice.code);
   const updated = quoteOrPrice && typeof quoteOrPrice === 'object'
-    ? applyLiveQuoteToKline(inst.klineData.items, quoteOrPrice, inst.period, effectiveCode)
+    ? applyLiveQuoteToKline(inst.klineData.items, quoteOrPrice, inst.period, effectiveCode, now)
     : applyLiveTickToKline(inst.klineData.items, livePrice, inst.period);
   if (updated === inst.klineData.items) return;
   inst.klineData = { ...inst.klineData, items: updated };
@@ -543,7 +543,7 @@ export class ChartRowManager {
     this.loadKline(code);
   }
 
-  applyLiveTick(code, quoteOrPrice) {
+  applyLiveTick(code, quoteOrPrice, now = new Date()) {
     const ctl = this.klineCtlMap.get(code);
     const inst = this.getInst(code);
     if (!ctl || !inst) return;
@@ -551,7 +551,7 @@ export class ChartRowManager {
     const quoteWithDate = (quoteOrPrice && typeof quoteOrPrice === 'object' && !quoteOrPrice.tradingDay && !quoteOrPrice.date && !quoteOrPrice.quoteDate)
       ? { ...quoteOrPrice, date: fallbackDate }
       : quoteOrPrice;
-    applyLiveTickToKlineChart(ctl, inst, quoteWithDate);
+    applyLiveTickToKlineChart(ctl, inst, quoteWithDate, now);
     this.updateKlineStatus(code);
   }
 
