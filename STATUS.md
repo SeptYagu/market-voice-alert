@@ -1,6 +1,17 @@
 # STATUS.md - 项目状态
 
-## 2026-09-18 当前状态：集合竞价方案**代码落地首轮独立审查 未通过** —— 1×P1 + 2×P2 + 1×P3
+## 2026-09-18 当前状态：集合竞价方案**代码落地修复轮独立复查（Round 2）未通过** —— 2×P2
+
+审查报告：[`docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round2-handoff.md)
+被审提交：`b268a38`（基准 `7c955b0`，任务书范围 11 文件 / +784 −27，本轮修复提交自身 5 文件 / +206 −47；`main` 与 `origin/main` 同步，工作区干净；`npm test` 892/892 全绿）。
+结论：**未通过**，最高严重级别 **P2**。Round 1 的 4 项缺陷（P1-1/P2-1/P2-2/P3-1）经基线变异回放与生产入口冻结墙钟复核**均已闭环**（09:25:03 的 `low` 为 20.50；以 `7c955b0` 为"去守卫变异体"回放，5.1(1a)/5.1(2)/5.1(1c) 均确定性转红；`now` 已参数化下发），本轮新增 2 项由修复改动自身引入的缺陷：
+1. **P2-1 `lastDate === targetDate` 空洞未闭环**（`src/js/kline.js:498-509`）：`:498` 只挡 `lastDate > targetDate`，未挡 `===`；09:15 前 `resolveStockChartDate` 锚定上一交易日 ⇒ 末柱（上一交易日**已收盘**柱）满足 `===` 即被写成 `open=high=low=close=price` 并附 `preview: true`。生产入口 + 冻结墙钟（02:00/09:05）实测：官方柱 `20.5/22.5/20.0/21.0` → `21/21/21/21 preview=true`，09:30/14:55 再 tick 不回弹，直到图表重载。可达性经实测确认（`isFuturesMarketOpen` 对 `AU0`/`RB0` 在北京 02:00 与 09:05 均为 `true` ⇒ `app.js:1218` 旁路会话门禁；另有工具栏手动刷新与启动期 `refreshNow()`）。
+2. **P2-2 非 1d 盘前分支把分钟周期一并纳入**（`src/js/kline.js:511-519`，条件实为 `period !== '1d'`，上一轮只要求 `1w`/`1M`）：只改 `close`、冻结 `high/low` 的公式对分钟柱不成立，实测 09:18 的 1m/5m/15m/30m/60m 均得 `close=12 > high=10.5`（`close ∉ [low, high]`），违反 `kline.js:425-431`/`:440-445` 的分钟柱契约，并把次日盘前虚拟价写进上一交易日末根分钟柱。
+**通过项（实测）**：Round 1 四项全部闭环；需求 2/3 相关文件本轮未改动（`chart.js`/`marketSession.js`/`voiceController.js` 不在本轮 diff），沿用上一轮已核结论。
+**待确认风险/未验证项**：① 09:25 后首拍若仍携带盘前虚拟价，重基线会将其固化并被 `Math.min` 锁死（无活体快照，需实现层加固 + 用例固化）；② `now` 参数化无变异判别力（新增用例未覆盖 `applyLiveTick` 转发链，默认门禁墙钟被锚定在北京 10:00）；③ `1w`/`1M` 盘前 `close` 可越出官方 `[low, high]`（上一轮指定实现的直接后果，非本轮偏差）；④ 上游 09:26-09:29 分时点与 253 网格缺槽、港美外盘双侧过滤前提（继承未验证）。
+**推荐修复顺序**：P2-1 → P2-2 → 待确认风险 1。
+
+## 2026-09-18 历史状态：集合竞价方案**代码落地首轮独立审查 未通过** —— 1×P1 + 2×P2 + 1×P3
 
 审查报告：[`docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round1-handoff.md)
 被审提交：`d3f415b`（基准 `7c955b0`，实测审查增量 7 文件 / +498 −20；`main` 与 `origin/main` 同步，工作区干净；`npm test` 890/890 全绿）。
