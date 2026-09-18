@@ -1,9 +1,18 @@
 # STATUS.md - 项目状态
 
-## 2026-09-18 当前状态：集合竞价方案设计（Round 2 优化）—— 全面闭环 Round 1 审查 2×P1 + 4×P2 缺陷
+## 2026-09-18 当前状态：集合竞价方案设计 Round 2 复查 **未通过** — 1×P1 + 4×P2 + 1×P3
+
+审查报告：[`docs/handoff/2026-09-18-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-18-workbuddy-code-review-round2-handoff.md)
+被审提交：`c2dc6a2`（基准 `ad0c609`，本轮实际审查增量 `ad0c609..c2dc6a2` = 4 文件 / +481 −1，纯文档；其中待审提交自身 3 文件 / +177 −109；`origin/main` 与本地 HEAD 一致，工作区干净）。
+结论：**未通过**，最高严重级别 **P1**。**P1-1** 使能窗口与会话窗口错配——v2 §3.3.1 的豁免仅覆盖 `09:20-09:25`，而 `getMarketSession`（`marketSession.js:26-29`）在 09:15-09:30 全程返回 `opening-auction`；导致 09:25-09:29 仍受 `autoStartAuction=false` 拦截（实跑 09:25/09:26/09:29 `eligibleCodes=[] timerShouldRun=false`），与 §3.3.2「min≥09:25 恢复受约束播报」及需求 3 自相矛盾；`applySchedule` 随即 `stopTimer()`，09:30 会话切回 `trading` 时 `startTimer()` 首行 `memory.clear()`（`voiceController.js:67`，实跑确认记忆由 `[["sh603533",{...}]]` 清为 `[]`），使 §3.3.3 写入的记忆基线被整体丢弃，**P2-2 闭环无观测效应**。**P2-1** §3.3.1 指定改动点不可落地——`isAutoRefreshAllowedInSession(session, smartSchedule)`（`marketSession.js:47-55`）无时钟入参无法判定 09:20-09:25，且被 `app.js:1223` 的数据刷新门禁复用（`tests/marketSession.test.js:38-48` 即该复用契约），方案未声明签名变更、调用点与副作用。**P2-2** P1-2 品种隔离契约不水密——`quote.type === 'stock'` 非有效资产来源（`parser.js` 仅对期货写 `type`；`app.js:953` 对任意订阅标的强制 `type:'stock'`），`inferAssetType(quote.code || code)` 中的 `code` 在 `applyLiveQuoteToKline`（arity=3）作用域不存在，`inferAssetType(undefined)` 实测回退 `stock_cn`（fail-open），§3.1.3/§四 未标注品种作用域且与 §3.1.1 承诺、§5.1(3) 断言冲突。**P2-3** §3.2.1 两选项均缺可落地前提——`inst` 在 `chart.js` 不存在、`opts.isFuture` 全仓从未被传入（唯一调用点 `chartRowController.js:288` 仅传 `{theme,height}`），剔除 09:00-09:30 判据会削弱非 A 股（尤其国内期货日盘）非股票轴判定，且 §5 无对应回归用例。**P2-4** 验证矩阵判别力缺口——5.1(5)「0 次播报」由空 `eligibleCodes` 平凡满足，正确实现与 M5（`spoken:null`）同为 0 次，**M5 无确定性杀红能力**；无非 A 股分时轴用例；5.1(4) 期望长度与 §3.2.2 网格差 4 槽（253 vs 257）。**P3-1** §3.2.3 第 2 条只声明期望未给机制，`_correctLastIntradayPoint`（`kline.js:523-545`，调用点 `:554-558`）在 09:26-09:29 仍会覆写 09:25 撮合点。
+**通过项**：Round 1 六项缺陷在 v2 中均有对应闭环段落与改动落点；被引用代码行号与 HEAD 逐行一致；§3.3.3 提议的 `buildQuoteSpeechSegments`（`tts.js:289`）确实存在且导出；§3.2.2 固定网格与 `chinaStockStrategy.getIntradaySessionRanges()=[[555,690],[780,900]]` 自洽。
+**待确认风险/未验证项**：上游 09:15-09:25 分时数据可得性（v2 未补前提，`kline.js:548` 空 `items` 提前返回）；TTS 队列按 code 合并削弱「严格按 interval 播报」（v2 未表态）；真实 Worker/checker 跨会话切点触发顺序未在真机复核。
+**推荐修复顺序**：P1-1 → P2-1 → P2-2 → P2-3 → P3-1 → P2-4（详见报告 §四）。
+
+## 2026-09-18 历史状态：集合竞价方案设计（Round 2 优化）—— 全面闭环 Round 1 审查 2×P1 + 4×P2 缺陷
 
 方案报告：[`docs/handoff/2026-09-18-call-auction-kline-intraday-voice-handoff.md`](docs/handoff/2026-09-18-call-auction-kline-intraday-voice-handoff.md)
-方案状态：v2 闭环审查版设计完成，全面闭环 2×P1 + 4×P2。
+方案状态：v2 闭环审查版设计完成，全面闭环 2×P1 + 4×P2（经 Round 2 复查**未通过**，遗留 1×P1 + 4×P2 + 1×P3）。
 闭环要点：
 1. **P1-1（语音使能门禁）闭环**：在 `marketSession.js` 与 `voiceSchedule.js` 中将 09:20-09:25 设为无条件使能时段（只要 `settings.enabled=true`），解除 `autoStartAuction` 阻塞；
 2. **P1-2（品种区分机制）闭环**：日K盘前守卫严格限定且仅对 A 股（`inferAssetType(code) === STOCK_CN`）生效，港股/美股/期货在真实交易时段保持正常极值累计；
