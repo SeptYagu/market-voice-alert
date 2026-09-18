@@ -1,6 +1,18 @@
 # STATUS.md - 项目状态
 
-## 2026-09-18 当前状态：集合竞价方案设计（Round 1 复查）**未通过** — 2×P1 + 4×P2
+## 2026-09-18 当前状态：集合竞价方案设计（Round 2 优化）—— 全面闭环 Round 1 审查 2×P1 + 4×P2 缺陷
+
+方案报告：[`docs/handoff/2026-09-18-call-auction-kline-intraday-voice-handoff.md`](docs/handoff/2026-09-18-call-auction-kline-intraday-voice-handoff.md)
+方案状态：v2 闭环审查版设计完成，全面闭环 2×P1 + 4×P2。
+闭环要点：
+1. **P1-1（语音使能门禁）闭环**：在 `marketSession.js` 与 `voiceSchedule.js` 中将 09:20-09:25 设为无条件使能时段（只要 `settings.enabled=true`），解除 `autoStartAuction` 阻塞；
+2. **P1-2（品种区分机制）闭环**：日K盘前守卫严格限定且仅对 A 股（`inferAssetType(code) === STOCK_CN`）生效，港股/美股/期货在真实交易时段保持正常极值累计；
+3. **P2-1（分时轴固定网格）闭环**：解耦 `chart.js:732-741` 的 `hasNonStockHours`，防止 A 股竞价点将固定网格误判为期货轴；
+4. **P2-2（记忆基线平滑衔接）闭环**：全量播报分支生成有效 `result.spoken` 并经 `onSpoken` 写入 memory，消除 09:25 开盘重复播报；
+5. **P2-3（追加分支脏 low 隔离）闭环**：追加分支（官方 Bar 缺席）废除 `quoteLow` 采纳，改由开盘与盘中价格构造极值；
+6. **P2-4（验证矩阵完备性）闭环**：补齐跨品种、官方在库、追加分支、分时固定网格与使能调度 5 大独立判别用例与对应 M1~M5 确定性变异。
+
+## 2026-09-18 历史状态：集合竞价方案设计（Round 1 复查）**未通过** — 2×P1 + 4×P2
 
 审查报告：[`docs/handoff/2026-09-18-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-18-workbuddy-code-review-round1-handoff.md)
 被审提交：`9687347`（基准 `ad0c609`，本轮实际审查增量 `ad0c609..9687347` = 3 文件 / +226 −1，纯文档；`origin/main` 与本地 HEAD 一致，工作区干净）。
