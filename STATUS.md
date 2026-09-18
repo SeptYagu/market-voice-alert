@@ -1,6 +1,15 @@
 # STATUS.md - 项目状态
 
-## 2026-09-17 当前状态：Phase 1 国际期货与外盘基础落地完成（`a09115b`）—— WorkBuddy 独立审查 Round 5 审核通过（0 缺陷，全绿交付）
+## 2026-09-18 当前状态：集合竞价日K下影线消除、分时图集合竞价纳入与语音播报时段去重优化方案设计完成
+
+方案报告：[`docs/handoff/2026-09-18-call-auction-kline-intraday-voice-handoff.md`](docs/handoff/2026-09-18-call-auction-kline-intraday-voice-handoff.md)
+方案状态：技术方案设计与根因分析定稿，进入 WorkBuddy 独立审查流程。
+核心内容：
+1. **日K集合竞价下影线消除**：深入剖析掌阅科技（`sh603533`）等标的盘前虚拟撮合跌停导致日K `Math.min(lastLow, ...)` 永久锁死的根因，设计盘前时间守卫与权威日K突破式更新机制；
+2. **集合竞价分时纳入分时图**：重构分时时间轴支持 `09:15-09:25` 集合竞价时段，解除 `_isContinuousTradingMinute` 盘前过滤；
+3. **语音播报时段差异化去重**：`09:15-09:20` 受开关约束，`09:20-09:25` 强制按间隔全量播报，`09:25` 后平滑恢复约束。
+
+## 2026-09-17 历史状态：Phase 1 国际期货与外盘基础落地完成（`a09115b`）—— WorkBuddy 独立审查 Round 5 审核通过（0 缺陷，全绿交付）
 
 交付报告：[`docs/handoff/2026-09-17-global-futures-phase1-completion-handoff.md`](docs/handoff/2026-09-17-global-futures-phase1-completion-handoff.md)
 交付提交：`a09115b`（基准 `adf057f`，Round 5 审查增量 `853bb15..a09115b` = 3 文件 / +131 −13）；门禁实跑：`npm test` 877/877 全绿，`npm run lint` 0 错误，`npm run build` 成功（gzip 120.19 KB ≤ 125.10 KB）。
