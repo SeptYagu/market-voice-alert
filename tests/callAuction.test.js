@@ -592,8 +592,59 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
     t.equal(resPrev[0].close, 10.4, '前一交易日末根分钟柱 close 不被改写');
   });
 
-  // 5.1(1g) 风险1 09:25:00 首拍若为盘前滞后快照则保留 preview 并在真实首拍到达时正确重基线
-  QUnit.test('5.1(1g) 风险1 09:25:00 首拍若为盘前滞后快照则保留 preview 并在真实首拍到达时正确重基线', (t) => {
+  // 5.1(1g) 风险1 C2: 09:25:00 首拍滞后快照携带盘前虚拟 open (19.60) 依然保持 preview 并正确重基线
+  QUnit.test('5.1(1g) 风险1 C2: 09:25:00 首拍滞后快照携带盘前虚拟 open (19.60) 依然保持 preview 并正确重基线', (t) => {
+    const items = [
+      { time: '2026-09-17', open: 20, high: 20, low: 20, close: 20, volume: 1000 }
+    ];
+    // 09:24:50 最后一拍虚拟价 19.60，虚拟 open 19.60
+    const t1 = applyLiveQuoteToKline(
+      items,
+      { price: 19.6, open: 19.6, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:24:50+08:00')
+    );
+    t.equal(t1[1].low, 19.6);
+    t.true(t1[1].preview, 'marked as preview');
+
+    // 09:25:00 收到滞后快照（仍为 19.60，携带虚拟 open 19.60）
+    const t2 = applyLiveQuoteToKline(
+      t1,
+      { price: 19.6, open: 19.6, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:25:00+08:00')
+    );
+    t.true(t2[1].preview, '09:25:00 滞后快照携带虚拟 open 保持 preview: true，不提前锁死');
+
+    // 09:25:05 收到真实开盘快照 20.50，open 20.50
+    const t3 = applyLiveQuoteToKline(
+      t2,
+      { price: 20.5, open: 20.5, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:25:05+08:00')
+    );
+    t.equal(t3[1].open, 20.5);
+    t.equal(t3[1].low, 20.5, '真实快照到达时重基线 low 为 20.5');
+    t.false(Boolean(t3[1].preview), 'preview 标记清除');
+    t.equal(t3[1].previewDate, '2026-09-18', 'previewDate 仍保留供对账');
+
+    // 14:55 盘终
+    const t4 = applyLiveQuoteToKline(
+      t3,
+      { price: 21.3, open: 20.5, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T14:55:00+08:00')
+    );
+    t.equal(t4[1].low, 20.5, '全天 low 恒为 20.5，19.60 彻底消除');
+    t.equal(t4[1].high, 21.3);
+  });
+
+  // 5.1(1h) 风险1 C3b: 09:25:02 首拍滞后快照价格推进 (19.80) 但无 open 时保持 preview
+  QUnit.test('5.1(1h) 风险1 C3b: 09:25:02 首拍滞后快照价格推进 (19.80) 但无 open 时保持 preview', (t) => {
     const items = [
       { time: '2026-09-17', open: 20, high: 20, low: 20, close: 20, volume: 1000 }
     ];
@@ -608,23 +659,24 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
     t.equal(t1[1].low, 19.6);
     t.true(t1[1].preview, 'marked as preview');
 
-    // 09:25:00 收到滞后快照（仍为 19.60，无 quoteOpen）
+    // 09:25:02 收到滞后快照（价格推进至 19.80，无 open）
     const t2 = applyLiveQuoteToKline(
       t1,
-      { price: 19.6, tradingDay: '2026-09-18' },
+      { price: 19.8, tradingDay: '2026-09-18' },
       '1d',
       'sh603533',
-      new Date('2026-09-18T09:25:00+08:00')
+      new Date('2026-09-18T09:25:02+08:00')
     );
-    t.true(t2[1].preview, '09:25:00 滞后快照下保持 preview: true，不提前锁死');
+    t.true(t2[1].preview, '09:25:02 无 open 快照保持 preview: true');
+    t.equal(t2[1].low, 19.8, '预览柱低点更新为当前预览价 19.8，不锁死 19.60');
 
-    // 09:25:05 收到真实开盘快照 20.50，open 20.50
+    // 09:25:32 收到真实开盘快照 20.50，open 20.50
     const t3 = applyLiveQuoteToKline(
       t2,
       { price: 20.5, open: 20.5, tradingDay: '2026-09-18' },
       '1d',
       'sh603533',
-      new Date('2026-09-18T09:25:05+08:00')
+      new Date('2026-09-18T09:25:32+08:00')
     );
     t.equal(t3[1].open, 20.5);
     t.equal(t3[1].low, 20.5, '真实快照到达时重基线 low 为 20.5');
@@ -638,7 +690,117 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
       'sh603533',
       new Date('2026-09-18T14:55:00+08:00')
     );
-    t.equal(t4[1].low, 20.5, '全天 low 恒为 20.5，19.60 彻底消除');
+    t.equal(t4[1].low, 20.5, '全天 low 恒为 20.5，19.60 与 19.80 彻底消除');
+    t.equal(t4[1].high, 21.3);
+  });
+
+  // 5.1(1i) 风险1 C4: 滞后快照延续至 09:30:00 以后绝不因硬时钟超时提前清除 preview
+  QUnit.test('5.1(1i) 风险1 C4: 滞后快照延续至 09:30:00 以后绝不因硬时钟超时提前清除 preview', (t) => {
+    const items = [
+      { time: '2026-09-17', open: 20, high: 20, low: 20, close: 20, volume: 1000 }
+    ];
+    // 09:24:50 - 09:30:00 持续无 open 滞后快照 19.60
+    const t1 = applyLiveQuoteToKline(
+      items,
+      { price: 19.6, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:24:50+08:00')
+    );
+    const t2 = applyLiveQuoteToKline(
+      t1,
+      { price: 19.6, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:25:00+08:00')
+    );
+    const t3 = applyLiveQuoteToKline(
+      t2,
+      { price: 19.6, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:29:59+08:00')
+    );
+    const t4 = applyLiveQuoteToKline(
+      t3,
+      { price: 19.6, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:30:00+08:00')
+    );
+    t.true(t4[1].preview, '09:30:00 滞后快照下依然保持 preview: true，不发生硬时钟早退');
+
+    // 09:30:30 收到真实开盘快照 20.50，open 20.50
+    const t5 = applyLiveQuoteToKline(
+      t4,
+      { price: 20.5, open: 20.5, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:30:30+08:00')
+    );
+    t.equal(t5[1].open, 20.5);
+    t.equal(t5[1].low, 20.5, '真实快照到达时重基线 low 为 20.5');
+    t.false(Boolean(t5[1].preview), 'preview 标记清除');
+
+    // 14:55 盘终
+    const t6 = applyLiveQuoteToKline(
+      t5,
+      { price: 21.3, open: 20.5, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T14:55:00+08:00')
+    );
+    t.equal(t6[1].low, 20.5, '全天 low 恒为 20.5，19.60 彻底消除');
+    t.equal(t6[1].high, 21.3);
+  });
+
+  // 5.1(1j) 风险1: 快照自带盘前 updateTime 时间戳时即使价格与 open 变动亦保持 preview
+  QUnit.test('5.1(1j) 风险1: 快照自带盘前 updateTime 时间戳时即使价格与 open 变动亦保持 preview', (t) => {
+    const items = [
+      { time: '2026-09-17', open: 20, high: 20, low: 20, close: 20, volume: 1000 }
+    ];
+    // 09:24:50 虚拟价 19.60
+    const t1 = applyLiveQuoteToKline(
+      items,
+      { price: 19.6, open: 19.6, updateTime: '20260918092450', tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:24:50+08:00')
+    );
+    t.true(t1[1].preview, 'marked as preview');
+
+    // 09:25:02 收到快照变动至 19.90 且携带 open 19.90，但其 updateTime 仍为 09:24:55（盘前）
+    const t2 = applyLiveQuoteToKline(
+      t1,
+      { price: 19.9, open: 19.9, updateTime: '20260918092455', tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:25:02+08:00')
+    );
+    t.true(t2[1].preview, '自带盘前 updateTime 判定为滞后快照，保持 preview: true');
+    t.equal(t2[1].low, 19.9, '预览低点平移至 19.9，不提前重基线锁死');
+
+    // 09:25:05 真实快照到达（updateTime >= 09:25:00）
+    const t3 = applyLiveQuoteToKline(
+      t2,
+      { price: 20.5, open: 20.5, updateTime: '20260918092505', tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:25:05+08:00')
+    );
+    t.equal(t3[1].open, 20.5);
+    t.equal(t3[1].low, 20.5, '真实快照到达时重基线 low 为 20.5');
+    t.false(Boolean(t3[1].preview), 'preview 标记清除');
+
+    // 14:55 盘终
+    const t4 = applyLiveQuoteToKline(
+      t3,
+      { price: 21.3, open: 20.5, updateTime: '20260918145500', tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T14:55:00+08:00')
+    );
+    t.equal(t4[1].low, 20.5, '全天 low 恒为 20.5');
     t.equal(t4[1].high, 21.3);
   });
 });

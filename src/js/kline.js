@@ -453,6 +453,34 @@ function _positiveNumber(value) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+export function getQuoteBeijingTimeMinutes(quote) {
+  if (!quote || typeof quote !== 'object') return null;
+  if (typeof quote.updateTime === 'string') {
+    const digits = quote.updateTime.replace(/\D/g, '');
+    let tStr = '';
+    if (digits.length >= 14) {
+      tStr = digits.slice(8, 14);
+    } else if (digits.length === 6) {
+      tStr = digits;
+    }
+    if (tStr.length === 6) {
+      const h = Number(tStr.slice(0, 2));
+      const m = Number(tStr.slice(2, 4));
+      const s = Number(tStr.slice(4, 6));
+      if (Number.isFinite(h) && Number.isFinite(m)) {
+        return h * 60 + m + (Number.isFinite(s) ? s / 60 : 0);
+      }
+    }
+  }
+  if (typeof quote.time === 'string') {
+    const parts = quote.time.split(':').map(Number);
+    if (parts.length >= 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1])) {
+      return parts[0] * 60 + parts[1] + (Number.isFinite(parts[2]) ? parts[2] / 60 : 0);
+    }
+  }
+  return null;
+}
+
 export function applyLiveQuoteToKline(items, quote, period, code, now = new Date()) {
   if (!Array.isArray(items) || !items.length || !quote || typeof quote !== 'object') return items;
   const price = _positiveNumber(quote.price);
@@ -548,6 +576,23 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
   if (period === '1d' && lastDate && targetDate && lastDate < targetDate) {
     const newTime = typeof last.time === 'number' ? parseBeijingDateTimeToChartSeconds(targetDate) : targetDate;
     if (isAStock) {
+      const quoteTimeMinutes = getQuoteBeijingTimeMinutes(quote);
+      const isQuotePreOpen = quoteTimeMinutes !== null && quoteTimeMinutes < 9 * 60 + 25;
+      if (isQuotePreOpen) {
+        const newBar = {
+          time: newTime,
+          open: price,
+          high: price,
+          low: price,
+          close: price,
+          volume: 0,
+          amount: 0,
+          preview: true,
+          previewDate: targetDate,
+          changePercent: Number.isFinite(Number(quote.changePercent)) ? Number(quote.changePercent) : 0
+        };
+        return [...items, newBar];
+      }
       const open = quoteOpen || price;
       const high = Math.max(open, price);
       const low = Math.min(open, price);
@@ -583,16 +628,39 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
   const updated = { ...last, close: price };
   if (period === '1d' && isAStock) {
     if (last.preview) {
-      const parts = getBeijingClockParts(typeof now === 'string' ? new Date(now) : (now instanceof Date ? now : new Date()));
-      const min = parts.hour * 60 + parts.minute;
-      const isStillStalePreOpen = (min < 9 * 60 + 30) && !quoteOpen && price === last.close;
-      if (!isStillStalePreOpen) {
+      const quoteTimeMinutes = getQuoteBeijingTimeMinutes(quote);
+      const isQuotePreOpen = quoteTimeMinutes !== null && quoteTimeMinutes < 9 * 60 + 25;
+
+      const hasValidOpen = Boolean(quoteOpen && quoteOpen > 0);
+      const hasPriceShift = price !== last.close;
+      const hasOpenShift = hasValidOpen && quoteOpen !== last.close;
+      const hasSubstantialShift = hasValidOpen && hasPriceShift && hasOpenShift;
+
+      const hasOfficialTradeEvidence = !isQuotePreOpen && (
+        hasSubstantialShift ||
+        (hasValidOpen && (quoteVolume > 0 || quoteAmount > 0) && quoteTimeMinutes !== null && quoteTimeMinutes >= 9 * 60 + 25)
+      );
+
+      if (hasOfficialTradeEvidence) {
         const open = quoteOpen || price;
         updated.open = open;
         updated.high = Math.max(open, price);
         updated.low = Math.min(open, price);
         delete updated.preview;
-        delete updated.previewDate;
+        updated.previewDate = last.previewDate || targetDate;
+      } else {
+        // Still in pre-open preview mode (or stale snapshot without confirmed trade):
+        // Retain preview flag and update all price fields to current tick without locking historical min/max
+        updated.open = price;
+        updated.high = price;
+        updated.low = price;
+        updated.close = price;
+        updated.volume = 0;
+        updated.amount = 0;
+        updated.preview = true;
+        updated.previewDate = last.previewDate || targetDate;
+        if (Number.isFinite(Number(quote.changePercent))) updated.changePercent = Number(quote.changePercent);
+        return [...items.slice(0, -1), updated];
       }
     } else {
       const lastHigh = _positiveNumber(last.high) || price;
