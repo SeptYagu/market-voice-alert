@@ -7,6 +7,7 @@ import {
   chartTimeToDate,
   chartSecondsToTime,
   getBeijingClockParts,
+  getBeijingDate,
   getBeijingMinuteChartSeconds
 } from './time.js';
 
@@ -479,43 +480,68 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
     const min = parts.hour * 60 + parts.minute;
     if (min < 9 * 60 + 25) {
       if (period === '1d') {
+        const todayBeijing = getBeijingDate(clockDate);
         if (lastDate && targetDate && lastDate < targetDate) {
-          const newTime = typeof last.time === 'number' ? parseBeijingDateTimeToChartSeconds(targetDate) : targetDate;
-          const newBar = {
-            time: newTime,
-            open: price,
-            high: price,
-            low: price,
-            close: price,
-            volume: 0,
-            amount: 0,
-            preview: true,
-            previewDate: targetDate,
-            changePercent: Number.isFinite(Number(quote.changePercent)) ? Number(quote.changePercent) : 0
-          };
-          return [...items, newBar];
+          if (targetDate === todayBeijing) {
+            const newTime = typeof last.time === 'number' ? parseBeijingDateTimeToChartSeconds(targetDate) : targetDate;
+            const newBar = {
+              time: newTime,
+              open: price,
+              high: price,
+              low: price,
+              close: price,
+              volume: 0,
+              amount: 0,
+              preview: true,
+              previewDate: targetDate,
+              changePercent: Number.isFinite(Number(quote.changePercent)) ? Number(quote.changePercent) : 0
+            };
+            return [...items, newBar];
+          }
+          return items;
         }
         if (lastDate && targetDate && lastDate > targetDate) return items;
+        if (lastDate && targetDate && lastDate === targetDate) {
+          if (targetDate === todayBeijing) {
+            const updated = {
+              ...last,
+              open: price,
+              high: price,
+              low: price,
+              close: price,
+              preview: true,
+              previewDate: targetDate
+            };
+            if (Number.isFinite(Number(quote.changePercent))) updated.changePercent = Number(quote.changePercent);
+            return [...items.slice(0, -1), updated];
+          }
+          // Already-closed trading day: only update close, preserve official open/high/low without preview flag
+          const updated = {
+            ...last,
+            close: price
+          };
+          if (Number.isFinite(Number(quote.changePercent))) updated.changePercent = Number(quote.changePercent);
+          return [...items.slice(0, -1), updated];
+        }
+        return items;
+      }
+      if (period === '1w' || period === '1M') {
+        // Aggregated periods (1w, 1M) of A-shares during pre-open 09:15-09:25:
+        // Freeze high/low (do not consume external quote.high/low, do not min/max)
         const updated = {
           ...last,
-          open: price,
-          high: price,
-          low: price,
-          close: price,
-          preview: true,
-          previewDate: targetDate
+          close: price
         };
         if (Number.isFinite(Number(quote.changePercent))) updated.changePercent = Number(quote.changePercent);
         return [...items.slice(0, -1), updated];
       }
-      // Non-1d periods (1w, 1M etc.) of A-shares during pre-open 09:15-09:25:
-      // Freeze high/low (do not consume external quote.high/low, do not min/max)
-      const updated = {
-        ...last,
-        close: price
-      };
-      if (Number.isFinite(Number(quote.changePercent))) updated.changePercent = Number(quote.changePercent);
-      return [...items.slice(0, -1), updated];
+      if (isMinutePeriod(period)) {
+        // Minute periods (1m, 5m, 15m, 30m, 60m) during pre-open:
+        // If last bar is from previous trading day, do not overwrite it with pre-open price
+        if (lastDate && targetDate && lastDate < targetDate) {
+          return items;
+        }
+      }
     }
   }
 
@@ -557,12 +583,17 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
   const updated = { ...last, close: price };
   if (period === '1d' && isAStock) {
     if (last.preview) {
-      const open = quoteOpen || price;
-      updated.open = open;
-      updated.high = Math.max(open, price);
-      updated.low = Math.min(open, price);
-      delete updated.preview;
-      delete updated.previewDate;
+      const parts = getBeijingClockParts(typeof now === 'string' ? new Date(now) : (now instanceof Date ? now : new Date()));
+      const min = parts.hour * 60 + parts.minute;
+      const isStillStalePreOpen = (min < 9 * 60 + 30) && !quoteOpen && price === last.close;
+      if (!isStillStalePreOpen) {
+        const open = quoteOpen || price;
+        updated.open = open;
+        updated.high = Math.max(open, price);
+        updated.low = Math.min(open, price);
+        delete updated.preview;
+        delete updated.previewDate;
+      }
     } else {
       const lastHigh = _positiveNumber(last.high) || price;
       const lastLow = _positiveNumber(last.low) || price;
