@@ -1,6 +1,18 @@
 # STATUS.md - 项目状态
 
-## 2026-09-18 当前状态：集合竞价方案设计 Round 2 复查 **未通过** — 1×P1 + 4×P2 + 1×P3
+## 2026-09-18 当前状态：集合竞价方案设计（Round 3 终审定稿闭环）—— 全面彻底闭环 Round 2 审查 1×P1 + 4×P2 + 1×P3 缺陷
+
+方案报告：[`docs/handoff/2026-09-18-call-auction-kline-intraday-voice-handoff.md`](docs/handoff/2026-09-18-call-auction-kline-intraday-voice-handoff.md)
+方案状态：v3 终审定稿闭环版完成，全面彻底闭环 1×P1 + 4×P2 + 1×P3，交付就绪实施。
+闭环要点：
+1. **P1-1 闭环（会话窗口对齐与记忆保留）**：语音专属使能覆盖 `09:20-09:30`，保持定时器持续运行不停摆，彻底消除 09:30 `memory.clear()` 误清空，09:25 恢复去重真正生效；
+2. **P2-1 闭环（专属方法落地）**：使能改动严格限定在 `chinaStockStrategy.isVoiceAllowed(now, ...)` 内部，零改动 `isAutoRefreshAllowedInSession`，完全不影响数据刷新门禁与现有单测；
+3. **P2-2 闭环（水密显式入参契约）**：`applyLiveQuoteToKline(items, quote, period, code)` 显式传参 `code`，严格仅当 `inferAssetType(code) === STOCK_CN` 时守卫生效，空值 fail-closed，非 A 股完全放行；
+4. **P2-3 闭环（分时轴显式注入）**：`chartRowController.js:288` 显式传入 `isFuture: isFutureCode(code)`，`chart.js` 优先使用 `opts.isFuture` 并收窄 `hasNonStockHours` 下限至 09:15，固定网格稳定生效；
+5. **P3-1 闭环（09:25 撮合点静默期保护）**：在 `_correctLastIntradayPoint` 增加末点为 09:25 且时间处于 09:26-09:29 时的跳过守卫；
+6. **P2-4 闭环（可证伪验证矩阵）**：明确 253 个标准槽位断言、`inspect().memory` 实际值断言、非 A 股数据驱动轴断言及 M1~M6 确定性杀红变异。
+
+## 2026-09-18 历史状态：集合竞价方案设计 Round 2 复查 **未通过** — 1×P1 + 4×P2 + 1×P3
 
 审查报告：[`docs/handoff/2026-09-18-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-18-workbuddy-code-review-round2-handoff.md)
 被审提交：`c2dc6a2`（基准 `ad0c609`，本轮实际审查增量 `ad0c609..c2dc6a2` = 4 文件 / +481 −1，纯文档；其中待审提交自身 3 文件 / +177 −109；`origin/main` 与本地 HEAD 一致，工作区干净）。
