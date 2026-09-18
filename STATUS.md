@@ -1,10 +1,19 @@
 # STATUS.md - 项目状态
 
-## 2026-09-18 当前状态：集合竞价方案设计（Round 3 终审定稿闭环）—— 全面彻底闭环 Round 2 审查 1×P1 + 4×P2 + 1×P3 缺陷
+## 2026-09-18 当前状态：集合竞价方案设计 Round 3 终审复查 **未通过** — 1×P1 + 3×P2 + 1×P3
+
+审查报告：[`docs/handoff/2026-09-18-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-18-workbuddy-code-review-round3-handoff.md)
+被审提交：`f4b7b92`（基准 `ad0c609`，本轮实际审查增量 `ad0c609..f4b7b92` = 5 文件 / +662 −2，纯文档；其中待审提交自身 3 文件 / +157 −171；`origin/main` 与本地 HEAD 一致，工作区干净）。
+结论：**未通过**，最高严重级别 **P1**。**P1-1** §3.2.1 的 `opts.isFuture === undefined && hasNonStockHours` 使启发式兜底在唯一调用点（`chartRowController.js:288` 拟传 `isFuture: isFutureCode(code)`，该函数恒返回布尔）成为**不可达死代码**，`isFutureTimeline` 退化为 `isFutureCode(code)` → 港股/美股/国际期货（`isFutureCode('gl_HSI')===false`）全部落回 A 股 253 固定网格：真实 `chart.js` 定向变异实跑 港股 6/6→253/3、美股 5/5→253/0、`gl_HSI` 4/4→253/0（美股与 `gl_*` 分时图「有轴无点」），与 §3.1.1「非 A 股零跨品种误伤」承诺冲突，§5 全无覆盖。**P2-1** §3.3.1 的 `opening-auction` 分支漏掉总开关前置 `if (!cfg.enabled) return true`（兄弟策略 `marketSession.js:154/193/229` 与 `isAutoRefreshAllowedInSession:49` 均有）→ UI 一键关闭「智能交易时段」（此时 `autoStartAuction` 被置灰冻结为 false，`voiceBarView.js:210/213`）后，09:15-09:20 由 HEAD 放行变为 v3 拦截（实跑 09:17 HEAD=true / v3=false，`eligibleCodes` 由 `["sh603533"]` 变空），违反需求 3 该窗口语义。**P2-2** §3.1.2 的「09:25 前预览柱收敛于参考价」未落到追加分支（§3.1.3(1) 头部限定「≥09:25」、§四 只摘录「不执行 `Math.min`」）→ `items` 末柱为昨日时（§3.1.2 自述场景）09:18 虚假低点被追加分支写死且单向不可回弹，真实模块实跑末柱 `low=18`（§5.1(1) 期望 20）→ 需求 1「彻底消除」在该路径不成立，且 §5.1(1) 未规定 `items` 前置状态致用例不可判定。**P2-3** 验证矩阵对分时轴零判别力（Round 2 P2-4 第 2 条未闭环）：M4 变体一（不传 `isFuture`）实测 A 股 253、期货 5/5 与期望一致 → **不转红**；变体二（还原 `hasNonStockHours` 上下界）因合取式短路而**零效果** → 不转红；仍无港股/美股/国际期货轴用例，P1-1 回归在矩阵中不可见。**P3-1** §四 清单未登记落地必需的 import 新增（`kline.js` 缺 `chartSecondsToTime`、`voiceController.js` 缺 `getBeijingClockParts`），§3.3.1 片段误写不存在的 `this.getMarketSession`（实跑 TypeError，应如 `marketSession.js:119` 用模块级函数）。
+**通过项（真闭环核实）**：**R2-P1-1 真闭环**——`chinaStockStrategy.isVoiceAllowed` 具备 `now` 入参，实测 09:20-09:29 判据恒真；以注入式时钟 + 真实 controller 实测记忆 `[["sh603533",{price:"20.00 元"}]]` 在 09:26/09:31 均未被 `memory.clear()` 清空。**R2-P2-1 真闭环**——改动落在语音专属方法，`isAutoRefreshAllowedInSession` 与 `app.js:1223` 数据刷新门禁零改动。**R2-P2-2 基本闭环**——显式 `code` 入参 + 空值前置判断关闭 `inferAssetType(undefined)→stock_cn` fail-open。**R2-P3-1 闭环**——守卫落点明确，实测 09:27 报价确会把 09:25 点 `close` 由 20 改写为 20.2、`chartSecondsToTime(09:25 槽位)==='09:25'` 判定可行。**R2-P2-4 部分闭环**——M5 已具杀红力（实测 `'20.00 元'` 字面与同价去重 `{text:""}`），§5.1(4) 的 253 与 §3.2.2 网格一致。
+**待确认风险/未验证项**：§3.2.2 新网格无 09:26-09:29 槽位而数据侧区间 `[[555,690],[780,900]]` 仍放行该窗口点（无网络样本）；上游 09:15-09:25 分时可得性（v3 仍未声明前提）；TTS 队列按 code 合并削弱「严格按 interval 播报」（v3 未表态）；`inferAssetType` 对不可识别字符串残留 fail-open；真机 Worker/`checker` 切点顺序未复测。
+**推荐修复顺序**：P1-1 → P2-1 → P2-2 → P3-1 → P2-3（详见报告 §四）。
+
+## 2026-09-18 历史状态：集合竞价方案设计（Round 3 终审定稿）—— 提交方声明闭环 Round 2 审查 1×P1 + 4×P2 + 1×P3 缺陷（经 Round 3 复查**未通过**，遗留 1×P1 + 3×P2 + 1×P3）
 
 方案报告：[`docs/handoff/2026-09-18-call-auction-kline-intraday-voice-handoff.md`](docs/handoff/2026-09-18-call-auction-kline-intraday-voice-handoff.md)
-方案状态：v3 终审定稿闭环版完成，全面彻底闭环 1×P1 + 4×P2 + 1×P3，交付就绪实施。
-闭环要点：
+方案状态：v3 定稿版提交，提交方声明已全面彻底闭环 1×P1 + 4×P2 + 1×P3、交付就绪实施；经 Round 3 终审复查**未通过**（遗留 1×P1 + 3×P2 + 1×P3，其中 R2-P2-3 未闭环且新引入分时轴回归）。
+提交方声明闭环要点（Round 3 复核结果见上）：
 1. **P1-1 闭环（会话窗口对齐与记忆保留）**：语音专属使能覆盖 `09:20-09:30`，保持定时器持续运行不停摆，彻底消除 09:30 `memory.clear()` 误清空，09:25 恢复去重真正生效；
 2. **P2-1 闭环（专属方法落地）**：使能改动严格限定在 `chinaStockStrategy.isVoiceAllowed(now, ...)` 内部，零改动 `isAutoRefreshAllowedInSession`，完全不影响数据刷新门禁与现有单测；
 3. **P2-2 闭环（水密显式入参契约）**：`applyLiveQuoteToKline(items, quote, period, code)` 显式传参 `code`，严格仅当 `inferAssetType(code) === STOCK_CN` 时守卫生效，空值 fail-closed，非 A 股完全放行；
