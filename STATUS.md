@@ -1,6 +1,19 @@
 # STATUS.md - 项目状态
 
-## 2026-09-18 当前状态：集合竞价方案**代码落地修复轮独立复查（Round 3）未通过** —— 2×P2
+## 2026-09-18 当前状态：集合竞价方案**代码落地修复轮独立复查 2（Round 4）未通过** —— 2×P2 + 2×P3
+
+审查报告：[`docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round4-handoff.md`](docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round4-handoff.md)
+被审提交：`2b9af28`（基准 `7c955b0`，任务书范围 13 文件 / +1401 −27，本轮修复提交自身 `a0794db..2b9af28` 源码侧 `src/js/kline.js` +78、`tests/callAuction.test.js` +174；`main` 与 `origin/main` 同步，工作区干净；`npm test` 898/898 全绿（仓库外重复 8 次均 898/0），`npx eslint` 0 问题）。
+结论：**未通过**，最高严重级别 **P2**。Round 3 两项 P2 的**主形态已真闭环**（`updateTime` 时效通道 + `5.1(1j)` 补齐：M1/M2/M5/M6/M7 确定性转红），本轮新增 2 项 P2 + 2 项 P3：
+1. **P2-1 追加分支在报价无时间戳时不存在任何盘前时效判据**（`src/js/kline.js:576-610`，判据 `:578-581`）：`getQuoteBeijingTimeMinutes` 返回 `null`（未知时效）时 `:580` 的 `isQuotePreOpen` 直接为 `false`（fail-open），而 `min < 9*60+25` 的时钟块（`:509`）在 09:25 后已跳过 ⇒ **09:25:00-09:29:59 到达的盘前滞后快照被直接落成无 `preview` 标记的「官方柱」**。实测序列：09:25:05 `{price:19.6, open:0}` → `19.6/19.6/19.6/19.6 preview=false` → 14:55 `low` 全天 **19.60**（真实开盘/全天最低 20.50）。本形态**不依赖**「盘前 `open` 非零」前提（`:596` 的 `quoteOpen || price` 已兜底）。可达性经代码与实测确认：`parseEastmoney` 返回对象**无** `updateTime`/`time`（实测键集），而 `api.js:200-228` 的 A 股报价在 Tencent 未返回该码或整批失败时逐码回落 Eastmoney；Tencent 路径下字段 30 不匹配正则时亦得 `updateTime=''`；本轮新增的 `5.1(1g/1h/1i)` 本身即使用无时间戳报价对象。以基准 `7c955b0` 回放同序列逐字段相同 ⇒ 属**修复未覆盖的残留缺口**（非新回归），但仍违反验收标准 1 与 Round 3 复审验收标准「09:25 起任意 tick 后 `low` 恒为 20.50」。
+2. **P2-2 原地 `preview` 分支的兜底判据仍建立在内容特征上，且 `null` 被当作「非盘前」**（`src/js/kline.js:630-664`，判据 `:631-642`，清除 `:644-650`，滞留 `:651-663`）：① **形态 A（新回归）** 滞后快照的 `price` 与虚拟 `open` 同步推进（盘前二者本就同步，本轮 `5.1(1g/1j)` 均以 `open === price` 建模）⇒ `hasPriceShift` 与 `hasOpenShift` 同为真 ⇒ `hasSubstantialShift` 授权清除 `preview` ⇒ 重基线到虚拟价，实测 09:25:02 `{19.9,19.9}` → 全天 `low` **19.90**；② **形态 C** 真实开盘 == 最后一拍虚拟参考价（撮合收敛常态）⇒ 首拍真实快照 `price === open === last.close`，且 `:641` 的成交量分支硬性要求 `quoteTimeMinutes !== null` ⇒ `preview` 滞留，期间 `:654-659` 把四价逐拍改写为 `price` 并把 `volume/amount` 归零，`:644-650` 重基线时又丢弃已观测包络 ⇒ 真实最低 20.30 被抹为全天 `low = 20.50`。同序列在带 `updateTime`（Tencent 形态）下完全正确，差异纯由时效通道缺失造成。
+3. **P3-1 A 股连续交易时段丢弃官方 `quote.high/low`**（`src/js/kline.js:665-671`，对照非 A 股 `:678-682`）：实测 A 股 10:00 报价 `high:22.5/low:19.0` 得柱 `20.5/21/20.5/21`，同输入 `hk00700` 对照得 `20.5/22.5/19.0/21`。官方日K 仅展开/切周期/强制刷新时重载（全仓无周期重载），轮询间隙形成的极值不可恢复。由 `d3f415b` 引入（基准回放 `10.2/12.5/8.8/12` vs HEAD `10.2/12/9/12`），`tests/app.test.js:780-790` 与 `5.1(1d)` 反而固化了该损失；范围超出需求 1（只需消除竞价虚拟极值），建议按「`preview` 已清除且时钟 ≥ 09:25」门禁恢复吸收。
+4. **P3-2 本轮新增判据的合取项与追加分支时效门零判别力**（`src/js/kline.js:634-637/658-659/578-581`，另 `:694-701`）：仓库外 pristine 导出 12 点定点变异矩阵中 **M3（删 `hasPriceShift`）、M4（删 `hasOpenShift`）、M8（滞留期不归零 `volume/amount`）、M11（追加分支时效门 09:25→09:30）、M10（`_isTradingMinute` 删 09:15-09:25 窗口）五者均 898 pass / 0 fail 存活**；M1/M2/M5/M6/M7/M9 均确定性转红。M3/M4 存活即证明 P2-2 形态 A 在用例集中完全缺失；M10 存活说明需求 2「分时图纳入 09:15-09:25」的实时 tick 路径无判别用例（`5.1(4a)` 只验证轴网格，竞价点经 `setData` 直注）。违反验收标准 4。
+**通过项（实测）**：Round 3 两项主形态真闭环（滞后快照「仅带 open / 仅走价 / 延续过 09:30」三形态保持 `preview`，M1/M2/M5/M6/M7 转红）；需求 2 分时轴（A 股 09:18 竞价点走 253 固定网格且 6/6 可见，`RB0`/`hk00700`/`usAAPL`/`gl_HSI` 均数据驱动轴且轴长 == 点数、可见 == 点数）；非 A 股极值不失真（`103/98` 完整保留）；需求 3 语音（09:20-09:25 强制全量播报 + 记忆基线写回、09:25 恢复去重、智能时段关闭态 09:17/09:22 均放行）全绿；Round 2 结论不回归。
+**待确认风险/未验证项**：① 上游盘前 A 股 `open` 是否非零且随虚拟参考价同步推进（仅 P2-2 形态 A 的前提；形态 C/D 不依赖）；② 上游 09:25 后是否仍返回盘前 payload 及其持续时长（P2-1/P2-2 三形态共同前提，继承 Round 2/3）；③ 上游 09:26-09:29 分时点与 253 网格缺槽（继承）；④ 港美外盘零回归依赖双侧过滤完整前提（继承）；⑤ 首次冷启动全量运行出现 1 例失败（未记录用例名），随后连续 8 次均 898/0，未能复现。
+**推荐修复顺序**：P2-2 形态 A（清除授权改为时效判据 + 滞留期包络累计）→ P2-1（时效未知分支不得 fail-open）→ P2-2 形态 C → P3-2（补用例并使 M3/M4/M8/M10/M11 杀红）→ P3-1（按 09:25 时效门禁恢复官方 `high/low`）。
+
+## 2026-09-18 历史状态：集合竞价方案**代码落地修复轮独立复查（Round 3）未通过** —— 2×P2
 
 审查报告：[`docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round3-handoff.md)
 被审提交：`929aa3d`（基准 `7c955b0`，任务书范围 12 文件 / +1048 −27，本轮修复提交自身 `b268a38..929aa3d` 源码侧 `src/js/kline.js` +99、`tests/callAuction.test.js` +132；`main` 与 `origin/main` 同步，工作区干净；`npm test` 895/895 全绿，`npx eslint` 0 问题）。
