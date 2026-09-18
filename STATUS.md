@@ -1,6 +1,13 @@
 # STATUS.md - 项目状态
 
-## 2026-09-18 当前状态：集合竞价日K下影线消除、分时图集合竞价纳入与语音播报时段去重优化方案设计完成
+## 2026-09-18 当前状态：集合竞价方案设计（Round 1 复查）**未通过** — 2×P1 + 4×P2
+
+审查报告：[`docs/handoff/2026-09-18-workbuddy-code-review-round1-handoff.md`](docs/handoff/2026-09-18-workbuddy-code-review-round1-handoff.md)
+被审提交：`9687347`（基准 `ad0c609`，本轮实际审查增量 `ad0c609..9687347` = 3 文件 / +226 −1，纯文档；`origin/main` 与本地 HEAD 一致，工作区干净）。
+结论：**未通过**，最高严重级别 **P1**。**P1-1** 语音方案遗漏时段使能门禁——09:15-09:29 会话为 `opening-auction`，A 股股票在默认 `smartSchedule.autoStartAuction=false` 下 `getVoiceEligibleCodes` 返回 `[]`、`decideVoiceSchedule.timerShouldRun=false`（实跑证据），定时器根本不运行，故仅改 `voiceController.js:35` 的 `dedupe` 无法实现「09:20-09:25 强制按间隔播报」，且 §2.3 根因归因不完整、§四 清单未涉 `marketSession.js`/`voiceSchedule.js`。**P1-2** 日K盘前守卫无品种区分机制——`applyLiveQuoteToKline(items, quote, period)` 无 code/资产类型入参（arity=3）且被 A股/港股/美股/国际期货日K共用（`chartRowController.js:123`/`:396`），按方案字面实现「北京时间 <09:25」纯时间守卫会把美股夜盘 00:00–04:00、CME 06:10、A50 09:05、HSI 09:20（北京）等真实交易误判为盘前竞价（实跑：high/low 由 98–103 塌缩为 100.5/100.5）。**P2-1** 分时轴扩展不生效——`chart.js:732-741` 的 `hasNonStockHours` 一旦见到 09:00-09:30 点即置 `isFutureTimeline=true`，旁路 `:743-754` 固定网格，§3.2.1 对 `:744` 数组的改动成为死代码（实跑 displayTimes 242→3）。**P2-2** §3.3.2 记忆基线衔接不可实现——`formatQuoteSpeech` 返回字符串、`dedupe=false` 分支 `spoken:null`、`onSpoken` 守卫要求 `result.spoken`，实测强制播报后 `memory.size=0`、09:31 同价重复播报。**P2-3** 追加分支（`kline.js:472-489`，≥09:25 且官方 Bar 未入库）仍消费外部脏 `quote.low`，§3.1.2 只覆盖原地更新分支。**P2-4** 验证矩阵判别力/变异杀伤力缺口（5.1(1) 可用盘前守卫单独通过；M1 在调度器不运行时不可执行）。**通过项**：被引用代码行号与 HEAD 逐行一致（`kline.js:475-477`/`494-496`/`508-514`、`chart.js:744-754`、`voiceController.js:35`、`chartRowController.js:386-399`）；Bug 1/Bug 2 根因经实跑确认成立；三段式时段划分与 A 股规则及既有 `getIntradaySessionRanges()=[[555,690],[780,900]]` 自洽。**附带核实（不单独立级）**：§2.2.2「修改昨天分时点」与实现不符（实为覆写当日更早的点）；§2.1.2 片段归属表述有误（行号本身正确）。**待确认风险**：TTS 队列按 code 合并削弱「严格按间隔播报」；上游 09:15-09:25 分时数据可得性未验证；09:26-09:29 `_correctLastIntradayPoint` 是否覆写 09:25 撮合点方案未表态。**元数据不一致**：任务书给出的待审全 SHA `9687347a83…` 在仓库中不存在，以短 SHA + 提交信息 + 父提交=基准三项证据锁定实际 HEAD。
+**推荐修复顺序**：P1-1 → P1-2 → P2-3 → P2-1 → P2-2 → P2-4（详见报告 §四）。
+
+## 2026-09-18 历史状态：集合竞价日K下影线消除、分时图集合竞价纳入与语音播报时段去重优化方案设计完成（初稿）
 
 方案报告：[`docs/handoff/2026-09-18-call-auction-kline-intraday-voice-handoff.md`](docs/handoff/2026-09-18-call-auction-kline-intraday-voice-handoff.md)
 方案状态：技术方案设计与根因分析定稿，进入 WorkBuddy 独立审查流程。
