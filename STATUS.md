@@ -1,6 +1,18 @@
 # STATUS.md - 项目状态
 
-## 2026-09-18 当前状态：集合竞价方案**代码落地修复轮独立复查 2（Round 4）未通过** —— 2×P2 + 2×P3
+## 2026-09-18 当前状态：集合竞价方案**代码落地修复轮独立复查 3（Round 5）未通过** —— 1×P2 + 2×P3
+
+审查报告：[`docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round5-handoff.md`](docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round5-handoff.md)
+被审提交：`18d2411`（基准 `7c955b0`，任务书范围 14 文件 / +1908 −27，本轮修复提交自身 `1571180..18d2411` 源码侧 `src/js/kline.js` +89、`tests/callAuction.test.js` +267、`tests/app.test.js` ±4；`main` 与 `origin/main` 同步，工作区干净；`npm test` 904/904 全绿（仓库外 pristine 导出连续 6 次均 904/0，另 1 次 903/1 未捕获用例名），`npx eslint` 0 问题）。
+结论：**未通过**，最高严重级别 **P2**。R4 三项要求的主形态**已生效**（形态 D `open:0,volume:0` 落 `preview` 且全天 `low=20.50`；形态 C 带有效 `open` 变体 09:25:05 清 `preview` 且保留真实低点 20.30；连续时段恢复吸收官方 `quote.high/low`，盘前脏极值仍被隔离；非 A 股零回归），但本轮新增 1 项 P2 + 2 项 P3：
+1. **P2-1 「时效未知」仍被判为「非盘前」，官方柱/`preview` 判定退化为内容代理**（`src/js/kline.js:578-590`/`:659-674`，`:580`/`:660` 的 `isQuotePreOpen` 在 `getQuoteBeijingTimeMinutes` 返回 `null` 时为 `false`）：R4 修复建议 ①（时效未知 ⇒ 保持 `preview`）**未实现**，改由 `hasValidOpen`/`hasTradeVolume`/`isZeroVolume` 内容判据决定官方性，即「报价是否带 `volume` 键 / `volume` 是否 > 0」决定当日 `low` 是否被盘前虚拟价锁死。实跑（真实开盘与全天最低 20.50、盘前最后一拍 19.60）：形态 A `{price:19.9,open:19.9}`（无 volume 字段）→ 09:25:02 **误清 `preview`** → 全天 `low` **19.90**；追加分支 `{price:19.6,open:20.5,volume:100,amount:2000}` 于 09:25:05 → 落成非 `preview` 官方柱 → 全天 `low` **19.60**；对照 `volume:0` 输入则正确保持 `preview`。反证：`tests/callAuction.test.js:920` 去掉其额外补入的 `volume: 0`（还原 R4 验收标准字面形态）后 `5.1(1l)` **立即转红**，且该用例标题自述「无 volume」而输入实为 `volume: 0`（标题与输入不一致）。可达性前提与 R4 判定 P2 时相同（`parseEastmoney` 无 `updateTime`、`updateTime=''` 落 `null`；触发需 `volume>0`/`amount>0` 的无时间戳快照）。
+2. **P3-1 本轮新增的「滞留期真实极值包络」被自身重基线丢弃**（`src/js/kline.js:693-700` 新增包络 vs `:682-686` 清 `preview` 重基线只取 `[open, price, quoteLow]`）：R4 修复建议 ③ 已做、④ 未做 ⇒ 包络累计后在清 `preview` 时被丢弃，属自相矛盾状态。实跑 09:25:05/09:25:35 包络低点 20.30/19.80 于 09:27 清 `preview` 后 → 全天 `low = 20.50`。若该窗口确为真实成交（`hasTradeVolume` 为实现自身判据）则真实极值永久丢失；若主张必为盘前虚拟价，则应删除该包络分支。相关变异 M7/M8/M19 均存活（无用例）。
+3. **P3-2 变异矩阵仍未达成 R4 验收**（34 点定点变异实跑）：**M7（滞留恒塌缩）由 R4 的 RED 退化为 GREEN**、**M8（塌缩分支不归零 `volume/amount`）存活**（R4 明确要求杀红），另 M11(b)（追加分支 `isPostOpenTime` 时效门）、M13（第三析取项 `hasValidOpen && !isZeroVolume`）、M14、M16/M17（本轮新增的两处 `isContinuousTrading` 客户端时钟门）、M19（重基线组合）**全部存活**；M1~M6/M9/M10/M11(a)/M15/M20/M21/M22 均确定性 RED（其中 M3/M4/M10 为 R4 要求项，已达成）。测试侧反证：`5.1(1o)` 走的是追加分支（`items` 末柱为昨日，`preview` 柱 `volume/amount` 由 `:599-600` 硬编码 0），把其时钟改为 09:26 后（C4）乃至叠加 M8（C5）**仍全绿** ⇒ 该用例无法杀 M8，要触及 `:701-708` 需「同日 `preview` 柱 → 盘前 `updateTime` 拍」两步序列（探针已证实可达）。违反验收标准 4。
+**通过项（实测）**：R4 形态 D（`open:0,volume:0`）真闭环；形态 C（带有效 `open`）真闭环；P3-1 修复（A 股 14:00 `high 12.5/low 8.8`，`tests/app.test.js` 与 `5.1(1d)` 断言同步更新）成立且盘前隔离不回归；非 A 股（`hk00700`/`usAAPL`）零回归；需求 2 实时分时竞价窗口（09:15/09:18/09:25 追加、09:26/09:29 不追加、09:30 恢复）与需求 3 语音三态（关闭态放行、09:20-09:25 强制全量+基线写回、09:25 恢复去重）经独立复核有效；`npm test` 904/904、`npx eslint` 0 问题。
+**待确认风险/未验证项**：① 冷启动偶发 1 例失败（19 次运行中 1 次 `903/1`，未捕获用例名，其后 18 次均 904/0，继承 R4 风险 5）；② 上游 09:25 后是否仍返回盘前 payload 及其 `volume`/`amount` 取值（P2-1 前提，继承 R4 风险 1/2；但 P2-1 的修复方向不依赖该前提）；③ 上游 09:26-09:29 分时点与 253 网格缺槽（继承）；④ 港美外盘双侧过滤前提（继承）；⑤ A 股 09:25-09:29 不吸收官方 `quote.high/low`（本轮实现取 09:30，R4 建议 09:25；评估无实际影响，登记备查）。
+**推荐修复顺序**：P2-1（时效未知 ⇒ 保持 `preview`；内容证据只作受时效约束的升级通道）→ P3-2（同批补用例杀 M7/M8/M11b/M13/M14/M16/M17/M19，修正 `5.1(1l)` 标题-输入不一致与 `5.1(1o)` 目标分支）→ P3-1（包络语义二选一并固化 + 补两步序列用例）。
+
+## 2026-09-18 历史状态：集合竞价方案**代码落地修复轮独立复查 2（Round 4）未通过** —— 2×P2 + 2×P3
 
 审查报告：[`docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round4-handoff.md`](docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round4-handoff.md)
 被审提交：`2b9af28`（基准 `7c955b0`，任务书范围 13 文件 / +1401 −27，本轮修复提交自身 `a0794db..2b9af28` 源码侧 `src/js/kline.js` +78、`tests/callAuction.test.js` +174；`main` 与 `origin/main` 同步，工作区干净；`npm test` 898/898 全绿（仓库外重复 8 次均 898/0），`npx eslint` 0 问题）。
