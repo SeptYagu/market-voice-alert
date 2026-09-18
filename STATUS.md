@@ -1,6 +1,18 @@
 # STATUS.md - 项目状态
 
-## 2026-09-18 当前状态：集合竞价方案设计 Round 3 终审复查 **未通过** — 1×P1 + 3×P2 + 1×P3
+## 2026-09-18 当前状态：集合竞价方案设计（v4 终审收敛定稿版）—— 达到设计审查 3 轮上限，全面闭环 Round 3 审查意见，正式达成设计收敛，交付就绪实施
+
+方案定稿：[`docs/handoff/2026-09-18-call-auction-kline-intraday-voice-handoff.md`](docs/handoff/2026-09-18-call-auction-kline-intraday-voice-handoff.md)
+审查历程：经 Round 1（2×P1 + 4×P2）、Round 2（1×P1 + 4×P2 + 1×P3）、Round 3（1×P1 + 3×P2 + 1×P3）三轮独立审查，依照协作规则第 7 条与第 11 条达到技术方案审查 3 轮上限（Max 3 Rounds Cap）。
+定稿闭环要点（全面闭环 Round 3 全部 1×P1 + 3×P2 + 1×P3 审查意见）：
+1. **P1-1 闭环（分时轴析取兜底恢复，港美外盘分时 100% 保护）**：`chart.js:741` 修正为 `opts.isFuture === true || hasNonStockHours`，由于 `hasNonStockHours` 早盘下界已收窄至 09:15，A 股 09:15-09:25 竞价点稳定走 253 固定网格，而港股（15:00-16:00）、美股（21:30-04:00）、国际期货（17:00-05:00）触发 `hasNonStockHours` 稳定走数据驱动轴，数据点 100% 可见（实测港股 6/6、美股 5/5、gl_HSI 4/4），零跨品种回归；
+2. **P2-1 闭环（智能时段总开关语义对齐）**：在 `chinaStockStrategy.isVoiceAllowed` 补充 `if (!cfg.enabled) return true;` 前置判定，与兄弟策略完全同形，彻底消除总开关关闭态下 09:15-09:20 误拦截；
+3. **P2-2 闭环（09:25 前 A 股预览柱全路径统一守卫）**：09:25 前无论今日柱是否在库（覆盖追加分支与原地更新分支），四个价格字段一律收敛于最新参考价 `open=price, high=price, low=price, close=price`，09:18 极端申报与 09:19 撤单即时回弹，彻底消除虚假下影线；§5.1(1) 明确区分追加路径与原地路径两条判定用例；
+4. **P2-3 闭环（分时轴判别力与确定性杀红变异）**：§5.1(4) 增补港股、美股、国际期货 3 类轴路径可见性断言；M4 重写为剔除 `hasNonStockHours` 析取兜底，实跑可见点塌缩为 3/6、0/5、0/4，具备确定性杀红判别力；
+5. **P3-1 闭环（必需 import 补齐与模块级函数调用）**：§四 明确列出 `kline.js` 新增导入 `chartSecondsToTime`、`voiceController.js` 新增导入 `getBeijingClockParts`；§3.3.1 调用模块级 `getMarketSession(now, tradingDates)` 消除 TypeError。
+结论：**设计正式收敛（Design Converged）**，交付就绪直接推进代码落地与自动化测试！
+
+## 2026-09-18 历史状态：集合竞价方案设计 Round 3 终审复查 **未通过** — 1×P1 + 3×P2 + 1×P3
 
 审查报告：[`docs/handoff/2026-09-18-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-18-workbuddy-code-review-round3-handoff.md)
 被审提交：`f4b7b92`（基准 `ad0c609`，本轮实际审查增量 `ad0c609..f4b7b92` = 5 文件 / +662 −2，纯文档；其中待审提交自身 3 文件 / +157 −171；`origin/main` 与本地 HEAD 一致，工作区干净）。
