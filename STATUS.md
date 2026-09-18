@@ -1,6 +1,17 @@
 # STATUS.md - 项目状态
 
-## 2026-09-18 当前状态：集合竞价方案**代码落地修复轮独立复查（Round 2）未通过** —— 2×P2
+## 2026-09-18 当前状态：集合竞价方案**代码落地修复轮独立复查（Round 3）未通过** —— 2×P2
+
+审查报告：[`docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round3-handoff.md`](docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round3-handoff.md)
+被审提交：`929aa3d`（基准 `7c955b0`，任务书范围 12 文件 / +1048 −27，本轮修复提交自身 `b268a38..929aa3d` 源码侧 `src/js/kline.js` +99、`tests/callAuction.test.js` +132；`main` 与 `origin/main` 同步，工作区干净；`npm test` 895/895 全绿，`npx eslint` 0 问题）。
+结论：**未通过**，最高严重级别 **P2**。Round 2 两项缺陷（P2-1 `lastDate === targetDate` 空洞、P2-2 分钟周期越界纳入）经定点变异复核**均已真闭环**（M_G 被 5.1(1e) 杀红、M_D/M_E 被 5.1(1f) 杀红），本轮新增 2 项 P2（实现判据不健全 + 新增判据零判别力）：
+1. **P2-1 09:25 交接防抖判据不健全**（`src/js/kline.js:585-596`，判据在 `:588`）：判据 `(min < 9*60+30) && !quoteOpen && price === last.close` 以「价格与上一拍预览价相等」+「无 `open`」两个**内容特征**近似"快照仍处盘前态"，只能识别"payload 逐字段不变"这一种滞后形态。三条确定性反例（真实开盘与全天最低均为 20.50，盘前最后一拍 19.60）：① 滞后快照携带虚拟 `open` → 09:25 重基线到 19.60 并锁死全天低点；② 滞后快照价格推进（19.80，无 `open`）→ 锁死 19.80；③ 滞后延续到 09:30:00 判据整体过期 → 锁死 19.60。且 `preview` 为**一次性**开关（`:594-595` 删除后由 `:597-603` 的 `Math.min(lastLow, price)` 永久接管），不可逆；与 Round 1 P1-1 完全同形，验收标准 1「彻底消除」不成立（仅 A 股 1d；非 A 股/分钟周期已实测不受影响）。修复建议：改为挂钩快照时效（`updateTime`/`quoteDate`/发布时刻晚于 09:25）或要求"实质换挡证据"（`price !== 上一拍预览 close` 且 `quoteOpen > 0 && quoteOpen !== last.close`）。
+2. **P2-2 新增防抖判据的 `!quoteOpen` 合取项零判别力**（`src/js/kline.js:588`；用例 `tests/callAuction.test.js:595-643`）：仓库外 pristine 导出上做 9 点定点变异矩阵，**M_A（仅删除 `!quoteOpen`）在 895 项门禁下 895 pass / 0 fail 存活**——5.1(1g) 只构造了"快照与上一拍逐字段完全相同"这一种滞后形态，与实现共享同一假设，P2-1 的 C2/C3b 形态在矩阵中缺失。违反任务书验收标准 4 与 Round 2 复审验收标准「定点变异确定性转红」。
+**通过项（实测）**：Round 2 两项真闭环（02:00/09:05 已收盘柱恒 `20.5/22.5/20/21` 且无 `preview`；1m–60m 在 09:18 全部 `close ∈ [low, high]` 且上一交易日末根分钟柱不被改写）；需求 2/3 相关文件本轮未改动（`chart.js`/`marketSession.js`/`voiceController.js` 不在本轮 diff），沿用 Round 1/2 已核结论；非 A 股 4 类样本（`hk00700`/`usAAPL`/`RB0`/`AU0`）零回归；M_C 证明已收盘柱 `close` 就地更新属既有受测契约（非缺陷）。
+**待确认风险/未验证项**：① 上游 09:25 后是否仍返回盘前快照（P2-1 的直接前提，离线无活体样本，需两拍真实 payload 才能确证/排除）；② `1w`/`1M` 盘前冻结分支无日期校验（既有行为、本轮未引入、不在验收范围，仅登记，较基准已改进）；③ 上游 09:26-09:29 分时点与 253 网格缺槽（继承）；④ 港美外盘分时零回归依赖双侧过滤完整前提（继承）。
+**推荐修复顺序**：P2-1（判据改为时效/换挡证据 + 保留 `previewDate` 对账）→ P2-2（同批补齐三类滞后形态用例并实跑变异转红）。
+
+## 2026-09-18 历史状态：集合竞价方案**代码落地修复轮独立复查（Round 2）未通过** —— 2×P2
 
 审查报告：[`docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round2-handoff.md`](docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round2-handoff.md)
 被审提交：`b268a38`（基准 `7c955b0`，任务书范围 11 文件 / +784 −27，本轮修复提交自身 5 文件 / +206 −47；`main` 与 `origin/main` 同步，工作区干净；`npm test` 892/892 全绿）。
