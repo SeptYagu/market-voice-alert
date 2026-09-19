@@ -1,6 +1,15 @@
 # STATUS.md - 项目状态
 
-## 2026-09-19 当前状态：集合竞价方案**代码落地修复轮（Round 9 缺陷闭环）已完成，待 Round 10 终审复核**
+## 2026-09-19 当前状态：集合竞价方案**代码落地修复轮独立复查 8（Round 10）未通过** —— 1×P3
+
+审查报告：[`docs/handoff/2026-09-19-workbuddy-code-review-round10-handoff.md`](docs/handoff/2026-09-19-workbuddy-code-review-round10-handoff.md)
+被审提交：`79fb603`（基准 `7c955b0`，任务书范围 20 文件 / +3274 −29，本轮修复增量 `300820e..79fb603` = 3 文件 / +189 −5；`main` 与 `origin/main` 同步，工作区干净）。
+- **R9 P3-1 实现语义确证闭环**：独立探针（真实 `ChartRowManager`/`loadKline`/`applyLiveQuoteToKline`）证实坍缩 preview 柱 + 东财兜底无时间戳报价在场时，`refreshPreviewKline` 强制重载官方日K后 `preview` 清除、权威 `open/high/low/volume` 在重合并中全部保真；`kline.js:673`/`:595` Fail-Closed 判据未放宽；需求 1–3 零改动、继承 R9 已确证结论；`npm test` 916/916 全绿。
+- **本轮新缺陷 P3-1（测试有效性）**：R9 P3-1 修复包只落地「机制本体」半程——**生产触发接线（`app.js:1368`/`:1385` 两处 `void refreshLiveKlineForCode(...)` 与桥接 `app.js:1350-1354`）零测试判别力**：变异 M1（仅删两处接线调用）后 916/916 仍全绿 ⇒ 未来重构删除接线将使兜底重载整体退化为死代码且门禁不可察觉。新增测试仅直测 `refreshPreviewKline` 本体（对照变异 M2 转红 915/916，本体判别力成立）。违反验收标准 4「测试与变异矩阵全覆盖」的接线维度。
+- **待确认风险（继承 R9）**：东财日K端点盘中是否返回今日半日柱仍未获活体证据（本审查复测：直连 `push2his` 与本地 server 代理均因网络受限无响应，且当日为周六）；若上游盘中不返回今日柱，重载按 30s 节流持续重试但 preview 不收敛（不劣于修复前）。
+- **推荐修复顺序**：补接线级判别力用例（monkey-patch 两管理器的 `refreshPreviewKline` + 经 `updateChartLastTickMulti` 断言路由与 `isLimitUp` 正确）→ 对 `app.js:1368`/`:1385`/`:1350-1354` 三点逐一变异杀红。
+
+## 2026-09-19 历史状态：集合竞价方案**代码落地修复轮（Round 9 缺陷闭环）已完成，待 Round 10 终审复核**
 
 本次修复提交：闭环 Round 9 唯一缺陷 P3-1（时效未知通道保守态配套的官方日K兜底重载机制与节流），严格恪守 `kline.js:673`/`:595` 的 Fail-Closed 合取判据不放宽。
 - **P3-1 闭环落地详情**：
