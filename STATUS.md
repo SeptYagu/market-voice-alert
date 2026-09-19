@@ -1,6 +1,17 @@
 # STATUS.md - 项目状态
 
-## 2026-09-18 当前状态：集合竞价方案**代码落地修复轮独立复查 3（Round 5）未通过** —— 1×P2 + 2×P3
+## 2026-09-18 当前状态：集合竞价方案**代码落地修复轮独立复查 4（Round 6）未通过** —— 1×P2 + 2×P3
+
+审查报告：[`docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round6-handoff.md`](docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round6-handoff.md)
+被审提交：`dbe9ce8`（基准 `7c955b0`，任务书范围 15 文件 / +2159 −27，本轮修复提交自身 `18d2411..dbe9ce8` = 2 文件 / +162 −62，仅 `src/js/kline.js` +55 与 `tests/callAuction.test.js` +169；`main` 与 `origin/main` 同步，工作区干净；`npm test` 907/907 全绿、`npx eslint` 0 问题）。
+结论：**未通过**，最高严重级别 **P2**。R5 三项缺陷的**主形态已生效**（探针 A/A2/B/B2 在 09:25:02/09:25:05 均保持 `preview: true` 且 14:55 全天 `low === 20.50`；形态 C 保留真实低点 20.30、形态 D 不回归；滞留包络分支整体删除、塌缩语义自洽；R5 点名的 M11(b)/M16/M17/M19 已确定性转红，M7/M13/M14 目标代码已删除），本轮新增 1 项 P2 + 2 项 P3：
+1. **P2-1 未知时效的「内容升级通道」只从 `≥09:25` 后移到 `≥09:30`，集合竞价虚拟价仍可锁死当日 `low`**（`src/js/kline.js:590-591`（追加）/`:661-662`（原地））：`quoteTimeMinutes === null` 时 `isQuotePreOpen` 恒假，故清 `preview` 授权实为「客户端时钟 `≥09:30` + `hasValidOpen` + `hasTradeVolume`」的内容判据。实跑（真实模块）：09:24:50 虚拟价 19.60 预览柱 → 09:31 无时间戳 `{price:19.6, open:19.6, volume:12000, amount:235200}`（Eastmoney 兜底路径 `parser.js:299-319` 恒返 `volume/amount` 而无 `updateTime`）→ **误清 preview 并重基线到 19.60** → 14:55 全天 `low = 19.60`。R5 §二 P2-1「期望行为」（时效未知不得清 `preview`）与「修复建议 2」（`volume>0` **且** `price !== preview 价` **且** 时钟 `≥09:30` 三者合取 + 注释残余风险）中的 `price !== preview 价` 与注释均未落实。修复：原地分支加 `price !== last.close`（探针复核不破坏 B 的 14:55 放行与 A/A2/B2 的 09:25 保持 `preview`）；追加分支另立锚点并登记权衡。
+2. **P3-1 M8 变异仍存活 ⇒ 新增 `5.1(1o)` 的「杀 M8」断言零判别力（假闭环）**（`src/js/kline.js:684-685` 被测；`tests/callAuction.test.js:1063-1091` 用例）：删除 `:684-685`（塌缩分支不归零 `volume/amount`）与改写为继承 `last.volume` 两个变异在 907 项门禁下**均 907 pass / 0 fail 存活** —— 用例步骤 1 的 `preview` 柱量能由追加分支 `:600-601` 硬编码为 0，步骤 2 的 `{...last}` 已携带 0，故归零两行可任意删除。判别性输入已构造（`items` 已含今日柱且 `volume:5000, amount:60000` → 09:20 就地打 `preview` 且不归零 → 09:26 塌缩分支应归零），属「因错误原因通过」；提交信息与用例标题的「已补齐 M8 判别力」与实跑证据不符。
+3. **P3-2 本轮改写的时效/内容通道合取项全部零判别力（7 项变异存活）**（`src/js/kline.js:588`/`:590`/`:591`/`:662`）：N1（删 `!isQuotePreOpen`）、N2（删 `hasTradeVolume`）、N4（整段第二析取项置 `false`）、N7（删 `hasValidOpen`）、N8（原地删 `!isQuotePreOpen`）、N9（原地删 `hasTradeVolume`）、N11（通道门限 `09:30→10:00`）**全部存活**；用例集只有负例侧（09:25:05/09:26 保持 `preview`），**无任何 `≥09:30` 放行正例**，故 N4 所指「追加分支未知时效升级通道」既无正例也无反例（探针 §P8 证实该路径生产可达）。对照 N3/N5/N6/N10 与 M1/M6/M10/M11(b)/M15/M16/M17/M19/M22 均如期转红 ⇒ 非环境伪影、属真实覆盖缺口。违反验收标准 4。
+**待确认风险/未验证项**：① 上游 09:25 后是否仍返回盘前 payload 及其 `volume`/`amount` 取值（P2-1 前提，继承 R5 风险 2；修复建议在实现侧不依赖该前提）；② 追加分支以 `price !== last.close` 为锚点时「今日平开 + 未知时效 + ≥09:30」将延迟落官方柱（保守侧失效，需实现方确认取舍）；③ A 股 09:25-09:29 不吸收官方 `quote.high/low`（继承 R5 风险 5，评估无实际影响）；④ 报价长期无量/无 `volume` 键时 `preview` 柱全天不清除的健壮性（现有源均提供量能，无法证实）；⑤ 冷启动偶发失败（25 次运行 2 次出现与集合竞价无关的失败签名，符合既有「缓存污染伪影」特征，未定位用例名）；⑥ 需求 2/3 相关文件本轮未改动，仅复跑既有用例与读码确认。
+**推荐修复顺序**：P2-1（补 `price !== 预览价` 合取项 + 注释残余风险）→ P3-2（随 P2-1 同批补正/反例杀 N1/N2/N4/N7/N8/N9/N11）→ P3-1（改写 `5.1(1o)` 前置使 M8/M8b 转红并修正不实表述）。
+
+## 2026-09-18 历史状态：集合竞价方案**代码落地修复轮独立复查 3（Round 5）未通过** —— 1×P2 + 2×P3
 
 审查报告：[`docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round5-handoff.md`](docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round5-handoff.md)
 被审提交：`18d2411`（基准 `7c955b0`，任务书范围 14 文件 / +1908 −27，本轮修复提交自身 `1571180..18d2411` 源码侧 `src/js/kline.js` +89、`tests/callAuction.test.js` +267、`tests/app.test.js` ±4；`main` 与 `origin/main` 同步，工作区干净；`npm test` 904/904 全绿（仓库外 pristine 导出连续 6 次均 904/0，另 1 次 903/1 未捕获用例名），`npx eslint` 0 问题）。
