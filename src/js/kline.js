@@ -587,8 +587,14 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
       const clockMinutes = clockParts.hour * 60 + clockParts.minute;
       const isContinuousTrading = clockMinutes >= 9 * 60 + 30;
 
+      // Residual Risk Note on Eastmoney / Unknown-Time Fallback Channel:
+      // When updateTime is missing, official trading status is gated by continuous trading hours (>= 09:30),
+      // valid open, trading volume, and new price information (price !== last.close).
+      // Residual risk: If upstream continuously returns pre-open payload where price exactly equals
+      // previous day's close, the bar conservatively stays in preview mode until price shifts or official time arrives.
+      const hasNewPriceInfo = Math.abs(price - last.close) > 1e-6;
       const hasOfficialTrade = (isPostOpenTime && hasValidOpen) ||
-        (isContinuousTrading && !isQuotePreOpen && hasValidOpen && hasTradeVolume);
+        (isContinuousTrading && !isQuotePreOpen && hasValidOpen && hasTradeVolume && hasNewPriceInfo);
 
       if (!hasOfficialTrade) {
         const newBar = {
@@ -658,8 +664,13 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
       const hasValidOpen = Boolean(quoteOpen && quoteOpen > 0);
       const hasTradeVolume = Boolean((quoteVolume && quoteVolume > 0) || (quoteAmount && quoteAmount > 0));
 
+      // Residual Risk Note on In-Place Preview Upgrade:
+      // Content-based upgrade without exchange timestamp requires continuous trading hours (>= 09:30),
+      // not pre-open timestamp (!isQuotePreOpen), valid open, trade volume, and price shift from previous preview price
+      // (price !== last.close) to ensure genuine new market information and prevent locking pre-open virtual low.
+      const hasNewPriceInfo = Math.abs(price - last.close) > 1e-6;
       const hasOfficialTradeEvidence = (isPostOpenTime && hasValidOpen) ||
-        (isContinuousTrading && !isQuotePreOpen && hasValidOpen && hasTradeVolume);
+        (isContinuousTrading && !isQuotePreOpen && hasValidOpen && hasTradeVolume && hasNewPriceInfo);
 
       if (hasOfficialTradeEvidence) {
         const open = quoteOpen || price;
