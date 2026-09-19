@@ -707,6 +707,18 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
         const lowCandidates = [lastLow, quoteLow, price].filter((v) => v > 0);
         updated.low = lowCandidates.length ? Math.min(...lowCandidates) : price;
       } else {
+        const quoteTimeMinutes = getQuoteBeijingTimeMinutes(quote, targetDate);
+        const isPreOpenStale = quoteTimeMinutes !== null && quoteTimeMinutes < 9 * 60 + 25;
+        if (isPreOpenStale) {
+          // Stale pre-open snapshot (< 09:25) arriving during 09:25-09:30 handover window:
+          // Strictly reject writing to official bar (open/high/low/close/volume/amount)
+          // to prevent pre-open call auction virtual values from polluting official trade data.
+          return items;
+        }
+
+        // Handover window 09:25-09:30 for official bar:
+        // When quote timestamp is post-open (>= 09:25) or unknown (Eastmoney fallback),
+        // track high/low according to price movements.
         updated.high = Math.max(lastHigh, price);
         updated.low = Math.min(lastLow, price);
       }

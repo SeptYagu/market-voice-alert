@@ -1,6 +1,32 @@
 # STATUS.md - 项目状态
 
-## 2026-09-19 当前状态：集合竞价方案**代码落地修复轮独立复查 9（Round 11）未通过** —— 1×P2
+## 2026-09-19 当前状态：集合竞价方案**代码落地修复轮（Round 11 缺陷闭环）已完成，待复核/终审收敛**
+
+本次修复提交：彻底闭环 Round 11 唯一缺陷 P2-1（交接期 09:25-09:30 官方柱原地更新分支补齐时效门控，严禁盘前滞后快照污染官方柱 open/low/high/close，并完成变异杀红与全量门禁实证）。
+- **P2-1 闭环落地详情**：
+  1. `src/js/kline.js`:
+     - 在原地更新 `else` 分支（即 `!last.preview` 的官方柱路径）的非连续交易时段（`!isContinuousTrading`，即 09:25-09:30 交接窗口），增加与 `:672` 同源的时效门控判据：
+       `const quoteTimeMinutes = getQuoteBeijingTimeMinutes(quote, targetDate);`
+       `const isPreOpenStale = quoteTimeMinutes !== null && quoteTimeMinutes < 9 * 60 + 25;`
+     - 若为盘前时效实锤快照（`isPreOpenStale === true`），严格拦截写入（`return items;`），杜绝盘前未撮合虚拟参考价污染已确立官方柱的 `open`/`low`/`high`/`close`/`volume`/`amount`。
+     - 显式登记未知时效取舍：当 `quoteTimeMinutes === null` 或 `quoteTimeMinutes >= 09:25` 时，按最新报价吸收极值与成交量，确保既有 34 条 `5.1` 用例（如 `5.1(1m)`）与真实盘中推进完全兼容不回归。
+     - 严格恪守 Fail-Closed 判据，未放宽任何前置合取门，`refreshPreviewKline` 前置门禁不放宽。
+  2. `tests/callAuction.test.js`:
+     - 新增 `5.1(1y)` 负例用例：官方柱前置 + 盘前滞后快照（`updateTime < 09:25`）在 09:26:00、09:27:00、09:29:00 三拍交接期抵达，断言官方 `open/low/high/close/volume` 严格保真不被 19.50/19.60/19.70 虚拟价污染，盘中 14:55:00 真实成交 `low` 保持真实最低 20.30。
+     - 新增 `5.1(1z)` 独立探针 S1 复测用例：09:18 preview 柱 → 09:25:03 官方快照升级清 preview → 09:26:00 到达 09:18 滞后快照 ⇒ 官方柱 `open/low/close` 保持 20.50 不被污染，14:55 全天 `low` 恒为真实 20.30。
+     - 新增 `5.1(1za)` 独立探针 S2 复测用例：09:25:00 冷启动官方追加 → 09:27:00 到达 09:24:50 滞后快照 ⇒ 官方柱 `open/low/close` 保持 20.50 不被污染，14:55 全天 `low` 恒为真实 20.30。
+  3. **定点变异确定性杀红实证（全部 918 pass / 3 fail RED）**：
+     - 将 `src/js/kline.js` 中的时效门控反向变异为 `if (false && isPreOpenStale)`：
+       - `5.1(1y)` 报错（09:26:00 官方 open 被 19.60 污染）确定性杀红。
+       - `5.1(1z)` 报错（S1 滞后快照到达 open 被 19.60 污染）确定性杀红。
+       - `5.1(1za)` 报错（S2 滞后快照到达 open 被 19.60 污染）确定性杀红。
+       - 彻底证明时效门控具备 100% 严密测试判别力。
+- **全量门禁**：
+  - `npm test`: **921/921 全绿** (+3 tests)
+  - `npx eslint .`: 0 错误 0 警告
+  - `npm run build`: 构建成功
+
+## 2026-09-19 历史状态：集合竞价方案**代码落地修复轮独立复查 9（Round 11）未通过** —— 1×P2
 
 审查报告：[`docs/handoff/2026-09-19-workbuddy-code-review-round11-handoff.md`](docs/handoff/2026-09-19-workbuddy-code-review-round11-handoff.md)
 被审提交：`62b8938`（基准 `7c955b0`，任务书范围 21 文件 / +3468 −30，本轮修复增量 `06f0cdf..62b8938` = 4 文件 / +2393 −4；`main` 与 `origin/main` 同步，工作区干净，`npm test` 918/918 全绿）。
