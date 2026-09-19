@@ -577,24 +577,16 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
     const newTime = typeof last.time === 'number' ? parseBeijingDateTimeToChartSeconds(targetDate) : targetDate;
     if (isAStock) {
       const quoteTimeMinutes = getQuoteBeijingTimeMinutes(quote);
-      const isQuotePreOpen = quoteTimeMinutes !== null && quoteTimeMinutes < 9 * 60 + 25;
       const isPostOpenTime = quoteTimeMinutes !== null && quoteTimeMinutes >= 9 * 60 + 25;
       const hasValidOpen = Boolean(quoteOpen && quoteOpen > 0);
-      const hasTradeVolume = Boolean((quoteVolume && quoteVolume > 0) || (quoteAmount && quoteAmount > 0));
-
-      const clockDate = typeof now === 'string' ? new Date(now) : (now instanceof Date ? now : new Date());
-      const clockParts = getBeijingClockParts(clockDate);
-      const clockMinutes = clockParts.hour * 60 + clockParts.minute;
-      const isContinuousTrading = clockMinutes >= 9 * 60 + 30;
 
       // Residual Risk Note on Eastmoney / Unknown-Time Fallback Channel:
-      // When updateTime is missing, official trading status is gated by continuous trading hours (>= 09:30),
-      // valid open, trading volume, and new price information (price !== last.close).
-      // Residual risk: If upstream continuously returns pre-open payload where price exactly equals
-      // previous day's close, the bar conservatively stays in preview mode until price shifts or official time arrives.
-      const hasNewPriceInfo = Math.abs(price - last.close) > 1e-6;
-      const hasOfficialTrade = (isPostOpenTime && hasValidOpen) ||
-        (isContinuousTrading && !isQuotePreOpen && hasValidOpen && hasTradeVolume && hasNewPriceInfo);
+      // When exchange timestamp is unknown (quoteTimeMinutes === null), the append branch strictly
+      // refuses to create an official non-preview bar to prevent pre-open call auction virtual prices
+      // from permanently locking the daily open and low. Quotes with unknown timestamp will only
+      // append a preview: true bar. Upgrading to an official bar requires an explicit post-open
+      // timestamp (>= 09:25) or subsequent in-place price discovery.
+      const hasOfficialTrade = isPostOpenTime && hasValidOpen;
 
       if (!hasOfficialTrade) {
         const newBar = {
@@ -611,6 +603,11 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
         };
         return [...items, newBar];
       }
+
+      const clockDate = typeof now === 'string' ? new Date(now) : (now instanceof Date ? now : new Date());
+      const clockParts = getBeijingClockParts(clockDate);
+      const clockMinutes = clockParts.hour * 60 + clockParts.minute;
+      const isContinuousTrading = clockMinutes >= 9 * 60 + 30;
 
       const open = quoteOpen || price;
       const high = isContinuousTrading
@@ -734,8 +731,14 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
   return [...items.slice(0, -1), updated];
 }
 
-function _isTradingMinute(parts) {
+function _isTradingMinute(parts, isAStock = true) {
   const minutes = parts.hour * 60 + parts.minute;
+  if (!isAStock) {
+    return (
+      (minutes >= 9 * 60 + 30 && minutes < 11 * 60 + 30) ||
+      (minutes >= 13 * 60 && minutes < 15 * 60)
+    );
+  }
   return (
     (minutes >= 9 * 60 + 15 && minutes <= 9 * 60 + 25) ||
     (minutes >= 9 * 60 + 30 && minutes < 11 * 60 + 30) ||
@@ -791,8 +794,17 @@ export function applyLiveQuoteToIntraday(items, quote, now = new Date(), isFutur
   if (isFut) {
     if (!isFuturesMarketOpen(now, tradingDates, quote.code ? [quote.code] : [])) return items;
   } else {
+    const code = quote.code ? String(quote.code).toLowerCase() : '';
+    const isAStock = code
+      ? (code.startsWith('sh6') ||
+        code.startsWith('sz0') ||
+        code.startsWith('sz3') ||
+        code.startsWith('bj') ||
+        code.startsWith('sh000') ||
+        code.startsWith('sz399'))
+      : (!quote.type || quote.type === 'stock');
     const parts = getBeijingClockParts(now);
-    if (!_isTradingMinute(parts)) {
+    if (!_isTradingMinute(parts, isAStock)) {
       return _correctLastIntradayPoint(items, quote, getBeijingMinuteChartSeconds(now), now);
     }
   }
