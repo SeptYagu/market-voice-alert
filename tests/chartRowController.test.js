@@ -388,4 +388,71 @@ QUnit.module('ChartRowManager', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  QUnit.test('refreshPreviewKline with active quote: official network reload merges with Eastmoney fallback quote without re-collapsing', async (t) => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({
+        rc: 0,
+        data: {
+          code: '600519',
+          market: 1,
+          name: '贵州茅台',
+          klines: [
+            '2026-09-18,100.0,101.0,102.0,99.0,50000,5000000,0.0,0.0',
+            '2026-09-19,1462.00,1461.50,1471.00,1449.00,900000,18000000,0.0,0.0'
+          ]
+        }
+      })
+    });
+
+    try {
+      const instances = new Map();
+      // Eastmoney fallback quote: price, open, high, low, volume in place, NO timestamp fields
+      const eastmoneyQuote = {
+        code: 'sh600519',
+        price: 1461.50,
+        open: 1462.00,
+        high: 1471.00,
+        low: 1449.00,
+        volume: 900000
+      };
+
+      const mgr = new ChartRowManager({
+        prefix: 'test-',
+        hasIntraday: false,
+        getChartInstances: () => instances,
+        getQuote: () => eastmoneyQuote,
+        isExpanded: () => true
+      });
+
+      const inst = createChartState('1d');
+      inst.loading = false;
+      // Collapsed preview bar before reload
+      inst.klineData = {
+        code: 'sh600519',
+        name: '贵州茅台',
+        items: [
+          { time: '2026-09-18', open: 100, high: 102, low: 99, close: 101, volume: 50000 },
+          { time: '2026-09-19', open: 1462, high: 1462, low: 1462, close: 1462, volume: 0, preview: true }
+        ]
+      };
+      instances.set('sh600519', inst);
+
+      const marketTime1030 = new Date('2026-09-19T10:30:00+08:00');
+      const reloaded = await mgr.refreshPreviewKline('sh600519', marketTime1030);
+
+      t.equal(reloaded, true, 'refreshPreviewKline succeeded');
+      const last = inst.klineData.items[inst.klineData.items.length - 1];
+      t.equal(last.preview, undefined, 'preview flag cleared');
+      t.equal(last.open, 1462, 'authoritative open=1462 preserved without collapsing');
+      t.equal(last.close, 1461.5, 'close updated to latest quote price 1461.50');
+      t.equal(last.high, 1471, 'authoritative high=1471 preserved');
+      t.equal(last.low, 1449, 'authoritative low=1449 preserved');
+      t.equal(last.volume, 900000, 'authoritative volume=900000 preserved');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

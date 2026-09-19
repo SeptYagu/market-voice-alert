@@ -1,6 +1,26 @@
 # STATUS.md - 项目状态
 
-## 2026-09-19 当前状态：集合竞价方案**代码落地修复轮独立复查 8（Round 10）未通过** —— 1×P3
+## 2026-09-19 当前状态：集合竞价方案**代码落地修复轮（Round 10 缺陷闭环）已完成，待复核/终审收敛**
+
+本次修复提交：彻底闭环 Round 10 唯一缺陷 P3-1（补齐生产触发接线与路由的测试判别力，补齐报价在场官方重载收敛用例，并完成 3 项定点变异杀红实证）。
+- **P3-1 闭环落地详情**：
+  1. `tests/app.test.js`:
+     - 增加 `updateChartLastTickMulti` 对 `monitorChartMgr` 和 `limitUpChartMgr` 的 `refreshPreviewKline` 生产挂载接线级测试。
+     - 增加 `refreshLiveKlineForCode` 桥接函数的路由判别测试（严格隔离 `isLimitUp=false` 走监控管理器、`isLimitUp=true` 走涨停管理器）。
+     - 严格遵循 `finally` 还原 monkey-patch 与上下文清理，杜绝单例状态泄漏。
+  2. `tests/chartRowController.test.js`:
+     - 补齐东财兜底无时间戳报价（仅含 open/high/low/volume/price、无 updateTime）在场时的真实网络重载收敛用例。
+     - 确证官方日K重载后，权威四价与成交量正确合并吸收，preview 标记彻底清除，四价不再回坍缩。
+  3. **3 项变异确定性杀红实证（全部 917 pass / 1 fail RED）**：
+     - 变异 M1（删除 `app.js:1368` 监控循环 `refreshLiveKlineForCode` 调用）：`tests/app.test.js` 报错 `monitorCalls.length === 1 (got 0)` 确定性杀红。
+     - 变异 M2（删除 `app.js:1385` 涨停循环 `refreshLiveKlineForCode` 调用）：`tests/app.test.js` 报错 `limitUpCalls.length === 1 (got 0)` 确定性杀红。
+     - 变异 M3（颠倒 `app.js:1351` 路由判断 `isLimitUp ? monitorChartMgr : limitUpChartMgr`）：`tests/app.test.js` 路由断言失败确定性杀红。
+- **全量门禁**：
+  - `npm test`: **918/918 全绿** (+2 tests)
+  - `npx eslint .`: 0 错误 0 警告
+  - `npm run build`: 构建成功
+
+## 2026-09-19 历史状态：集合竞价方案**代码落地修复轮独立复查 8（Round 10）未通过** —— 1×P3
 
 审查报告：[`docs/handoff/2026-09-19-workbuddy-code-review-round10-handoff.md`](docs/handoff/2026-09-19-workbuddy-code-review-round10-handoff.md)
 被审提交：`79fb603`（基准 `7c955b0`，任务书范围 20 文件 / +3274 −29，本轮修复增量 `300820e..79fb603` = 3 文件 / +189 −5；`main` 与 `origin/main` 同步，工作区干净）。

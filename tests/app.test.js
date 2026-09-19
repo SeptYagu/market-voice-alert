@@ -33,7 +33,10 @@ import {
   mountChartForCode as _mountChartForCode,
   applyLiveTickToChartForCode as _applyLiveTickToChartForCode,
   applyLiveQuoteToIntradayForCode as _applyLiveQuoteToIntradayForCode,
-  updateChartLastTickMulti as _updateChartLastTickMulti
+  updateChartLastTickMulti as _updateChartLastTickMulti,
+  refreshLiveKlineForCode as _refreshLiveKlineForCode,
+  monitorChartMgr,
+  limitUpChartMgr
 } from '../src/js/app.js';
 import { parseBeijingDateTimeToChartSeconds, getBeijingDate } from '../src/js/time.js';
 
@@ -839,6 +842,57 @@ QUnit.module('app.updateChartLastTickMulti', (hooks) => {
 
   QUnit.test('no-op when no expanded codes', (t) => {
     t.equal(_updateChartLastTickMulti(), undefined);
+  });
+
+  QUnit.test('wires refreshLiveKlineForCode into updateChartLastTickMulti for monitor and limitUp', async (t) => {
+    const { state } = _internal();
+    const origMonitorRefresh = monitorChartMgr.refreshPreviewKline;
+    const origLimitUpRefresh = limitUpChartMgr.refreshPreviewKline;
+
+    const monitorCalls = [];
+    const limitUpCalls = [];
+
+    monitorChartMgr.refreshPreviewKline = async (code, now) => {
+      monitorCalls.push({ code, now });
+      return true;
+    };
+    limitUpChartMgr.refreshPreviewKline = async (code, now) => {
+      limitUpCalls.push({ code, now });
+      return true;
+    };
+
+    try {
+      _openChart('sh600519');
+      state.quotes.set('sh600519', { code: 'sh600519', price: 100 });
+
+      state.limitUp.expandedCodes.add('sz000001');
+      state.quotes.set('sz000001', { code: 'sz000001', price: 20 });
+
+      _updateChartLastTickMulti();
+
+      t.equal(monitorCalls.length, 1, 'monitorChartMgr.refreshPreviewKline called once for expanded monitor code');
+      t.equal(monitorCalls[0].code, 'sh600519', 'monitorChartMgr called with monitor code');
+
+      t.equal(limitUpCalls.length, 1, 'limitUpChartMgr.refreshPreviewKline called once for expanded limit-up code');
+      t.equal(limitUpCalls[0].code, 'sz000001', 'limitUpChartMgr called with limit-up code');
+
+      // Also verify refreshLiveKlineForCode bridge directly routes to correct manager
+      monitorCalls.length = 0;
+      limitUpCalls.length = 0;
+
+      await _refreshLiveKlineForCode('sh600519', false);
+      t.equal(monitorCalls.length, 1, 'bridge routes isLimitUp=false to monitorChartMgr');
+      t.equal(limitUpCalls.length, 0, 'bridge does not touch limitUpChartMgr when isLimitUp=false');
+
+      await _refreshLiveKlineForCode('sz000001', true);
+      t.equal(limitUpCalls.length, 1, 'bridge routes isLimitUp=true to limitUpChartMgr');
+      t.equal(monitorCalls.length, 1, 'bridge does not touch monitorChartMgr when isLimitUp=true');
+    } finally {
+      monitorChartMgr.refreshPreviewKline = origMonitorRefresh;
+      limitUpChartMgr.refreshPreviewKline = origLimitUpRefresh;
+      state.limitUp.expandedCodes.clear();
+      _closeAllCharts();
+    }
   });
 });
 
