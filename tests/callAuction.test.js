@@ -412,19 +412,38 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
   });
 
   // 5.1(4g) 资产类型隔离：09:15-09:25 竞价窗口仅对 A 股追加分钟点，港股/美股严格不追加竞价点
-  QUnit.test('5.1(4g) 资产类型隔离：09:15-09:25 竞价窗口仅对 A 股追加分钟点，港股/美股严格不追加竞价点', (t) => {
+  // 5.1(4g) 资产类型隔离：09:15-09:25 竞价窗口对 A 股全部形态（股票/ETF/可转债）追加分钟点，港股/美股严格不追加竞价点
+  QUnit.test('5.1(4g) 资产类型隔离：09:15-09:25 竞价窗口对 A 股全部形态追加分钟点，港股/美股严格不追加竞价点', (t) => {
     const baseItems = [
       { time: parseBeijingDateTimeToChartSeconds('2026-09-17 16:00'), close: 20, price: 20, volume: 100 }
     ];
 
-    // A 股 09:18: 追加新分钟点
+    // A 股主板 09:18: 追加新分钟点
     const aStock = applyLiveQuoteToIntraday(
       baseItems,
       { code: 'sh603533', price: 20.2, volume: 150, prevClose: 20 },
       new Date('2026-09-18T09:18:00+08:00'),
       false
     );
-    t.equal(aStock.length, 2, 'A 股 09:18 正常追加集合竞价分钟点');
+    t.equal(aStock.length, 2, 'A 股股票 09:18 正常追加集合竞价分钟点');
+
+    // A 股 ETF (sh510300) 09:18: 追加新分钟点
+    const etfStock = applyLiveQuoteToIntraday(
+      baseItems,
+      { code: 'sh510300', price: 3.5, volume: 1000, prevClose: 3.4 },
+      new Date('2026-09-18T09:18:00+08:00'),
+      false
+    );
+    t.equal(etfStock.length, 2, 'A 股 ETF 09:18 正常追加集合竞价分钟点');
+
+    // A 股可转债 (sh113050) 09:18: 追加新分钟点
+    const bondStock = applyLiveQuoteToIntraday(
+      baseItems,
+      { code: 'sh113050', price: 120, volume: 50, prevClose: 119 },
+      new Date('2026-09-18T09:18:00+08:00'),
+      false
+    );
+    t.equal(bondStock.length, 2, 'A 股可转债 09:18 正常追加集合竞价分钟点');
 
     // 港股 hk00700 09:18: 严格不追加新分钟点
     const hkStock = applyLiveQuoteToIntraday(
@@ -851,10 +870,21 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
     );
     t.true(t4[1].preview, '09:30:00 滞后快照下依然保持 preview: true，不发生硬时钟早退');
 
-    // 09:30:30 收到真实开盘快照 20.50，open 20.50，成交量 5000（连续交易时段无 updateTime 但有成交量清除 preview）
-    const t5 = applyLiveQuoteToKline(
+    // 09:30:30 未知时效报价（无 updateTime）到达，即便有成交量与新价格，因时效无法自证依然严格保持 preview: true
+    const t5_unknown = applyLiveQuoteToKline(
       t4,
       { price: 20.5, open: 20.5, volume: 5000, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:30:30+08:00')
+    );
+    t.true(t5_unknown[1].preview, '连续交易时段未知时效报价严格保持 preview: true，防止无时戳虚拟价锁死');
+    t.equal(t5_unknown[1].volume, 0);
+
+    // 09:30:30 携带官方交易所时间戳（updateTime >= 09:25:00）的真实开盘快照到达，清除 preview
+    const t5 = applyLiveQuoteToKline(
+      t4,
+      { price: 20.5, open: 20.5, volume: 5000, updateTime: '20260918093030', tradingDay: '2026-09-18' },
       '1d',
       'sh603533',
       new Date('2026-09-18T09:30:30+08:00')
@@ -863,10 +893,10 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
     t.equal(t5[1].low, 20.5, '真实快照到达时重基线 low 为 20.5');
     t.false(Boolean(t5[1].preview), 'preview 标记清除');
 
-    // 14:55 盘终
+    // 14:55 盘终携带官方时间戳
     const t6 = applyLiveQuoteToKline(
       t5,
-      { price: 21.3, open: 20.5, volume: 800000, tradingDay: '2026-09-18' },
+      { price: 21.3, open: 20.5, volume: 800000, updateTime: '20260918145500', tradingDay: '2026-09-18' },
       '1d',
       'sh603533',
       new Date('2026-09-18T14:55:00+08:00')
@@ -1176,10 +1206,21 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
     );
     t.true(b2[1].preview, 'Probe B2: 09:25:05 无时间戳但有 volume 保持 preview: true，不提前锁死');
 
-    // 14:55:00 真实盘终到达（21.30，open 20.50，volume 900000）
-    const bEnd = applyLiveQuoteToKline(
+    // 14:55:00 若无时间戳快照到达，原地分支保持 preview: true 且 volume 归零
+    const bEndNoTime = applyLiveQuoteToKline(
       b1,
       { price: 21.3, open: 20.5, volume: 900000, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T14:55:00+08:00')
+    );
+    t.true(bEndNoTime[1].preview, '14:55 无时间戳快照原地保持 preview: true，不误落官方柱');
+    t.equal(bEndNoTime[1].volume, 0);
+
+    // 14:55:00 真实盘终带官方交易所时间戳到达（21.30，open 20.50，volume 900000）
+    const bEnd = applyLiveQuoteToKline(
+      b1,
+      { price: 21.3, open: 20.5, volume: 900000, updateTime: '20260918145500', tradingDay: '2026-09-18' },
       '1d',
       'sh603533',
       new Date('2026-09-18T14:55:00+08:00')
@@ -1251,8 +1292,8 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
     t.equal(res[1].low, 20.2, '重基线 low 必须取 open 与 price 之最小值 20.2，不可漏掉 open');
   });
 
-  // 5.1(1s) P2-1 未知时效在 ≥09:30 价格未变时不升级为官方柱，隔离虚拟价锁死全天 low（杀 P2-1 / Probe P5）
-  QUnit.test('5.1(1s) P2-1 未知时效在 ≥09:30 价格未变时不升级为官方柱，隔离虚拟价锁死全天 low', (t) => {
+  // 5.1(1s) P2-1/P3-2 原地分支未知时效在 ≥09:30 价格未变或虚拟价漂移均保持 preview，防止虚拟价锁死全天 low
+  QUnit.test('5.1(1s) P2-1/P3-2 原地分支未知时效在 ≥09:30 价格未变或虚拟价漂移均保持 preview，防止虚拟价锁死全天 low', (t) => {
     const items = [
       { time: '2026-09-17', open: 20, high: 20, low: 20, close: 20, volume: 1000 }
     ];
@@ -1278,16 +1319,29 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
     t.true(t2[1].preview, '09:31:00 价格未发生偏移（price === last.close）且时效未知，保持 preview: true');
     t.equal(t2[1].volume, 0, '保持 preview 柱 volume 为 0');
 
-    // 14:55:00 真实成交到达（20.50，open 20.50，volume 90000）
-    const t3 = applyLiveQuoteToKline(
+    // 09:31:30 未知时效报价发生虚拟价漂移（19.60 -> 19.65，带量，open 19.65，无 updateTime）：
+    // 严格保持 preview: true，绝不误落官方柱将 19.65 锁死为全天 low！（闭环 P2-1 / 杀 P3-2 漂移变异）
+    const t2_drift = applyLiveQuoteToKline(
       t2,
-      { price: 20.5, open: 20.5, volume: 90000, tradingDay: '2026-09-18' },
+      { price: 19.65, open: 19.65, volume: 12000, amount: 235800, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:31:30+08:00')
+    );
+    t.true(t2_drift[1].preview, '09:31:30 虚拟价漂移但时效未知，严格保持 preview: true（杀 P3-2 漂移变异）');
+    t.equal(t2_drift[1].volume, 0, '漂移保持 preview 柱 volume 严格为 0');
+    t.equal(t2_drift[1].low, 19.65, 'preview 模式下 low 坍缩至当前现价 19.65，未被单向锁定');
+
+    // 14:55:00 真实成交到达（20.50，open 20.50，volume 90000，带官方交易所时间戳）
+    const t3 = applyLiveQuoteToKline(
+      t2_drift,
+      { price: 20.5, open: 20.5, volume: 90000, updateTime: '20260918145500', tradingDay: '2026-09-18' },
       '1d',
       'sh603533',
       new Date('2026-09-18T14:55:00+08:00')
     );
-    t.false(Boolean(t3[1].preview), '14:55:00 价格推进获得新信息，正式清除 preview');
-    t.equal(t3[1].low, 20.50, '全天 low 恒为真实最低 20.50，19.60 彻底消除不锁死');
+    t.false(Boolean(t3[1].preview), '14:55:00 携带官方交易所时间戳，正式清除 preview');
+    t.equal(t3[1].low, 20.50, '全天 low 恒为真实最低 20.50，19.60 与 19.65 彻底消除不锁死');
     t.equal(t3[1].open, 20.50);
   });
 
@@ -1342,8 +1396,8 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
     t.true(invalidOpen[1].preview, 'open 无效时保持 preview: true');
   });
 
-  // 5.1(1u) 原地分支未知时效/盘前时效 ≥09:30 守护验证（杀 N8/N9）
-  QUnit.test('5.1(1u) 原地分支未知时效/盘前时效 ≥09:30 守护验证（杀 N8/N9）', (t) => {
+  // 5.1(1u) 原地分支未知时效/盘前时效 ≥09:30 守护验证（杀 N8/N9/漂移变异）
+  QUnit.test('5.1(1u) 原地分支未知时效/盘前时效 ≥09:30 守护验证（杀 N8/N9/漂移变异）', (t) => {
     const prevItems = [
       { time: '2026-09-17', open: 20, high: 20, low: 20, close: 20, volume: 1000 },
       { time: '2026-09-18', open: 19.6, high: 19.6, low: 19.6, close: 19.6, volume: 0, preview: true }
@@ -1368,6 +1422,28 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
       new Date('2026-09-18T09:35:00+08:00')
     );
     t.true(noVolInPlace[1].preview, '原地分支未知时效无成交量保持 preview: true（杀 N9）');
+
+    // 反例 3（未知时效即便有成交量与新价格亦保持 preview）：
+    const unknownWithVol = applyLiveQuoteToKline(
+      prevItems,
+      { price: 20.5, open: 20.5, volume: 5000, amount: 100000, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:35:00+08:00')
+    );
+    t.true(unknownWithVol[1].preview, '原地分支未知时效即便带量与新价格亦严格保持 preview: true');
+    t.equal(unknownWithVol[1].volume, 0);
+
+    // 正例对照：携带官方交易所时间戳 (updateTime >= 09:25:00) 与有效 open，清除 preview 成为官方柱
+    const officialTrade = applyLiveQuoteToKline(
+      prevItems,
+      { price: 20.5, open: 20.5, volume: 5000, amount: 100000, updateTime: '20260918093500', tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:35:00+08:00')
+    );
+    t.false(Boolean(officialTrade[1].preview), '携带官方时间戳落成官方柱');
+    t.equal(officialTrade[1].volume, 5000);
   });
 
   // 5.1(1v) 探针 P2 端到端：末柱为昨日 + 09:24:59/09:30:00 无时间戳快照保持 preview，14:55 全天 low === 20.50
@@ -1397,16 +1473,27 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
     t.true(t2[1].preview, '09:30:00 无时间戳且价格未变严格保持 preview: true，绝不误落官方柱');
     t.equal(t2[1].volume, 0);
 
-    // 14:55:00 真实成交到达（20.50，open 20.50，volume 90000）
-    const t3 = applyLiveQuoteToKline(
+    // 09:31:30 同上通道漂移到 19.65（无时间戳，带量），原地分支因无官方时戳严格保持 preview: true
+    const t2_drift = applyLiveQuoteToKline(
       t2,
-      { price: 20.5, open: 20.5, volume: 90000, tradingDay: '2026-09-18' },
+      { price: 19.65, open: 19.65, volume: 12000, amount: 235800, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:31:30+08:00')
+    );
+    t.true(t2_drift[1].preview, '09:31:30 虚拟价漂移时效未知严格保持 preview: true，绝不误落官方柱');
+    t.equal(t2_drift[1].volume, 0);
+
+    // 14:55:00 真实成交到达（20.50，open 20.50，volume 90000，自带官方时间戳）
+    const t3 = applyLiveQuoteToKline(
+      t2_drift,
+      { price: 20.5, open: 20.5, volume: 90000, updateTime: '20260918145500', tradingDay: '2026-09-18' },
       '1d',
       'sh603533',
       new Date('2026-09-18T14:55:00+08:00')
     );
     t.false(Boolean(t3[1].preview), '14:55 真实成交清除 preview');
-    t.equal(t3[1].low, 20.50, '全天 low 恒为真实最低 20.50，19.60 彻底消除');
+    t.equal(t3[1].low, 20.50, '全天 low 恒为真实最低 20.50，19.60 与 19.65 彻底消除');
     t.equal(t3[1].open, 20.50);
   });
 
@@ -1426,16 +1513,44 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
     t.true(t1[1].preview, '09:30:00 冷启动追加分支保持 preview: true，绝不落官方柱');
     t.equal(t1[1].volume, 0);
 
-    // 14:55:00 真实成交到达（20.50，open 20.50，volume 90000）
-    const t2 = applyLiveQuoteToKline(
+    // 09:31:30 同上通道漂移到 19.65（无时间戳，带量），原地分支因无官方时戳严格保持 preview: true
+    const t1_drift = applyLiveQuoteToKline(
       t1,
-      { price: 20.5, open: 20.5, volume: 90000, tradingDay: '2026-09-18' },
+      { price: 19.65, open: 19.65, volume: 12000, amount: 235800, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:31:30+08:00')
+    );
+    t.true(t1_drift[1].preview, '09:31:30 虚拟价漂移时效未知严格保持 preview: true');
+    t.equal(t1_drift[1].volume, 0);
+
+    // 14:55:00 真实成交到达（20.50，open 20.50，volume 90000，自带官方时间戳）
+    const t2 = applyLiveQuoteToKline(
+      t1_drift,
+      { price: 20.5, open: 20.5, volume: 90000, updateTime: '20260918145500', tradingDay: '2026-09-18' },
       '1d',
       'sh603533',
       new Date('2026-09-18T14:55:00+08:00')
     );
     t.false(Boolean(t2[1].preview), '14:55 真实成交清除 preview');
-    t.equal(t2[1].low, 20.50, '全天 low 恒为真实最低 20.50，19.60 彻底消除');
+    t.equal(t2[1].low, 20.50, '全天 low 恒为真实最低 20.50，19.60 与 19.65 彻底消除');
     t.equal(t2[1].open, 20.50);
+  });
+
+  // 5.1(1x) 往日陈旧时间戳校验：updateTime 为昨日 15:00:00 时在今日绝不被误判为 postOpenTime 官方柱（闭环待确认风险 1）
+  QUnit.test('5.1(1x) 往日陈旧时间戳校验：updateTime 为昨日 15:00:00 时在今日绝不被误判为 postOpenTime 官方柱', (t) => {
+    const items = [
+      { time: '2026-09-17', open: 20, high: 20, low: 20, close: 20, volume: 1000 }
+    ];
+    // updateTime: '20260917150000'（前一日收盘时间戳），但 tradingDay 为 '2026-09-18'
+    const staleDateQuote = applyLiveQuoteToKline(
+      items,
+      { price: 19.6, open: 19.6, volume: 5000, amount: 100000, updateTime: '20260917150000', tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:35:00+08:00')
+    );
+    t.true(staleDateQuote[1].preview, '跨日陈旧时间戳严格判定为时效未知，保持 preview: true');
+    t.equal(staleDateQuote[1].volume, 0);
   });
 });

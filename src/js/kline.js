@@ -453,12 +453,18 @@ function _positiveNumber(value) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-export function getQuoteBeijingTimeMinutes(quote) {
+export function getQuoteBeijingTimeMinutes(quote, targetDate = null) {
   if (!quote || typeof quote !== 'object') return null;
   if (typeof quote.updateTime === 'string') {
     const digits = quote.updateTime.replace(/\D/g, '');
     let tStr = '';
     if (digits.length >= 14) {
+      if (targetDate) {
+        const targetDateDigits = String(targetDate).replace(/\D/g, '').slice(0, 8);
+        if (targetDateDigits.length === 8 && digits.slice(0, 8) !== targetDateDigits) {
+          return null;
+        }
+      }
       tStr = digits.slice(8, 14);
     } else if (digits.length === 6) {
       tStr = digits;
@@ -576,7 +582,7 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
   if (period === '1d' && lastDate && targetDate && lastDate < targetDate) {
     const newTime = typeof last.time === 'number' ? parseBeijingDateTimeToChartSeconds(targetDate) : targetDate;
     if (isAStock) {
-      const quoteTimeMinutes = getQuoteBeijingTimeMinutes(quote);
+      const quoteTimeMinutes = getQuoteBeijingTimeMinutes(quote, targetDate);
       const isPostOpenTime = quoteTimeMinutes !== null && quoteTimeMinutes >= 9 * 60 + 25;
       const hasValidOpen = Boolean(quoteOpen && quoteOpen > 0);
 
@@ -655,19 +661,16 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
     const isContinuousTrading = clockMinutes >= 9 * 60 + 30;
 
     if (last.preview) {
-      const quoteTimeMinutes = getQuoteBeijingTimeMinutes(quote);
-      const isQuotePreOpen = quoteTimeMinutes !== null && quoteTimeMinutes < 9 * 60 + 25;
+      const quoteTimeMinutes = getQuoteBeijingTimeMinutes(quote, targetDate);
       const isPostOpenTime = quoteTimeMinutes !== null && quoteTimeMinutes >= 9 * 60 + 25;
       const hasValidOpen = Boolean(quoteOpen && quoteOpen > 0);
-      const hasTradeVolume = Boolean((quoteVolume && quoteVolume > 0) || (quoteAmount && quoteAmount > 0));
 
       // Residual Risk Note on In-Place Preview Upgrade:
-      // Content-based upgrade without exchange timestamp requires continuous trading hours (>= 09:30),
-      // not pre-open timestamp (!isQuotePreOpen), valid open, trade volume, and price shift from previous preview price
-      // (price !== last.close) to ensure genuine new market information and prevent locking pre-open virtual low.
-      const hasNewPriceInfo = Math.abs(price - last.close) > 1e-6;
-      const hasOfficialTradeEvidence = (isPostOpenTime && hasValidOpen) ||
-        (isContinuousTrading && !isQuotePreOpen && hasValidOpen && hasTradeVolume && hasNewPriceInfo);
+      // Upgrading from preview to official bar strictly requires explicit post-open exchange timestamp
+      // (>= 09:25) and valid open (isPostOpenTime && hasValidOpen). Quotes with unknown exchange timestamp
+      // (e.g. Eastmoney fallback) conservatively remain in preview mode (real-time price updates with volume: 0)
+      // until official post-open timestamp arrives, preventing call auction virtual price drifts from locking low.
+      const hasOfficialTradeEvidence = isPostOpenTime && hasValidOpen;
 
       if (hasOfficialTradeEvidence) {
         const open = quoteOpen || price;
@@ -794,14 +797,8 @@ export function applyLiveQuoteToIntraday(items, quote, now = new Date(), isFutur
   if (isFut) {
     if (!isFuturesMarketOpen(now, tradingDates, quote.code ? [quote.code] : [])) return items;
   } else {
-    const code = quote.code ? String(quote.code).toLowerCase() : '';
-    const isAStock = code
-      ? (code.startsWith('sh6') ||
-        code.startsWith('sz0') ||
-        code.startsWith('sz3') ||
-        code.startsWith('bj') ||
-        code.startsWith('sh000') ||
-        code.startsWith('sz399'))
+    const isAStock = quote.code
+      ? inferAssetType(String(quote.code)) === ASSET_TYPES.STOCK_CN
       : (!quote.type || quote.type === 'stock');
     const parts = getBeijingClockParts(now);
     if (!_isTradingMinute(parts, isAStock)) {
