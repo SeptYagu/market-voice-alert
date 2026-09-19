@@ -1,6 +1,29 @@
 # STATUS.md - 项目状态
 
-## 2026-09-19 当前状态：集合竞价方案**代码落地修复轮独立复查 7（Round 9）未通过** —— 1×P3
+## 2026-09-19 当前状态：集合竞价方案**代码落地修复轮（Round 9 缺陷闭环）已完成，待 Round 10 终审复核**
+
+本次修复提交：闭环 Round 9 唯一缺陷 P3-1（时效未知通道保守态配套的官方日K兜底重载机制与节流），严格恪守 `kline.js:673`/`:595` 的 Fail-Closed 合取判据不放宽。
+- **P3-1 闭环落地详情**：
+  1. `src/js/controllers/chartRowController.js`:
+     - 在 `ChartRowManager` 增加 `refreshPreviewKline(code, now = new Date(), reloadInterval = 30000)` 方法。
+     - 严格门禁：必须 `inst.period === '1d'`、必须末柱为 `preview: true`、北京时间必须 `clockMinutes >= 9 * 60 + 30`（>= 09:30 盘中时段）、且非 loading / 非 klineRefreshing。
+     - 节流控制：30 秒节流（`inst.klineLastReloadAt && Date.now() - inst.klineLastReloadAt < reloadInterval`），避免无谓重载。
+     - 触发执行：`await this.loadKline(code, { force: true, now })` 强制网络重拉今日官方日K，拉取权威今日柱后替换预览柱，清除 `preview` 标识并恢复真实 `open/high/low/volume`。
+     - 生命周期保护：`destroyCharts` 与 `handlePeriodChange` 及时重置 `klineRefreshing = false`。
+  2. `src/js/app.js`:
+     - 导出 `refreshLiveKlineForCode(code, isLimitUp = false, now = new Date())` 桥接方法。
+     - 在 `updateChartLastTickMulti()` 的监控页与涨停页循环中，分别挂载 `void refreshLiveKlineForCode(code)` 与 `void refreshLiveKlineForCode(code, true)`。
+  3. `tests/chartRowController.test.js`:
+     - 新增两组完整单元测试，分别覆盖 `refreshPreviewKline` 的全部前置门禁（未挂载、loading、klineRefreshing、非 1d 周期、非 preview 柱、09:30 前盘前时段）以及网络强制重载、30s 节流、preview 标识清除与权威四价及成交量恢复收敛。
+  4. **取舍与副作用登记（STATUS / INDEX 记簿闭环）**：
+     - **时效未知通道（如东财兜底）保守态机制**：在开盘前至盘初，时效未知的快照严格以 `preview: true` 呈现（现价折叠、volume=0），彻底杜绝集合竞价虚拟参考价锁死当日最低价；
+     - **收敛路径**：若后续收到带时间戳的权威快照（如腾讯源），就地即时清除 preview 升级为官方柱；若持续走无时间戳通道，在 09:30 连续交易开始后由 `refreshPreviewKline` 按 30s 节流自动触发官方日K重载，以权威网络日K收敛替换预览柱；两半程协同闭环，兼顾极值安全与权威收敛。
+- **全量门禁**：
+  - `npm test`: **916/916 全绿** (+2 tests)
+  - `npx eslint .`: 0 错误 0 警告
+  - `npm run build`: 构建成功
+
+## 2026-09-19 历史状态：集合竞价方案**代码落地修复轮独立复查 7（Round 9）未通过** —— 1×P3
 
 审查报告：[`docs/handoff/2026-09-19-workbuddy-code-review-round9-handoff.md`](docs/handoff/2026-09-19-workbuddy-code-review-round9-handoff.md)
 被审提交：`9da75a5`（基准 `7c955b0`，任务书范围 18 文件 / +2993 −27，本轮修复提交自身 `795e984..9da75a5` = 2 文件 / +157 −45：`src/js/kline.js` +16 −19、`tests/callAuction.test.js` +141 −26；`main` 与 `origin/main` 同步，工作区干净；仓库外 pristine 导出（关键文件经 blob SHA 与 HEAD 逐字节核对）`npm test` **914/914 全绿**、`npx eslint` 0 问题）。

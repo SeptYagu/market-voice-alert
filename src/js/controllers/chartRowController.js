@@ -17,7 +17,7 @@ import {
   MA_COLORS
 } from '../chart.js';
 import { fetchKline, fetchIntraday } from '../api.js';
-import { chartTimeToDate, getBeijingDate } from '../time.js';
+import { chartTimeToDate, getBeijingDate, getBeijingClockParts } from '../time.js';
 import { isFutureCode } from '../futures/instrument.js';
 import { isLiveTradeDate } from '../marketSession.js';
 import { formatCacheAge, intradaySourceLabel } from '../format.js';
@@ -81,6 +81,8 @@ export function createChartState(period = DEFAULT_PERIOD) {
     intradayAbort: null,
     intradayRefreshing: false,
     intradayLastFetchAt: 0,
+    klineRefreshing: false,
+    klineLastReloadAt: 0,
     _visibleRange: null,
     _intradayVisibleRange: null
   };
@@ -323,6 +325,7 @@ export class ChartRowManager {
           try { inst.intradayAbort.abort(); } catch { /* ignore */ }
           inst.intradayAbort = null;
         }
+        inst.klineRefreshing = false;
       }
     }
     const klineCtl = this.klineCtlMap.get(code);
@@ -351,7 +354,7 @@ export class ChartRowManager {
     rememberRange(inst, this.klineCtlMap.get(code), '_visibleRange');
   }
 
-  async loadKline(code, { force = false } = {}) {
+  async loadKline(code, { force = false, now = new Date() } = {}) {
     const inst = this.getInst(code);
     if (!inst) return;
     if (inst.abort) {
@@ -395,7 +398,7 @@ export class ChartRowManager {
           const fallbackDate = resolveLiveFallbackDate(code, inst, this.getTradingDates());
           const targetDate = q.tradingDay || q.date || q.quoteDate || fallbackDate;
           const quoteForKline = (q.tradingDay || q.quoteDate || q.date) ? q : { ...q, date: targetDate };
-          const merged = applyLiveQuoteToKline(inst.klineData.items, quoteForKline, inst.period, code);
+          const merged = applyLiveQuoteToKline(inst.klineData.items, quoteForKline, inst.period, code, now);
           if (merged !== inst.klineData.items) {
             inst.klineData = { ...inst.klineData, items: merged };
           }
@@ -535,12 +538,40 @@ export class ChartRowManager {
       }
     }
     inst._visibleRange = null;
+    inst.klineRefreshing = false;
     if (inst.abort) {
       try { inst.abort.abort(); } catch { /* ignore */ }
       inst.abort = null;
     }
     this.onStateChange(code);
     this.loadKline(code);
+  }
+
+  async refreshPreviewKline(code, now = new Date(), reloadInterval = 30000) {
+    const inst = this.getInst(code);
+    if (!inst || inst.loading || inst.klineRefreshing || inst.period !== '1d') return false;
+    const items = inst.klineData?.items;
+    if (!Array.isArray(items) || items.length === 0) return false;
+    const last = items[items.length - 1];
+    if (!last || !last.preview) return false;
+
+    const clockDate = typeof now === 'string' ? new Date(now) : (now instanceof Date ? now : new Date());
+    const clockParts = getBeijingClockParts(clockDate);
+    const clockMinutes = clockParts.hour * 60 + clockParts.minute;
+    if (clockMinutes < 9 * 60 + 30) return false;
+
+    if (inst.klineLastReloadAt && (Date.now() - inst.klineLastReloadAt < reloadInterval)) {
+      return false;
+    }
+
+    inst.klineLastReloadAt = Date.now();
+    inst.klineRefreshing = true;
+    try {
+      await this.loadKline(code, { force: true, now });
+      return true;
+    } finally {
+      inst.klineRefreshing = false;
+    }
   }
 
   applyLiveTick(code, quoteOrPrice, now = new Date()) {

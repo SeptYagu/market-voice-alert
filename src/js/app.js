@@ -1347,6 +1347,12 @@ async function refreshLiveIntradayForCode(code, isLimitUp = false) {
   }
 }
 
+export async function refreshLiveKlineForCode(code, isLimitUp = false, now = new Date()) {
+  const mgr = isLimitUp ? limitUpChartMgr : monitorChartMgr;
+  if (!mgr || typeof mgr.refreshPreviewKline !== 'function') return false;
+  return mgr.refreshPreviewKline(code, now);
+}
+
 export function updateChartLastTickMulti() {
   // 监控页
   if (state.expandedCodes.size) {
@@ -1359,6 +1365,7 @@ export function updateChartLastTickMulti() {
         applyLiveTickToChartForCode(code, q);
         applyLiveQuoteToIntradayForCode(code, q);
         void refreshLiveIntradayForCode(code);
+        void refreshLiveKlineForCode(code);
       } catch (e) {
         if (console && console.warn) console.warn('live tick failed (monitor) for', code, e);
       }
@@ -1375,6 +1382,7 @@ export function updateChartLastTickMulti() {
         applyLimitUpLiveTickToChart(code, q);
         applyLiveQuoteToIntradayForCode(code, q, true);
         void refreshLiveIntradayForCode(code, true);
+        void refreshLiveKlineForCode(code, true);
       } catch (e) {
         if (console && console.warn) console.warn('live tick failed (limitUp) for', code, e);
       }

@@ -267,4 +267,125 @@ QUnit.module('ChartRowManager', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     globalThis.fetch = originalFetch;
   });
+
+  QUnit.test('refreshPreviewKline guards: period, preview state, clock time, and in-flight flags', async (t) => {
+    const instances = new Map();
+    const mgr = new ChartRowManager({
+      prefix: 'test-',
+      hasIntraday: false,
+      getChartInstances: () => instances,
+      isExpanded: () => true
+    });
+
+    // 1. Non-existent code
+    t.equal(await mgr.refreshPreviewKline('sh600519'), false, 'returns false for unmounted code');
+
+    const inst = createChartState('1d');
+    inst.loading = false;
+    inst.klineData = {
+      code: 'sh600519',
+      items: [
+        { time: '2026-09-19', open: 20.5, high: 20.5, low: 20.5, close: 20.5, volume: 0, preview: true }
+      ]
+    };
+    instances.set('sh600519', inst);
+
+    // 2. Loading is true
+    inst.loading = true;
+    t.equal(await mgr.refreshPreviewKline('sh600519'), false, 'returns false when loading is true');
+    inst.loading = false;
+
+    // 3. klineRefreshing is true
+    inst.klineRefreshing = true;
+    t.equal(await mgr.refreshPreviewKline('sh600519'), false, 'returns false when klineRefreshing is true');
+    inst.klineRefreshing = false;
+
+    // 4. Period is not 1d
+    inst.period = '5m';
+    t.equal(await mgr.refreshPreviewKline('sh600519'), false, 'returns false when period is not 1d');
+    inst.period = '1d';
+
+    // 5. Last bar is not preview
+    delete inst.klineData.items[0].preview;
+    t.equal(await mgr.refreshPreviewKline('sh600519'), false, 'returns false when last bar is not preview');
+    inst.klineData.items[0].preview = true;
+
+    // 6. Clock time is before 09:30 Beijing time (e.g. 09:20)
+    const preMarketTime = new Date('2026-09-19T09:20:00+08:00');
+    t.equal(await mgr.refreshPreviewKline('sh600519', preMarketTime), false, 'returns false before 09:30');
+
+    // 7. Clock time 09:29:59
+    const preOpenTime = new Date('2026-09-19T09:29:59+08:00');
+    t.equal(await mgr.refreshPreviewKline('sh600519', preOpenTime), false, 'returns false at 09:29:59');
+  });
+
+  QUnit.test('refreshPreviewKline executes force reload, throttles within interval, and converges preview bar', async (t) => {
+    const originalFetch = globalThis.fetch;
+    let fetchCalledWithForce = false;
+
+    // Mock network daily Kline returning authoritative today bar (open=20.5, low=19.0, high=21.3, volume=900000)
+    globalThis.fetch = async () => {
+      fetchCalledWithForce = true;
+      return {
+        ok: true,
+        json: async () => ({
+          rc: 0,
+          data: {
+            code: '600519',
+            market: 1,
+            name: '贵州茅台',
+            klines: [
+              '2026-09-18,100.0,101.0,102.0,99.0,50000,5000000,0.0,0.0',
+              '2026-09-19,20.50,19.50,21.30,19.00,900000,18000000,0.0,0.0'
+            ]
+          }
+        })
+      };
+    };
+
+    try {
+      const instances = new Map();
+      const mgr = new ChartRowManager({
+        prefix: 'test-',
+        hasIntraday: false,
+        getChartInstances: () => instances,
+        isExpanded: () => true
+      });
+
+      const inst = createChartState('1d');
+      inst.loading = false;
+      // Start with collapsed Eastmoney preview bar from auction
+      inst.klineData = {
+        code: 'sh600519',
+        name: '贵州茅台',
+        items: [
+          { time: '2026-09-18', open: 100, high: 102, low: 99, close: 101, volume: 50000 },
+          { time: '2026-09-19', open: 20.5, high: 20.5, low: 20.5, close: 20.5, volume: 0, preview: true }
+        ]
+      };
+      instances.set('sh600519', inst);
+
+      const marketTime1030 = new Date('2026-09-19T10:30:00+08:00');
+      const reloaded = await mgr.refreshPreviewKline('sh600519', marketTime1030);
+
+      t.equal(reloaded, true, 'refreshPreviewKline returned true on successful force reload');
+      t.equal(fetchCalledWithForce, true, 'fetch was called to reload kline');
+      t.equal(inst.klineRefreshing, false, 'klineRefreshing flag cleared after completion');
+      t.ok(inst.klineLastReloadAt > 0, 'klineLastReloadAt recorded timestamp');
+
+      // Check that the last bar converged: preview flag removed, authoritative open/low/high/volume present
+      const last = inst.klineData.items[inst.klineData.items.length - 1];
+      t.equal(last.preview, undefined, 'preview flag cleared');
+      t.equal(last.open, 20.5, 'authoritative open=20.50 preserved');
+      t.equal(last.low, 19.0, 'authoritative low=19.00 preserved');
+      t.equal(last.high, 21.3, 'authoritative high=21.30 preserved');
+      t.equal(last.volume, 900000, 'authoritative volume=900000 restored');
+
+      // Throttle check: subsequent call within 30s is rejected
+      const throttled = await mgr.refreshPreviewKline('sh600519', marketTime1030);
+      t.equal(throttled, false, 'throttled within reload interval');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
