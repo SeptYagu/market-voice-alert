@@ -1,6 +1,17 @@
 # STATUS.md - 项目状态
 
-## 2026-09-18 当前状态：集合竞价方案**代码落地修复轮独立复查 5（Round 7）未通过** —— 1×P2 + 2×P3
+## 2026-09-19 当前状态：集合竞价方案**代码落地修复轮独立复查 6（Round 8）未通过** —— 1×P2 + 2×P3
+
+审查报告：[`docs/handoff/2026-09-19-workbuddy-code-review-round8-handoff.md`](docs/handoff/2026-09-19-workbuddy-code-review-round8-handoff.md)
+被审提交：`ee4c38a`（基准 `7c955b0`，任务书范围 17 文件 / +2727 −27，本轮修复提交自身 `2ccb1f3..ee4c38a` = 2 文件 / +188 −39：`src/js/kline.js` +28 −16、`tests/callAuction.test.js` +160 −23；`main` 与 `origin/main` 同步，工作区干净；仓库外 pristine 导出 `npm test` **913/913 全绿**、`npx eslint` 0 问题）。
+结论：**未通过**，最高严重级别 **P2**。R7 缺陷**部分闭环**：追加分支已按 R7 首选方向改为「时效未知一律 `preview`」（`kline.js:589`），独立探针 09:24:59/09:30:00/09:35 三拍均保持 `preview` 且 14:55 `low === 20.50`；R7 P3-1（追加分支时效门判别力）与 P3-2（语音 09:20/09:25/09:30 端点）经 13 点定点变异全部确定性转红而**真闭环**。本轮新增 1 项 P2 + 2 项 P3：
+1. **P2-1 R7 P2-1 的「虚拟价漂移」形态未闭环：时效未知的内容升级通道仍可让集合竞价虚拟价写死当日 `open`/`low` 并锁死全天（R7 验收② 未达成）**（`src/js/kline.js:657-670`，落点 `:672-684`）。`quoteTimeMinutes === null` 时 `isQuotePreOpen` 恒假，第二析取项退化为「客户端时钟 ≥09:30 + `open` 有效 + 有量 + `price !== last.close`」的内容代理判据。实测（真实 `parseEastmoney` 输出，其对象不含 `updateTime`/`time`）：09:31 东财兜底价 19.60 → `preview:true`；09:31:30 同通道漂移到 19.65 ⇒ **误清 `preview`**、`volume=12000`；14:55 真实成交 20.50 ⇒ `o=20.5 l=19.65`（全天 `low` 被虚拟价 19.65 锁死，真实最低 20.50）。`:664-667` 注释自述可 "prevent locking pre-open virtual low"，与实测相反。**取舍事实**：收紧该通道会使 `5.1(1i)/(1p)/(1s)/(1v)/(1w)` 五条用例转红（908/5），即内容通道已被用例固化，收紧须同步改写这 5 条并落实「官方日K兜底重载」。
+2. **P3-1 分时竞价窗口的 A 股判别谓词与仓库既有契约不一致：8/17 类 A 股代码形态丢失 09:15-09:25 竞价点（相对 `a505481` 的行为回归）**（`src/js/kline.js:797-805`）：手写前缀白名单未覆盖 `inferAssetType` 认可的全部 A 股形态 —— `sh510300`/`sz159915`/`sh588000`（ETF）、`sh113050`/`sz128036`（可转债）、`sh900901`/`sz200011`（B 股）、裸码 `600519` 均**不**追加竞价点；而同一批标的的日K仍走 `inferAssetType` 的 A 股盘前守卫（`kline.js:502-503`）⇒ 同标的两条链路口径不一致。`5.1(4g)` 只用港美样本，无法判别。
+3. **P3-2 原地分支「虚拟价漂移」形态无任何负例用例（R7 验收② 与验收标准 4 的覆盖缺口）**（应覆盖 `tests/callAuction.test.js:1231-1270`/`:1369-1430`）：现有用例只构造「价格未变 ⇒ 保持 `preview`」与「价格推进 ⇒ 清 `preview`」两类；实测把 `kline.js:669-670` 收紧为 `isPostOpenTime && hasValidOpen` 或把 `hasNewPriceInfo` 置 `false`，均仅命中**正例侧** 5 条断言 ⇒ 漂移形态零判别力，用例与实现共享「价格变了即真实成交」的错误假设。
+**待确认风险/未验证项**：① `getQuoteBeijingTimeMinutes` 不校验日期，理论上往日 ≥09:25 时间戳可通过 `isPostOpenTime` 门（`probe3.mjs` §M 实测 `'20260917150000'` 得 900 而落官方柱）；当前两真实源的时间戳与日期同源（`parseTencent` 的 `quoteDate` 由 `updateTime` 派生、`parseEastmoney` 无时间戳）故不可达，但新增报价源或改动派生关系时须加「时间戳日期 == 交易日」校验；② 上游 `≥09:30` 后是否仍返回盘前 payload 及其 `price` 是否漂移（P2-1/P3-2 前提，继承 R5/R6/R7，离线无活体样本；修复方向不依赖该前提）；③ 收紧未知时效通道后「价平/单源标的当日柱整日保持 `preview`（四价坍缩、`volume=0`）」的保守侧副作用（继承 R6/R7，需实现方确认取舍并登记）；④ 需求 2 显示侧未做真机/浏览器验证（253 网格、`hasNonStockHours` 本轮未改动）；⑤ 未执行 `npm run e2e`、`npm run build` 与活体行情验证；⑥ 本轮 26 次门禁运行未复现冷启动偶发失败。
+**推荐修复顺序**：P3-1（谓词换成 `inferAssetType` + 补 ETF/可转债用例，独立无耦合）→ P2-1 + P3-2（同批落地，互为判别力；须改写受影响的 5 条用例与 `:664-667` 注释并登记副作用）→ 待确认风险 1（时间戳日期校验，随 P2-1 一并加守卫）。
+
+## 2026-09-18 历史状态：集合竞价方案**代码落地修复轮独立复查 5（Round 7）未通过** —— 1×P2 + 2×P3
 
 审查报告：[`docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round7-handoff.md`](docs/handoff/2026-09-18-call-auction-implementation-workbuddy-code-review-round7-handoff.md)
 被审提交：`a505481`（基准 `7c955b0`，任务书范围 16 文件 / +2425 −27，本轮修复提交自身 `dbe9ce8..a505481` = 产品/测试侧仅 `src/js/kline.js` +15 −2 与 `tests/callAuction.test.js` +146 −21；`main` 与 `origin/main` 同步，工作区干净；`npm test` 910/910 全绿、`npx eslint` 0 问题）。
