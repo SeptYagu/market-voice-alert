@@ -706,23 +706,24 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
         updated.high = Math.max(lastHigh, quoteHigh || 0, price);
         const lowCandidates = [lastLow, quoteLow, price].filter((v) => v > 0);
         updated.low = lowCandidates.length ? Math.min(...lowCandidates) : price;
+        if (quoteOpen) updated.open = quoteOpen;
       } else {
         const quoteTimeMinutes = getQuoteBeijingTimeMinutes(quote, targetDate);
-        const isPreOpenStale = quoteTimeMinutes !== null && quoteTimeMinutes < 9 * 60 + 25;
-        if (isPreOpenStale) {
-          // Stale pre-open snapshot (< 09:25) arriving during 09:25-09:30 handover window:
-          // Strictly reject writing to official bar (open/high/low/close/volume/amount)
-          // to prevent pre-open call auction virtual values from polluting official trade data.
+        const isPostOpenTime = quoteTimeMinutes !== null && quoteTimeMinutes >= 9 * 60 + 25;
+        if (!isPostOpenTime) {
+          // Handover window 09:25-09:30 for official bar (Fail-Closed Guard):
+          // Incoming quote either has a confirmed pre-open timestamp (< 09:25) or lacks an exchange timestamp
+          // (quoteTimeMinutes === null, e.g. Eastmoney fallback or cross-date timestamp downgrade).
+          // Strictly reject writing to official bar (open/high/low/close/volume/amount) to prevent
+          // un-matched call auction virtual prices from polluting official trade data and locking daily low.
           return items;
         }
 
-        // Handover window 09:25-09:30 for official bar:
-        // When quote timestamp is post-open (>= 09:25) or unknown (Eastmoney fallback),
-        // track high/low according to price movements.
+        // Verified post-open exchange timestamp (quoteTimeMinutes >= 09:25):
         updated.high = Math.max(lastHigh, price);
         updated.low = Math.min(lastLow, price);
+        if (quoteOpen) updated.open = quoteOpen;
       }
-      if (quoteOpen) updated.open = quoteOpen;
     }
     if (quoteVolume) updated.volume = quoteVolume;
     if (quoteAmount) updated.amount = quoteAmount;

@@ -1,6 +1,35 @@
 # STATUS.md - 项目状态
 
-## 2026-09-19 当前状态：集合竞价方案**代码落地修复轮独立复查 10（Round 12）未通过** —— 1×P2
+## 2026-09-19 当前状态：集合竞价方案**代码落地修复轮（Round 12 缺陷闭环）已完成，待 Round 13 终审复核**
+
+本次修复提交：彻底闭环 Round 12 唯一缺陷 P2-1（官方柱在 09:25-09:30 交接期的时效门控由「仅拦截实锤盘前」升级为 Fail-Closed「拦截非已验证盘后」，即时效未知/无时间戳（东财兜底）以及跨日降级快照在交接期一律严禁写入官方柱，彻底杜绝盘前未撮合虚拟参考价污染官方柱 open/low/high/close 并全天锁死最低价，完成定点变异确定性杀红与全量门禁实证）。
+- **P2-1 闭环落地详情**：
+  1. `src/js/kline.js`:
+     - 将官方柱原地更新（`!last.preview`）在 09:25-09:30 交接窗口（`!isContinuousTrading`）的门控极性升级为 Fail-Closed：
+       `const quoteTimeMinutes = getQuoteBeijingTimeMinutes(quote, targetDate);`
+       `const isPostOpenTime = quoteTimeMinutes !== null && quoteTimeMinutes >= 9 * 60 + 25;`
+       `if (!isPostOpenTime) return items;`
+     - 无论是明确的盘前快照（`< 09:25`），还是时效未知/无交易所时间戳快照（`quoteTimeMinutes === null`，如东财兜底通道或跨日时间戳降级），在 09:25-09:30 非连续交易交接缓冲期内一律 Fail-Closed 拦截写入，不修改官方柱的 `open`、`high`、`low`、`close`、`volume`、`amount`。
+     - 只有经过交易所时间戳证实为盘后（`quoteTimeMinutes >= 09:25`）的快照才允许推进极值，将 `open` 覆写点与四价更新一并纳入严格门控保护。
+     - 连续交易时段（`>= 09:30`）分支保持不变，Fail-Closed 前置判据无任何放宽。
+  2. `tests/callAuction.test.js`:
+     - 调整 `5.1(1m)` 用例：为 t3/t4 显式指定 `updateTime: '20260918092600'` 与 `'20260918092700'`，严格符合其「真实盘中下探」的业务语义。
+     - 新增 `5.1(1zb)` 负例用例：官方柱确立后，无时间戳快照（东财兜底通道）及跨日时间戳快照在 09:26:00、09:27:00、09:29:00 三拍交接期抵达，断言官方柱 `open/low/high/close/volume` 严格保真，不被虚拟价污染。
+     - 新增 `5.1(1zc)` 独立探针 N1/N1b/N1-日终序列复测用例：09:25:03 官方柱确立（`o=l=20.5`）→ 09:27 东财无时间戳盘前滞后快照（`price:19.6, open:19.6`）抵达，官方柱不被污染，14:55 真实成交（真实 low 20.3）后全天 `low` 保持 20.30，下影线彻底消除。
+  3. **定点变异确定性杀红实证（全部 918 pass / 5 fail RED）**：
+     - 将 `src/js/kline.js` 中的 `if (!isPostOpenTime) return items;` 变异注销：
+       - `5.1(1y)` 报错杀红（官方 open/low 被 19.60 污染）。
+       - `5.1(1z)` 报错杀红（探针 S1 滞后快照污染 open/low）。
+       - `5.1(1za)` 报错杀红（探针 S2 滞后快照污染 open/low）。
+       - `5.1(1zb)` 报错杀红（东财无时间戳快照污染官方柱）。
+       - `5.1(1zc)` 报错杀红（探针 N1 探针日终 low 被污染为 19.60）。
+       - 5 项测试全部精确杀红，证实该 Fail-Closed 门控具备完整双向判别力。
+- **全量门禁**：
+  - `npm test`: **923/923 全绿** (+2 tests)
+  - `npx eslint .`: 0 错误 0 警告
+  - `npm run build`: 构建成功
+
+## 2026-09-19 历史状态：集合竞价方案**代码落地修复轮独立复查 10（Round 12）未通过** —— 1×P2
 
 审查报告：[`docs/handoff/2026-09-19-workbuddy-code-review-round12-handoff.md`](docs/handoff/2026-09-19-workbuddy-code-review-round12-handoff.md)
 被审提交：`4a37f22`（基准 `7c955b0`，任务书范围 22 文件 / +3717 −30，本轮修复增量 `a8ff90e..4a37f22` = 3 文件 / +248 −20；`main` 与 `origin/main` 同步，工作区干净，本机复跑 `npm test` **921/921 全绿**）。

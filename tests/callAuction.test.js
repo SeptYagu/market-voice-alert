@@ -1107,7 +1107,7 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
     // 09:26:00 真实盘中下探至 20.30，volume 20000
     const t3 = applyLiveQuoteToKline(
       t2,
-      { price: 20.3, open: 20.5, volume: 20000, tradingDay: '2026-09-18' },
+      { price: 20.3, open: 20.5, volume: 20000, updateTime: '20260918092600', tradingDay: '2026-09-18' },
       '1d',
       'sh603533',
       new Date('2026-09-18T09:26:00+08:00')
@@ -1118,7 +1118,7 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
     // 09:27:00 价格回升至 20.60，volume 40000
     const t4 = applyLiveQuoteToKline(
       t3,
-      { price: 20.6, open: 20.5, volume: 40000, tradingDay: '2026-09-18' },
+      { price: 20.6, open: 20.5, volume: 40000, updateTime: '20260918092700', tradingDay: '2026-09-18' },
       '1d',
       'sh603533',
       new Date('2026-09-18T09:27:00+08:00')
@@ -1708,5 +1708,110 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
     );
     t.equal(items[1].open, 20.5, 'S2 序列全天 open 恒为 20.50');
     t.equal(items[1].low, 20.3, 'S2 序列全天 low 恒为真实最低 20.30');
+  });
+
+  // 5.1(1zb) 官方柱前置 + 无时间戳（东财兜底）快照及跨日时间戳快照 @09:26/09:27/09:29 三拍：严格拦截，open/low/high/close 保持官方值
+  QUnit.test('5.1(1zb) 官方柱前置 + 无时间戳（东财兜底）快照及跨日时间戳快照 @09:26/09:27/09:29 三拍：严格拦截，open/low/high/close 保持官方值', (t) => {
+    let items = [
+      { time: '2026-09-17', open: 20, high: 20, low: 20, close: 20, volume: 1000 },
+      { time: '2026-09-18', open: 20.5, high: 20.5, low: 20.5, close: 20.5, volume: 90000 }
+    ];
+
+    // 09:26:00 到达东财兜底无时间戳快照（price=19.6, open=19.6, volume=12000，无 updateTime）
+    items = applyLiveQuoteToKline(
+      items,
+      { price: 19.6, open: 19.6, volume: 12000, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:26:00+08:00')
+    );
+    let last = items[items.length - 1];
+    t.equal(last.open, 20.5, '09:26:00 无时间戳快照严格拦截，open 保持 20.50');
+    t.equal(last.low, 20.5, '09:26:00 无时间戳快照严格拦截，low 保持 20.50');
+    t.equal(last.high, 20.5, '09:26:00 high 保持 20.50');
+    t.equal(last.close, 20.5, '09:26:00 close 保持 20.50');
+    t.equal(last.volume, 90000, '09:26:00 volume 保持 90000');
+
+    // 09:27:00 到达跨日时间戳快照（前一日 15:00:00 降级为 null，price=19.4, open=19.4）
+    items = applyLiveQuoteToKline(
+      items,
+      { price: 19.4, open: 19.4, updateTime: '20260917150000', tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:27:00+08:00')
+    );
+    last = items[items.length - 1];
+    t.equal(last.open, 20.5, '09:27:00 跨日降级快照严格拦截，open 保持 20.50');
+    t.equal(last.low, 20.5, '09:27:00 跨日降级快照严格拦截，low 保持 20.50');
+    t.equal(last.close, 20.5, '09:27:00 close 保持 20.50');
+
+    // 09:29:00 到达无时间戳快照（price=19.5, open=19.5）
+    items = applyLiveQuoteToKline(
+      items,
+      { price: 19.5, open: 19.5, volume: 15000, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:29:00+08:00')
+    );
+    last = items[items.length - 1];
+    t.equal(last.open, 20.5, '09:29:00 无时间戳快照严格拦截，open 保持 20.50');
+    t.equal(last.low, 20.5, '09:29:00 无时间戳快照严格拦截，low 保持 20.50');
+
+    // 14:55:00 真实成交到达
+    items = applyLiveQuoteToKline(
+      items,
+      { price: 21.0, open: 20.5, high: 21.5, low: 20.3, volume: 150000, updateTime: '20260918145500', tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T14:55:00+08:00')
+    );
+    last = items[items.length - 1];
+    t.equal(last.open, 20.5, '14:55 官方 open 恒为 20.50');
+    t.equal(last.low, 20.3, '14:55 官方 low 恒为真实最低 20.30，绝不被 19.4/19.5/19.6 虚假锁死');
+    t.equal(last.high, 21.5, '14:55 官方 high 为真实最高 21.50');
+    t.equal(last.close, 21.0, '14:55 官方 close 为现价 21.00');
+  });
+
+  // 5.1(1zc) 独立探针 N1/N1b/N1-日终序列复现与验证：官方柱确立后，东财无时间戳盘前滞后快照不污染 open/low
+  QUnit.test('5.1(1zc) 独立探针 N1/N1b/N1-日终序列复现与验证：官方柱确立后，东财无时间戳盘前滞后快照不污染 open/low', (t) => {
+    let items = [
+      { time: '2026-09-17', open: 20, high: 20, low: 20, close: 20, volume: 1000 },
+      { time: '2026-09-18', open: 20.5, high: 20.5, low: 20.5, close: 20.5, volume: 90000 }
+    ];
+
+    // N1: 09:27:00 到达无时间戳快照 {price: 19.6, open: 0}
+    items = applyLiveQuoteToKline(
+      items,
+      { price: 19.6, open: 0, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:27:00+08:00')
+    );
+    t.equal(items[1].open, 20.5, 'N1: open 保持 20.50');
+    t.equal(items[1].low, 20.5, 'N1: low 保持 20.50 不被污染');
+    t.equal(items[1].close, 20.5, 'N1: close 保持 20.50 不被污染');
+
+    // N1b: 09:27:30 到达同场景快照携带非零 open: 19.6
+    items = applyLiveQuoteToKline(
+      items,
+      { price: 19.6, open: 19.6, tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T09:27:30+08:00')
+    );
+    t.equal(items[1].open, 20.5, 'N1b: open 保持 20.50 不被 19.60 篡改');
+    t.equal(items[1].low, 20.5, 'N1b: low 保持 20.50 不被 19.60 污染');
+    t.equal(items[1].close, 20.5, 'N1b: close 保持 20.50');
+
+    // N1 日终推进: 14:55 真实成交（low: 20.30）
+    items = applyLiveQuoteToKline(
+      items,
+      { price: 21.0, open: 20.5, high: 21.5, low: 20.3, volume: 150000, updateTime: '20260918145500', tradingDay: '2026-09-18' },
+      '1d',
+      'sh603533',
+      new Date('2026-09-18T14:55:00+08:00')
+    );
+    t.equal(items[1].open, 20.5, 'N1 日终全天 open 恒为 20.50');
+    t.equal(items[1].low, 20.3, 'N1 日终全天 low 恒为真实最低 20.30，下影线彻底消除');
   });
 });
