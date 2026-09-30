@@ -716,7 +716,8 @@ QUnit.module('callAuction.verificationMatrix', (hooks) => {
         new Date('2026-09-18T09:18:00+08:00')
       );
       const last = res[0];
-      t.equal(last.close, 12, `${period} close 为现价 12`);
+      t.strictEqual(res, items, `${period} 盘前快照不覆写周期接口数据`);
+      t.equal(last.close, 10.4, `${period} 保留周期收盘价`);
       t.true(last.close >= last.low && last.close <= last.high, `${period} 满足 close ∈ [low, high] (low=${last.low}, high=${last.high})`);
     }
 

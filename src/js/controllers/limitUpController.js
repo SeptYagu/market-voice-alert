@@ -25,7 +25,7 @@ import {
   patchLimitUpSettings
 } from '../storage.js';
 
-import { DEFAULT_PERIOD, isValidPeriod } from '../kline.js';
+import { DEFAULT_PERIOD } from '../kline.js';
 
 export function applyLimitUpFetchResult(luState, items) {
   const prev = luState || {};
@@ -588,21 +588,7 @@ export function createLimitUpController(appContext) {
   }
 
   function handleLimitUpKlinePeriodChange(p, code) {
-    if (!isValidPeriod(p)) return;
-    const lu = getLimitUpState();
-    const inst = lu.chartInstances.get(code);
-    if (!inst || inst.period === p) return;
-    inst.period = p;
-    inst.klineData = null;
-    inst.loading = true;
-    inst.error = null;
-    inst.intradayData = null;
-    inst.intradayError = null;
-    inst._visibleRange = null;
-    inst._intradayVisibleRange = null;
-    if (inst.abort) try { inst.abort.abort(); } catch { /* ignore */ }
-    rerenderLimitUpPage();
-    loadLimitUpKline(code);
+    return limitUpChartMgr.handlePeriodChange(p, code);
   }
 
   function _handleLimitUpForceReloadChart(code) {

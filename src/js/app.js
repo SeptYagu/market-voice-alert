@@ -392,6 +392,7 @@ function resolveInitialTradeDate(code, data) {
 export const monitorChartMgr = new ChartRowManager({
   prefix: '',
   hasIntraday: true,
+  canRefreshKline: () => state.autoRefreshEnabled && !state.autoRefreshPausedBySchedule,
   klineHeight: 360,
   intradayHeight: 360,
   getTheme: getCurrentTheme,
@@ -409,6 +410,7 @@ export const intradayChartCtlMap = monitorChartMgr.intradayCtlMap;
 export const limitUpChartMgr = new ChartRowManager({
   prefix: 'lu-',
   hasIntraday: true,
+  canRefreshKline: () => state.limitUp.autoRefreshEnabled && !state.limitUp.autoRefreshPausedBySchedule,
   klineHeight: 360,
   intradayHeight: 360,
   getTheme: getCurrentTheme,
@@ -426,6 +428,7 @@ export const limitUpIntradayChartCtlMap = limitUpChartMgr.intradayCtlMap;
 export const momentumChartMgr = new ChartRowManager({
   prefix: 'momentum-',
   hasIntraday: false,
+  canRefreshKline: () => state.autoRefreshEnabled && !state.autoRefreshPausedBySchedule,
   klineHeight: 320,
   getTheme: getCurrentTheme,
   getTradingDates: () => state.tradingDates || [],

@@ -9,7 +9,8 @@ import {
   getLastKlineDate,
   PERIOD_LABELS,
   DEFAULT_PERIOD,
-  isValidPeriod
+  isValidPeriod,
+  isMinutePeriod
 } from '../kline.js';
 import {
   createKlineChart,
@@ -117,6 +118,9 @@ export function applyIntradayDataToChart(ctl, inst, data) {
 
 export function applyLiveTickToKlineChart(ctl, inst, quoteOrPrice, now = new Date()) {
   if (!ctl || !inst || !inst.klineData) return;
+  // A quote snapshot cannot establish which minute candle owns its price.
+  // Minute candles are refreshed from the requested period's OHLCV endpoint.
+  if (isMinutePeriod(inst.period)) return;
   const livePrice = Number(
     quoteOrPrice && typeof quoteOrPrice === 'object' ? quoteOrPrice.price : quoteOrPrice
   );
@@ -213,12 +217,22 @@ export class ChartRowManager {
     this.resolveTradeDate = options.resolveTradeDate || ((code, data) => getLastKlineDate(data.items));
     this.isLatestKlineDate = options.isLatestKlineDate || ((inst, date) => !date || (inst && inst.klineData && getLastKlineDate(inst.klineData.items) === date));
     this.onStateChange = options.onStateChange || (() => {});
+    this.onKlineStateChange = options.onKlineStateChange || ((code) => {
+      const host = document.getElementById(`${this.prefix}chart-host-${code}`);
+      const row = host?.closest('tr');
+      for (const tab of row?.querySelectorAll('[data-period]') || []) {
+        tab.classList.toggle('active', tab.dataset.period === this.getInst(code)?.period);
+      }
+      this.updateKlineStatus(code);
+    });
     this.onKlineBarClick = options.onKlineBarClick || null;
     this.getQuote = options.getQuote || null;
     this.getTradingDates = options.getTradingDates || (() => []);
+    this.canRefreshKline = options.canRefreshKline || (() => true);
 
     this.klineCtlMap = new Map();
     this.intradayCtlMap = new Map();
+    this.minuteRefreshTimers = new Map();
   }
 
   getInst(code) {
@@ -312,6 +326,7 @@ export class ChartRowManager {
   }
 
   destroyCharts(code, { abort = true } = {}) {
+    this.stopMinuteRefresh(code);
     if (abort) {
       const inst = this.getInst(code);
       if (inst) {
@@ -341,7 +356,7 @@ export class ChartRowManager {
   }
 
   destroyAll() {
-    for (const code of new Set([...this.klineCtlMap.keys(), ...this.intradayCtlMap.keys(), ...(this.getChartInstances?.()?.keys() || [])])) {
+    for (const code of new Set([...this.klineCtlMap.keys(), ...this.intradayCtlMap.keys(), ...this.minuteRefreshTimers.keys(), ...(this.getChartInstances?.()?.keys() || [])])) {
       this.destroyCharts(code);
     }
   }
@@ -354,7 +369,7 @@ export class ChartRowManager {
     rememberRange(inst, this.klineCtlMap.get(code), '_visibleRange');
   }
 
-  async loadKline(code, { force = false, now = new Date() } = {}) {
+  async loadKline(code, { force = false, now = new Date(), reloadIntraday = true } = {}) {
     const inst = this.getInst(code);
     if (!inst) return;
     if (inst.abort) {
@@ -389,7 +404,8 @@ export class ChartRowManager {
       if (!data) throw new Error('未能获取 K 线数据');
       if (!data.items.length) throw new Error('K 线数据为空');
       inst.klineData = data;
-      if (this.hasIntraday && !inst.selectedTradeDate) {
+      const initializeIntraday = this.hasIntraday && !inst.selectedTradeDate && !inst.intradayData && !inst.intradayLoading;
+      if ((reloadIntraday || initializeIntraday) && this.hasIntraday && !inst.selectedTradeDate) {
         inst.selectedTradeDate = this.resolveTradeDate(code, inst.klineData);
       }
       if (typeof this.getQuote === 'function') {
@@ -405,12 +421,13 @@ export class ChartRowManager {
         }
       }
       inst.loading = false;
+      this.startMinuteRefresh(code);
       const ctl = this.klineCtlMap.get(code);
       if (ctl) {
         applyKlineDataToChart(ctl, inst, inst.klineData);
       }
       this.updateKlineStatus(code);
-      if (this.hasIntraday) {
+      if ((reloadIntraday || initializeIntraday) && this.hasIntraday) {
         this.loadIntraday(code, inst.selectedTradeDate);
       }
     } catch (e) {
@@ -425,7 +442,8 @@ export class ChartRowManager {
     } finally {
       if (isCurrentTask()) {
         this.setInst(code, inst);
-        this.onStateChange(code);
+        if (reloadIntraday) this.onStateChange(code);
+        else this.onKlineStateChange(code);
       }
     }
   }
@@ -522,29 +540,54 @@ export class ChartRowManager {
     if (!isValidPeriod(p)) return;
     const inst = this.getInst(code);
     if (!inst || inst.period === p) return;
+    this.stopMinuteRefresh(code);
     inst.period = p;
     inst.klineData = null;
     inst.loading = true;
     inst.error = null;
-    if (this.hasIntraday) {
-      inst.selectedTradeDate = null;
-      inst.manualTradeDate = false;
-      inst.intradayData = null;
-      inst.intradayError = null;
-      inst._intradayVisibleRange = null;
-      if (inst.intradayAbort) {
-        try { inst.intradayAbort.abort(); } catch { /* ignore */ }
-        inst.intradayAbort = null;
-      }
-    }
     inst._visibleRange = null;
     inst.klineRefreshing = false;
+    inst.klineLastReloadAt = 0;
     if (inst.abort) {
       try { inst.abort.abort(); } catch { /* ignore */ }
       inst.abort = null;
     }
-    this.onStateChange(code);
-    this.loadKline(code);
+    const ctl = this.klineCtlMap.get(code);
+    if (ctl) {
+      ctl.setPeriod?.(p);
+      ctl.setKline([]);
+      ctl.setVolume([]);
+      ctl.clearMA();
+    }
+    this.onKlineStateChange(code);
+    return this.loadKline(code, { reloadIntraday: false });
+  }
+
+  stopMinuteRefresh(code) {
+    const timer = this.minuteRefreshTimers.get(code);
+    if (timer) clearInterval(timer);
+    this.minuteRefreshTimers.delete(code);
+  }
+
+  startMinuteRefresh(code) {
+    if (!isMinutePeriod(this.getInst(code)?.period) || this.minuteRefreshTimers.has(code)) return;
+    const timer = setInterval(() => { void this.refreshMinuteKline(code); }, 15000);
+    timer.unref?.();
+    this.minuteRefreshTimers.set(code, timer);
+  }
+
+  async refreshMinuteKline(code, now = new Date(), reloadInterval = 15000) {
+    const inst = this.getInst(code);
+    if (!inst || !this.isExpanded(code) || !isMinutePeriod(inst.period)) {
+      this.stopMinuteRefresh(code);
+      return false;
+    }
+    if (inst.loading || inst.klineRefreshing) return false;
+    if (!this.canRefreshKline(code, now)) return false;
+    if (inst.klineLastReloadAt && Date.now() - inst.klineLastReloadAt < reloadInterval) return false;
+    inst.klineLastReloadAt = Date.now();
+    await this.loadKline(code, { force: true, now, reloadIntraday: false });
+    return true;
   }
 
   async refreshPreviewKline(code, now = new Date(), reloadInterval = 30000) {
@@ -567,7 +610,7 @@ export class ChartRowManager {
     inst.klineLastReloadAt = Date.now();
     inst.klineRefreshing = true;
     try {
-      await this.loadKline(code, { force: true, now });
+      await this.loadKline(code, { force: true, now, reloadIntraday: false });
       return true;
     } finally {
       inst.klineRefreshing = false;

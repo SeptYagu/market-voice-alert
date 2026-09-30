@@ -84,6 +84,7 @@ export function renderMomentumChartRow(item, colCount, ctx) {
       'button',
       {
         class: p === period ? 'active' : '',
+        'data-period': p,
         on: { click: () => onPeriodChange && onPeriodChange(item.code, p) }
       },
       label
@@ -386,4 +387,3 @@ export function renderMomentumSectionView(wrap, options = {}) {
     callbacks.onAfterMountCharts();
   }
 }
-

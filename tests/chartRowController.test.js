@@ -229,7 +229,7 @@ QUnit.module('ChartRowManager', () => {
     t.equal(getPrevCloseForDate(minutes, '2026-06-02'), 100, 'finds end of prior day close for minute bars');
   });
 
-  QUnit.test('handlePeriodChange aborts pending intraday request and clears selectedTradeDate', async (t) => {
+  QUnit.test('handlePeriodChange preserves intraday state and pending request', async (t) => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: true, data: { items: [] } }) });
     const instances = new Map();
@@ -245,7 +245,9 @@ QUnit.module('ChartRowManager', () => {
 
     const inst = createChartState('1d');
     inst.selectedTradeDate = '2026-06-05';
+    inst.manualTradeDate = true;
     inst.intradayData = { items: [1] };
+    const intradayData = inst.intradayData;
     inst.intradayAbort = {
       abort: () => { intradayAborted = true; }
     };
@@ -258,10 +260,11 @@ QUnit.module('ChartRowManager', () => {
     mgr.handlePeriodChange('5m', 'sh600519');
 
     t.equal(inst.period, '5m', 'period updated');
-    t.equal(inst.selectedTradeDate, null, 'selectedTradeDate cleared');
-    t.equal(inst.intradayData, null, 'intradayData cleared');
-    t.ok(intradayAborted, 'pending intraday abort called');
-    t.equal(inst.intradayAbort, null, 'intradayAbort reference cleared');
+    t.equal(inst.selectedTradeDate, '2026-06-05', 'historical date preserved');
+    t.strictEqual(inst.intradayData, intradayData, 'data identity preserved');
+    t.ok(inst.manualTradeDate, 'manual selection preserved');
+    t.notOk(intradayAborted, 'pending intraday request continues');
+    t.ok(inst.intradayAbort, 'request identity preserved');
     t.ok(klineAborted, 'pending kline abort called');
     mgr.destroyAll();
     await new Promise(resolve => setTimeout(resolve, 0));

@@ -489,6 +489,10 @@ export function getQuoteBeijingTimeMinutes(quote, targetDate = null) {
 
 export function applyLiveQuoteToKline(items, quote, period, code, now = new Date()) {
   if (!Array.isArray(items) || !items.length || !quote || typeof quote !== 'object') return items;
+  // OHLCV quotes describe a whole trading day, not an individual minute bar.
+  // Across sources and sessions the bar timestamp may label its start or end;
+  // keep the authoritative period data instead of assigning a snapshot to it.
+  if (isMinutePeriod(period)) return items;
   const price = _positiveNumber(quote.price);
   if (!price) return items;
 
@@ -568,13 +572,6 @@ export function applyLiveQuoteToKline(items, quote, period, code, now = new Date
         };
         if (Number.isFinite(Number(quote.changePercent))) updated.changePercent = Number(quote.changePercent);
         return [...items.slice(0, -1), updated];
-      }
-      if (isMinutePeriod(period)) {
-        // Minute periods (1m, 5m, 15m, 30m, 60m) during pre-open:
-        // If last bar is from previous trading day, do not overwrite it with pre-open price
-        if (lastDate && targetDate && lastDate < targetDate) {
-          return items;
-        }
       }
     }
   }
