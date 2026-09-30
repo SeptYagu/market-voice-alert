@@ -421,7 +421,6 @@ export class ChartRowManager {
         }
       }
       inst.loading = false;
-      this.startMinuteRefresh(code);
       const ctl = this.klineCtlMap.get(code);
       if (ctl) {
         applyKlineDataToChart(ctl, inst, inst.klineData);
@@ -441,6 +440,9 @@ export class ChartRowManager {
       this.updateKlineStatus(code);
     } finally {
       if (isCurrentTask()) {
+        // Retry scheduling belongs to the active chart lifecycle, including
+        // a failed first load. Stale/closed tasks must never install a timer.
+        this.startMinuteRefresh(code);
         this.setInst(code, inst);
         if (reloadIntraday) this.onStateChange(code);
         else this.onKlineStateChange(code);

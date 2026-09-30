@@ -2,6 +2,67 @@ import { ChartRowManager, createChartState, applyLiveTickToKlineChart } from '..
 import { applyLiveQuoteToKline } from '../src/js/kline.js';
 
 QUnit.module('chart period isolation regressions', () => {
+  QUnit.test('failed first minute load automatically retries after recovery and respects pause/dispose', async t => {
+    const originalFetch = globalThis.fetch;
+    const originalInterval = globalThis.setInterval;
+    const originalClearInterval = globalThis.clearInterval;
+    const timers = new Set();
+    let recovered = false, allowed = false, expanded = true, calls = 0, rendered = null;
+    globalThis.setInterval = (callback, delay) => {
+      const timer = { callback, delay, unref() {} };
+      timers.add(timer);
+      return timer;
+    };
+    globalThis.clearInterval = timer => { timers.delete(timer); };
+    globalThis.fetch = async () => {
+      calls++;
+      if (!recovered) throw new Error('temporary fixture outage');
+      return { ok: true, json: async () => ({ rc: 0, data: { code: '600524', market: 1,
+        name: 'fixture', klines: ['2026-09-30 10:00,100,101,102,99,200,20100,0,1'] } }) };
+    };
+    const inst = createChartState('5m'); inst.selectedTradeDate = '2026-09-29';
+    const map = new Map([['sh600524', inst]]);
+    const mgr = new ChartRowManager({ getChartInstances: () => map, isExpanded: () => expanded,
+      canRefreshKline: () => allowed });
+    mgr.klineCtlMap.set('sh600524', { setPeriod() {}, setKline(items) { rendered = items; },
+      setVolume() {}, clearMA() {}, fitContent() {}, destroy() {} });
+    try {
+      await mgr.loadKline('sh600524', { force: true, reloadIntraday: false });
+      t.ok(inst.error, 'first request fails visibly');
+      t.notOk(inst.loading);
+      t.equal(timers.size, 1, 'failure still installs exactly one scheduler');
+      const timer = mgr.minuteRefreshTimers.get('sh600524');
+      t.ok(timer, 'retry driver exists even without first-load data');
+      if (!timer) return;
+      t.equal(timer.delay, 15000, 'retry occurs on the next 15-second interval');
+      const failedCalls = calls;
+      recovered = true;
+      timer.callback();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      t.equal(calls, failedCalls, 'paused scheduler sends no network requests');
+      allowed = true;
+      timer.callback();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      t.equal(inst.error, null, 'automatic retry clears the error without user action');
+      t.equal(inst.klineData?.items[0].high, 102, 'period high recovers');
+      t.equal(inst.klineData?.items[0].low, 99, 'period low recovers');
+      t.equal(rendered?.[0].close, 101, 'recovered data renders');
+      t.equal(timers.size, 1, 'successful retry does not duplicate the scheduler');
+      expanded = false;
+      const recoveredCalls = calls;
+      mgr.destroyAll();
+      t.equal(timers.size, 0, 'closing disposes scheduler');
+      timer.callback();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      t.equal(calls, recoveredCalls, 'an already queued tick cannot request a closed chart');
+    } finally {
+      mgr.destroyAll();
+      globalThis.fetch = originalFetch;
+      globalThis.setInterval = originalInterval;
+      globalThis.clearInterval = originalClearInterval;
+    }
+  });
+
   QUnit.test('in-flight intraday response survives a period change', async t => {
     const originalFetch = globalThis.fetch;
     let finishIntraday;
